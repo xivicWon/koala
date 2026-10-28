@@ -5,7 +5,16 @@ import { setPaths } from './sets.mjs';
 
 const emptySuite = (id) => ({ id, name: id, scenarios: [], cases: [], flow: [], coverage: [], code: null, applied: false, base_version: 0 });
 
-const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+// 없으면 null. 깨진 파일은 .bad-<시각>으로 옮겨 두고 던진다(빈 목록으로 읽혀 덮어써지지 않게).
+const readJson = (file) => {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+  try { return JSON.parse(text); } catch {
+    const bad = `${file}.bad-${new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-')}`;
+    fs.renameSync(file, bad);
+    throw new Error(`${path.basename(file)} 파일이 손상되어 읽지 못했습니다. 원본은 ${bad} 에 보관했습니다.`);
+  }
+};
 // 임시 파일에 쓴 뒤 rename — 쓰다 끊겨도 기존 파일이 깨지지 않는다
 const writeJson = (file, data) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -37,12 +46,12 @@ export function addTests(suite, { scenarios = [], cases = [], flow = [], coverag
   const newScenarios = scenarios.map((s) => {
     const id = `SC-${++sc}`;
     if (s.id) renamed[s.id] = id;
-    return { use: true, ...s, id, added: true };
+    return { ...s, use: s.use ?? true, id, added: true };
   });
   const newCases = cases.map((c) => {
     const id = `TC-${++tc}`;
     if (c.id) renamed[c.id] = id;
-    return { use: true, ...c, id, scenario: renamed[c.scenario] ?? c.scenario, added: true };
+    return { ...c, use: c.use ?? true, id, scenario: renamed[c.scenario] ?? c.scenario, added: true };
   });
   return {
     suite: {
@@ -63,5 +72,6 @@ export function recordResults(setId, results, ranAt, root) {
   const last = readJson(`${dir}/last.json`) || {};
   for (const r of results) last[r.title] = { ...r, ranAt };
   writeJson(`${dir}/last.json`, last);
-  writeJson(`${dir}/runs/${ranAt}.json`, { ranAt, results });
+  // 파일 이름에 쓸 수 없는 글자(':' '/' 등)는 '-'로 바꾼다. 원래 값은 본문에 남긴다
+  writeJson(`${dir}/runs/${String(ranAt).replace(/[^0-9A-Za-z._-]/g, '-')}.json`, { ranAt, results });
 }

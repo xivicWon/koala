@@ -67,3 +67,33 @@ test('recordResults: 제목별 마지막 결과를 합치고 실행 이력을 �
   assert.equal(last['TC-2'].status, 'passed');
   assert.equal(fs.readdirSync(`${results}/runs`).length, 2);
 });
+
+test('깨진 tests.json은 빈 목록으로 읽지 않고 .bad 사본을 남기며 던진다', () => {
+  const { testsFile, tests } = setPaths('a', root);
+  fs.mkdirSync(tests, { recursive: true });
+  fs.writeFileSync(testsFile, '{garbage');
+  assert.throws(() => loadTests('a', root), /손상/);
+  const bad = fs.readdirSync(tests).filter((f) => f.startsWith('tests.json.bad-'));
+  assert.equal(bad.length, 1);
+  assert.equal(fs.readFileSync(path.join(tests, bad[0]), 'utf8'), '{garbage');
+  assert.equal(fs.existsSync(testsFile), false);
+});
+
+test('recordResults: ranAt의 위험한 글자는 파일 이름에서 바뀌고 본문에는 그대로', () => {
+  const iso = new Date().toISOString();
+  recordResults('a', [{ title: 'TC-1', status: 'passed' }], iso, root);
+  recordResults('a', [{ title: 'TC-1', status: 'passed' }], '../x', root);
+  const { results } = setPaths('a', root);
+  const files = fs.readdirSync(`${results}/runs`);
+  assert.equal(files.length, 2);
+  assert.ok(files.every((f) => !/[:/]/.test(f)));
+  assert.ok(files.includes('..-x.json'));
+  assert.equal(JSON.parse(fs.readFileSync(`${results}/runs/${iso.replace(/[^0-9A-Za-z._-]/g, '-')}.json`, 'utf8')).ranAt, iso);
+  assert.equal(fs.existsSync(`${results}/x.json`), false);
+});
+
+test('addTests: 명시한 use:false는 유지, 없으면 true', () => {
+  const { suite } = addTests(existing(), { scenarios: [{ id: 'SC-1', use: false }], cases: [{ id: 'TC-1', scenario: 'SC-1', use: null }] });
+  assert.equal(suite.scenarios.at(-1).use, false);
+  assert.equal(suite.cases.at(-1).use, true);
+});
