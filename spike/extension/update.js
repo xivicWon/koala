@@ -31,6 +31,7 @@ async function onUpdate(m) {
     if (extDisk && extDisk !== extVersion()) return chrome.runtime.reload();
   }
   renderUpdate();
+  checkWhatsNew();
 }
 
 function onUpdateDone(m) {
@@ -84,6 +85,9 @@ function renderUpdate() {
   el.dataset.tip = tip; // 빠른 툴팁으로 변경 내용·할 일을 보여 준다
   el.disabled = updating || (kind === 'apply' && aiBusy) || (kind === 'fresh' && hostStale && aiBusy);
   // 버전 표시에 마우스를 올리면 확장·호스트의 버전과 호스트 폴더를 보여 준다
+  // 새 릴리즈가 있으면 메뉴 버튼에 점, 메뉴의 '릴리즈 노트 보기'에 '새 버전'을 단다
+  $('menu-btn').classList.toggle('has-new', !!u?.available);
+  $('menu-release-badge').hidden = !u?.available;
   if (u) $('ver').dataset.tip = `확장 v${extVersion()} · 호스트 v${u.version}\n호스트 폴더 ${u.home || '-'}${u.dev ? ' (개발 체크아웃)' : u.tag ? ` (릴리즈 ${u.tag})` : ''}`;
 }
 
@@ -112,3 +116,93 @@ $('upd-pill').addEventListener('click', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'update_check' }));
 });
+
+// ── 헤더 메뉴(⋯) ──
+function setMenu(open) {
+  $('menu').hidden = !open;
+  $('menu-btn').setAttribute('aria-expanded', String(open));
+  if (open) $('menu').querySelector('button')?.focus();
+}
+$('menu-btn').addEventListener('click', (e) => { e.stopPropagation(); setMenu($('menu').hidden); });
+document.addEventListener('click', (e) => { if (!$('menu').hidden && !e.target.closest('.menu-wrap')) setMenu(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('menu').hidden) { setMenu(false); $('menu-btn').focus(); } });
+$('menu').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-menu]')?.dataset.menu;
+  if (!act) return;
+  setMenu(false);
+  if (act === 'release') openRelease();
+});
+
+// ── 릴리즈 노트 ──
+// 내용은 설치본의 CHANGELOG.md(호스트가 준다). 아직 받지 않은 새 릴리즈는 GitHub 릴리즈 노트(updateState.latest.notes)로 맨 위에 보여 준다
+let releaseText = null;   // CHANGELOG.md 원문
+let releaseAll = false;   // 이전 버전까지 모두 펼침
+let releaseOpts = {};
+async function openRelease(opts = {}) {
+  releaseOpts = opts;
+  releaseAll = false;
+  openSheet('release');
+  try {
+    const r = await fetch('http://127.0.0.1:8765/changelog');
+    releaseText = r.ok ? await r.text() : '';
+  } catch { releaseText = ''; }
+  if (sheetMode === 'release') renderSheet();
+}
+// "## 0.2.10 — 2026-10-28" 단위로 나눈다. 버전 번호가 없는 절(다음 버전·미배포)은 빼고 보여 준다
+function parseChangelog(text) {
+  return String(text || '').split(/^## /m).slice(1).map((sec) => {
+    const [head, ...lines] = sec.split('\n');
+    const v = head.match(/^v?(\d+\.\d+\.\d+)/)?.[1];
+    const date = head.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || '';
+    return v && { v, date, body: lines.join('\n').trim() };
+  }).filter(Boolean);
+}
+// CHANGELOG에 쓰는 정도의 마크다운: 목록(들여쓰기 한 단계), 굵게, 코드, 링크(글자만)
+function releaseMd(text) {
+  return String(text || '').split('\n').map((line) => {
+    if (!line.trim()) return '';
+    const sub = /^\s{2,}[-*] /.test(line);
+    const li = /^\s*[-*] /.test(line);
+    const t = esc(line.replace(/^\s*[-*] /, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'))
+      .replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    return li ? `<div class="li${sub ? ' sub' : ''}">${t}</div>` : `<div>${t}</div>`;
+  }).join('');
+}
+function renderReleaseSheet(body) {
+  const cur = extVersion();
+  $('sheet-title').textContent = releaseOpts.whatsNew ? `v${cur}로 업데이트되었습니다` : '릴리즈 노트';
+  if (releaseText === null) { body.innerHTML = '<div class="none">불러오는 중…</div>'; return; }
+  const list = parseChangelog(releaseText);
+  const latest = updateState?.available && updateState.latest;
+  const lv = latest?.tag?.replace(/^v/, '');
+  if (latest && !list.some((x) => x.v === lv)) list.unshift({ v: lv, date: (latest.released_at || '').slice(0, 10), body: latest.notes || '(변경 내용 없음)', fresh: true });
+  if (!list.length) { body.innerHTML = '<div class="none">릴리즈 노트를 찾지 못했습니다. 호스트가 켜져 있는지 확인하세요.</div>'; return; }
+  const shown = releaseAll ? list : list.slice(0, 5);
+  body.innerHTML = `<div class="rel">
+    ${shown.map((x, i) => `<details class="rel-v" ${i === 0 || x.v === cur ? 'open' : ''}>
+      <summary><b>v${esc(x.v)}</b><span class="rel-date">${esc(x.date)}</span>
+        ${x.fresh ? '<span class="rel-tag new">새 버전 · 업데이트하면 적용</span>' : x.v === cur ? '<span class="rel-tag cur">지금 버전</span>' : ''}</summary>
+      <div class="rel-body">${releaseMd(x.body)}</div>
+    </details>`).join('')}
+    ${!releaseAll && list.length > shown.length ? `<button type="button" class="btn sm ghost rel-more" data-rel="all">이전 버전 ${list.length - shown.length}개 더 보기</button>` : ''}
+  </div>`;
+}
+document.getElementById('sheet-body').addEventListener('click', (e) => {
+  if (sheetMode === 'release' && e.target.closest('[data-rel="all"]')) { releaseAll = true; renderSheet(); }
+});
+
+// 새 버전으로 바뀐 뒤 처음 패널을 열면 릴리즈 노트를 한 번 보여 준다(처음 설치할 때는 보여 주지 않는다)
+let whatsNewChecked = false;
+async function checkWhatsNew() {
+  if (whatsNewChecked) return;
+  whatsNewChecked = true;
+  const v = extVersion();
+  let seen = null, existing = false;
+  try {
+    const r = await chrome.storage.local.get(['seenRelease', 'profiles']);
+    seen = r.seenRelease || null;
+    existing = !!r.profiles; // 이 기능 전부터 쓰던 사람(본 버전 기록이 없다)도 한 번 보여 준다
+  } catch {}
+  try { await chrome.storage.local.set({ seenRelease: v }); } catch {}
+  if ((seen ? seen !== v : existing) && !sheetMode) openRelease({ whatsNew: true });
+}

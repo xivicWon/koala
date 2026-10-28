@@ -1370,6 +1370,11 @@ const server = http.createServer(async (req, res) => {
       }));
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
   }
+  // 릴리즈 노트: 이 설치본의 CHANGELOG.md(설치한 버전까지의 변경 내용). 사이드패널 메뉴의 '릴리즈 노트 보기'
+  if (req.method === 'GET' && req.url === '/changelog') {
+    res.setHeader('content-type', 'text/markdown; charset=utf-8');
+    try { return res.end(fs.readFileSync(path.resolve(dir, '..', 'CHANGELOG.md'), 'utf8')); } catch { res.statusCode = 404; return res.end(''); }
+  }
   // 가장 최근 테스트 초안(패널 저장소가 비었을 때 복원용)
   if (req.method === 'GET' && req.url === '/drafts/latest') {
     res.setHeader('content-type', 'application/json');

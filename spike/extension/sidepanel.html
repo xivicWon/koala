@@ -17,6 +17,12 @@
       <button type="button" id="profile-chip" class="profile-chip" title="프로필"></button>
       <button type="button" id="claude-btn" class="claude-btn" title="Claude 설정 보기"><span id="ai-dot" class="ai-dot off" role="status" aria-label="AI 연결 안 됨 (호스트 꺼짐)"></span><span class="claude-mark" aria-hidden="true"></span><span class="claude-name">Claude</span><span id="claude-model" class="claude-model" hidden></span><span id="claude-effort" class="claude-effort" hidden></span><span id="claude-session" class="claude-session" hidden></span></button>
       <button type="button" id="theme-btn" class="icon-btn theme-btn" aria-label="테마"></button>
+      <div class="menu-wrap">
+        <button type="button" id="menu-btn" class="icon-btn menu-btn" aria-label="메뉴" aria-haspopup="menu" aria-expanded="false"></button>
+        <div id="menu" class="menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-menu="release"><span class="mi-ic release" aria-hidden="true"></span>릴리즈 노트 보기<span id="menu-release-badge" class="mi-badge" hidden>새 버전</span></button>
+        </div>
+      </div>
     </div>
   </header>
 
