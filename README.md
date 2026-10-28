@@ -23,7 +23,7 @@
 ```
 Chrome 확장(사이드패널) ⇄ 로컬 호스트(node, 127.0.0.1:8765) ⇄ Claude Code(내 PC, 내 계정)
                               ├─ 동기화 저장소(store/: 공용 예시, .koa/store/: 이 PC의 문서)
-                              ├─ 작업 폴더(workspaces/: Claude가 읽는 지식 사본)
+                              ├─ 작업 폴더(.koa/sets/<세트 id>/work/claude: Claude가 읽는 지식 사본)
                               └─ 경로 그래프(PostgreSQL + Apache AGE, 선택)
 ```
 
@@ -143,15 +143,16 @@ npm start            # 호스트. 쓰는 동안 터미널을 열어 둡니다
 | 테스트 목록(호스트에 저장), 테스트 코드, 실행 결과 | `spike/.koa/sets/<세트 id>/tests/` (`tests.json`, `code/*.spec.ts`, `results/`) | 제외 |
 | 수행 기록·보관본, Claude 세션, Claude 작업 폴더 | `spike/.koa/sets/<세트 id>/work/` (`state.json`, `recordings/`, `claude/`) | 제외 |
 | 작업 로그(지시·도구 호출·테스트 실행·안내 문구) | `spike/.koa/sets/<세트 id>/work/logs/<날짜>.jsonl` — 메뉴(⋯) → **작업 로그 폴더 열기**. 30일 지나면 지움. 비밀값은 `$KOALA_*` 이름만 남음 | 제외 |
-| 서버로 보낸 마지막 내용 | `spike/.koa/sets/<세트 id>/outbox/` | 제외 |
+| 마지막 전송 기록(버전·시각) | `spike/.koa/sets/<세트 id>/outbox/` | 제외 |
 | 예전 방식 데이터 보관본 | `spike/.koa/migrated-<날짜>/` | 제외 |
+| 역할별 기본 계정(서버 흉내) | `spike/.koa/server-accounts/` | 제외 |
 | 기본 계정(예전 방식), Claude 위치 | `spike/.env` | 제외 |
 | 호스트 기록 | `~/.koala/host.log` | - |
 | AI 대화 기록 | `~/.claude/projects/…` | - |
 | 경로 그래프 | Docker 볼륨 `koala-graph` | - |
 
 - 업데이트한 뒤 처음 연결하면 예전 프로필·도메인별 데이터를 세트로 옮깁니다. 원본은 `.koa/migrated-<날짜>/`에 보관되고, 옮긴 뒤 첫 대화는 새 세션으로 시작합니다.
-- 서버 전송은 **임시 형태**입니다(공사 중). 서버로 보내는 데이터의 형태가 정해지면 바뀌며, 지금은 세트의 채택분을 JSON으로 보냅니다. 앱에서 쓰려 하면 공사 중 표지판이 지금 되는 것과 안 되는 것을 알립니다.
+- 서버 전송은 **임시 형태**입니다(공사 중). 서버로 보내는 데이터의 형태가 정해지면 바뀌며, 지금은 채택·미채택 모두 adopted 표시와 함께 JSON으로 보냅니다. 앱에서 쓰려 하면 공사 중 표지판이 지금 되는 것과 안 되는 것을 알립니다.
 
 ## 보안
 
