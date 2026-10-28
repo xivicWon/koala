@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { DATA, PORT } from './paths.mjs';
 import { safeId, setPaths, readSet, listSets, receiveSet, createLocalSet, deleteSet, domainOfSet } from './sets.mjs';
 import * as testlist from './testlist.mjs';
+import * as outbox from './outbox.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 
 // ---------- 이 PC의 Claude Code 찾기 (각자 PC에 설치·로그인돼 있다는 전제, 없으면 사이드패널에 경고) ----------
@@ -1280,49 +1281,15 @@ function compactSession() {
   sendToClaude('/compact');
 }
 
-// 반영된 테스트 묶음을 서버(동기화 저장소)로 보낸다
-// 서버 전송은 프로필의 배포 서버(deploy.url)로 보낸다. 없으면 보내지 않는다.
-// 배포 서버는 임시 동기화 저장소와 같은 모양의 API를 쓴다: PUT <서버>/sync/suites/<id> { base_version, data } → 문서 | 409 { current }
-// 주소가 이 호스트(127.0.0.1:8765)면 이 PC의 임시 저장소(.koa/store)에 바로 쓴다
-const isThisHost = (u) => { try { return [`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(new URL(u).host); } catch { return false; } };
-async function putToServer(server, kind, id, baseVersion, data) {
-  if (isThisHost(server)) return sync.put(kind, id, baseVersion, data);
-  const res = await fetch(`${server.replace(/\/+$/, '')}/sync/${kind}s/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ base_version: baseVersion, data }), signal: AbortSignal.timeout(20000),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (res.status === 409) return { conflict: true, current: body.current || {} };
-  if (!res.ok) throw new Error(`HTTP ${res.status}${body.error ? ` · ${body.error}` : ''}`);
-  return { doc: body };
-}
-
-async function publishSuite(suite, baseVersion) {
-  const server = profile?.deploy?.url;
-  if (!server) {
-    send({ type: 'suite_published', ok: false, error: '프로필에 배포 서버가 없습니다. 프로필 → 배포 서버에 주소를 넣으세요' });
+// 반영된 테스트 묶음을 서버로 보낸다. 만들기·보내기는 outbox.mjs 가 맡는다(임시 형태). 서버 주소는 프로필의 배포 서버(deploy.url)
+async function publishSuite(setId, baseVersion) {
+  const r = await outbox.send(setId, { server: profile?.deploy?.url, baseVersion });
+  if (!r.ok) {
+    send({ type: 'suite_published', ok: false, error: r.error, ...(r.conflict ? { current: r.current } : {}) });
     return;
   }
-  // 코드가 불러오는 정리 도우미도 함께 보낸다(서버가 그대로 돌릴 수 있게)
-  if (suite.code?.source) {
-    suite.code.support = {};
-    for (const [, f] of suite.code.source.matchAll(/from '(?:(?:\.\.\/)+|@)support\/([\w-]+)'/g)) {
-      const p = `${dir}tests/support/${f}.ts`;
-      if (fs.existsSync(p)) suite.code.support[`support/${f}.ts`] = fs.readFileSync(p, 'utf8');
-    }
-  }
-  const where = isThisHost(server) ? '이 PC의 임시 서버' : new URL(server).host;
-  let r;
-  try { r = await putToServer(server, 'suite', suite.id, baseVersion, suite); } catch (e) {
-    send({ type: 'suite_published', ok: false, error: `배포 서버(${where})에 보내지 못했습니다: ${e.message}` });
-    return;
-  }
-  if (r.conflict) {
-    send({ type: 'suite_published', ok: false, error: `배포 서버(${where})에 더 새 버전(v${r.current.version ?? '?'})이 있습니다`, current: r.current });
-    return;
-  }
-  send({ type: 'suite_published', ok: true, id: suite.id, version: r.doc.version, server: where });
-  log('sys', `테스트 묶음 "${suite.name}" v${r.doc.version}을 배포 서버(${where})로 보냈습니다 · BDD ${suite.scenarios.length}개 · TDD ${suite.cases.length}개`);
+  send({ type: 'suite_published', ok: true, id: setId, version: r.version, server: r.where });
+  log('sys', `테스트 묶음 "${r.name}" v${r.version}을 배포 서버(${r.where})로 보냈습니다 · BDD ${r.bdd}개 · TDD ${r.tdd}개`);
 }
 
 // 이번 지시를 수행할 역할(사이드패널 역할 칩). 여럿이면 차례로 수행하며 역할마다 메뉴 권한을 직접 찾는다
@@ -1713,7 +1680,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'session_clear') clearSession();
     if (m.type === 'session_compact') compactSession();
     if (m.type === 'reinforce') reinforceTests(m.summary);
-    if (m.type === 'publish') publishSuite(m.suite, m.base_version ?? 0);
+    if (m.type === 'publish') publishSuite(m.set || m.suite?.id || activeSet, m.base_version ?? 0); // 옛 모양({suite})도 받되 본문은 무시
     if (m.type === 'write_code') writeCode(m.suite);
     if (m.type === 'suggest_tags') suggestTags(m.suite);
     if (m.type === 'retag_code') retagCode(m.suite);
