@@ -22,7 +22,8 @@ export function prepare(profile) {
   const ws = path.join(root, safe(profile?.id || 'default'));
   const docs = (profile?.knowledge || []).map((id) => fetchKnowledge(id)).filter(Boolean);
   const versions = { profile: profile ? `${profile.id}@v${profile.version}` : null, knowledge: docs.map((d) => `${d.id}@v${d.version}`) };
-  const stamp = JSON.stringify(versions);
+  // 포트·데이터 폴더가 바뀌면 mcp.json 의 env 도 다시 써야 하므로 stamp 에 넣는다
+  const stamp = JSON.stringify({ ...versions, port: PORT, data: DATA });
   const versionFile = path.join(ws, '.koa', 'version.json');
   const fresh = fs.existsSync(versionFile) && fs.readFileSync(versionFile, 'utf8') === stamp;
   if (!fresh) {

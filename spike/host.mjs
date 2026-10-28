@@ -15,8 +15,8 @@ import * as tags from './tags.mjs';
 import * as update from './update.mjs';
 import { hostToken, HEADER as TOKEN_HEADER } from './host-token.mjs';
 import { fileURLToPath } from 'node:url';
-
 import { DATA, PORT } from './paths.mjs';
+
 // ---------- 이 PC의 Claude Code 찾기 (각자 PC에 설치·로그인돼 있다는 전제, 없으면 사이드패널에 경고) ----------
 const WIN = process.platform === 'win32';
 function findClaude() {
