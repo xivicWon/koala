@@ -6,8 +6,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
-const ext = new URL('./extension', import.meta.url).pathname;
+const ext = fileURLToPath(new URL('./extension', import.meta.url));
 // 고정 프로필: 다시 띄워도 확장 저장소(타임라인·초안·프로필)가 남는다. 초기화하려면 KOALA_FRESH=1
 const profile = path.join(os.tmpdir(), 'koala-chrome-profile');
 if (process.env.KOALA_FRESH) fs.rmSync(profile, { recursive: true, force: true });

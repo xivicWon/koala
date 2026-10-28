@@ -14,6 +14,7 @@ import * as workspace from './workspace.mjs';
 import * as tags from './tags.mjs';
 import * as update from './update.mjs';
 import { hostToken, HEADER as TOKEN_HEADER } from './host-token.mjs';
+import { fileURLToPath } from 'node:url';
 
 const PORT = 8765;
 // ---------- 이 PC의 Claude Code 찾기 (각자 PC에 설치·로그인돼 있다는 전제, 없으면 사이드패널에 경고) ----------
@@ -60,7 +61,7 @@ function checkClaude() {
   return claudeEnv;
 }
 checkClaude();
-const dir = new URL('.', import.meta.url).pathname;
+const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
 const REC = `${dir}recording.json`;
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order']);
 const TOOLS = ['run', 'snapshot', 'screenshot', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
@@ -173,7 +174,12 @@ let sessionId = null;
 // 사용자에게 보이는 세션 이름(kaa-N). 실제 Claude 대화 id와 짝지어 저장해, 다시 연결해도 같은 이름 = 같은 대화
 let sessionAlias = null;
 let aliasSeq = 0;
-function sendSession() { send({ type: 'session', alias: sessionAlias }); }
+// 사용량(아래 noteLimits·noteTurn이 채운다)
+let usage = { limits: null, session: { input: 0, output: 0, turns: 0 } };
+function sendSession() {
+  if (!sessionAlias) { usage.session = { input: 0, output: 0, turns: 0 }; sendUsage(); } // 새 대화면 세션 토큰을 0부터 센다
+  send({ type: 'session', alias: sessionAlias });
+}
 let steps = [];
 const pending = new Map();
 
@@ -402,8 +408,26 @@ function onStream(e) {
   }
 }
 
+// 사용량: Claude Code가 요청마다 알려 주는 구독 한도(5시간·7일 창의 사용률·초기화 시각)와, 이 세션에서 쓴 토큰
+function sendUsage(to) { const m = JSON.stringify({ type: 'claude_usage', ...usage }); (to || panel)?.readyState === 1 && (to || panel).send(m); }
+function noteLimits(info) {
+  const w = info?.unifiedWindows || {};
+  const win = (x) => x && { used: x.utilization, resets_at: x.resetsAt ? x.resetsAt * 1000 : null, status: x.status };
+  usage.limits = { status: info.status, five_hour: win(w.five_hour), seven_day: win(w.seven_day), at: Date.now() };
+  sendUsage();
+}
+function noteTurn(u) {
+  if (!u) return;
+  usage.session.input += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+  usage.session.output += u.output_tokens || 0;
+  usage.session.turns += 1;
+  sendUsage();
+}
+
 function handleEvent(ev) {
   if (ev.type === 'stream_event') return onStream(ev.event);
+  if (ev.type === 'rate_limit_event') return noteLimits(ev.rate_limit_info);
+  if (ev.type === 'result') noteTurn(ev.usage);
   // 미리 연결의 확인 응답은 대화창에 보이지 않는다. 그 사이 들어온 지시는 그다음 차례로 처리된다
   if (warming && ev.type === 'assistant') return;
   if (warming && ev.type === 'result') return ev.is_error ? warmFailed('확인 응답이 오류로 끝났습니다') : warmDone();
@@ -1338,6 +1362,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
   ws.send(JSON.stringify({ type: 'env', claude: checkClaude() }));
   ws.send(JSON.stringify({ type: 'session', alias: sessionAlias }));
   ws.send(JSON.stringify({ type: 'claude_conn', state: claudeConn, detail: claudeConnDetail }));
+  sendUsage(ws);
   sendActor();
   sendUpdate(ws);
   checkUpdate(true); // 패널을 열 때마다 새로 확인한다
@@ -1391,7 +1416,7 @@ const RUNNING_VERSION = update.version();
 let updateInfo = null;
 async function checkUpdate(force = false) {
   // home: 이 호스트의 폴더. 확장이 다른 폴더(다른 설치본)에서 불러온 것이면 사이드패널이 알린다
-  updateInfo = { ...(await update.check()), version: RUNNING_VERSION, disk: update.version(), home: path.dirname(dir.replace(/\/$/, '')) };
+  updateInfo = { ...(await update.check()), version: RUNNING_VERSION, disk: update.version(), home: path.dirname(path.resolve(dir)) };
   updateInfo.stale = updateInfo.disk !== RUNNING_VERSION;
   if (updateInfo.available) console.log(`[update] 새 릴리즈 ${updateInfo.latest.tag} (지금 v${updateInfo.version})`);
   if (force || updateInfo.available || updateInfo.stale) sendUpdate();

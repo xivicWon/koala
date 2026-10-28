@@ -72,6 +72,7 @@ function connect() {
     if (m.type === 'update_done') onUpdateDone(m);
     if (m.type === 'claude_run') renderClaudeRun(m.model, m.effort);
     if (m.type === 'claude_conn') { claudeConn = m; updateAiDot(); }
+    if (m.type === 'claude_usage') onClaudeUsage(m);
     if (m.type === 'session') renderSession(m.alias);
     if (m.type === 'actor') renderActor(m.actor);
     if (m.type === 'suite_draft') onSuiteDraft(m.suite, m.base_version, m.tag_doc);

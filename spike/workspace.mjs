@@ -8,9 +8,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as sync from './sync.mjs';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('./workspaces/', import.meta.url).pathname;
-const dir = new URL('.', import.meta.url).pathname;
+const root = fileURLToPath(new URL('./workspaces/', import.meta.url));
+const dir = fileURLToPath(new URL('.', import.meta.url));
 const safe = (s) => String(s).replace(/[^\w.-]/g, '_');
 
 // 지금은 같은 호스트의 임시 저장소에서 읽는다. 백엔드가 생기면 여기만 바꾼다

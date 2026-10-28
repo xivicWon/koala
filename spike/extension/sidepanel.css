@@ -487,9 +487,21 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 /* 세션 이름(kaa-N) */
 .claude-session { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; font-weight: 600; color: var(--text-2);
   background: var(--bg-sunk); border-radius: 5px; padding: 2px 5px; margin-left: 3px; }
-.cs-session { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: 10px;
-  border: 1px solid var(--line); border-radius: 9px; background: var(--bg-soft); }
-.cs-session .pf-hint { margin-left: 0; }
+.cs-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; margin-bottom: 10px; }
+.cs-sum .pf-hint { margin-left: 0; }
+.cs-usage { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft); }
+.cs-usage .pf-hint, .cs-use .pf-hint { margin-left: 0; }
+.cs-usage .cs-meta { margin-top: 0; }
+.cs-use { display: grid; gap: 4px; }
+.cs-use-h { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); }
+.cs-use-h b { color: var(--text); }
+.cs-use-h b.warn { color: var(--warn); } .cs-use-h b.fail { color: var(--fail); }
+.cs-bar { height: 6px; border-radius: 3px; background: var(--bg-sunk); overflow: hidden; }
+.cs-bar i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.cs-bar i.warn { background: var(--warn); } .cs-bar i.fail { background: var(--fail); }
+.cs-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.cs-more { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.cs-more > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 2px 0 8px; }
 .next-step { color: var(--warn); font-weight: 600; }
 
 /* 채택 / 미채택 */
