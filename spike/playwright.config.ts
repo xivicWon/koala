@@ -3,6 +3,8 @@ import 'dotenv/config';
 
 export default defineConfig({
   testDir: './tests',
+  // 세트 폴더(데이터 폴더 안)의 테스트 코드도 '@support/…' 로 정리 도우미를 불러온다
+  tsconfig: './tsconfig.json',
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: process.env.KOALA_BASE_URL,
@@ -11,8 +13,8 @@ export default defineConfig({
     screenshot: 'on',
   },
   projects: [
-    // 사이드패널에서 채택한 테스트로 만든 코드(테스트 묶음). 같은 계정을 쓰므로 순차 실행
-    { name: 'suites', testMatch: /suites\/.*\.spec\.ts/, fullyParallel: false },
+    // 사이드패널에서 채택한 테스트로 만든 코드: <데이터 폴더>/sets/<세트>/tests/code/*.spec.ts. 같은 계정을 쓰므로 순차 실행
+    { name: 'suites', testDir: process.env.KOALA_DATA_DIR || '.koa', testMatch: /sets[\\/][^\\/]+[\\/]tests[\\/]code[\\/].*\.spec\.ts/, fullyParallel: false },
     // tests/ 아래 직접 둔 테스트
     { name: 'local', testIgnore: /suites\//, fullyParallel: false },
   ],

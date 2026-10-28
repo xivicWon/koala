@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@support/*": ["tests/support/*"],
+      "*": ["node_modules/*"]
+    }
+  }
+}

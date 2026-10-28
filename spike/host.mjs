@@ -16,6 +16,7 @@ import * as update from './update.mjs';
 import { hostToken, HEADER as TOKEN_HEADER } from './host-token.mjs';
 import { fileURLToPath } from 'node:url';
 import { DATA, PORT } from './paths.mjs';
+import { safeId, setPaths } from './sets.mjs';
 
 // ---------- 이 PC의 Claude Code 찾기 (각자 PC에 설치·로그인돼 있다는 전제, 없으면 사이드패널에 경고) ----------
 const WIN = process.platform === 'win32';
@@ -229,19 +230,10 @@ function domainOf(p) {
   try { return new URL(p?.target?.base_url).hostname || 'default'; } catch { return 'default'; }
 }
 const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
-// 테스트 코드도 도메인별 폴더에 둔다: tests/suites/<도메인>/<묶음 id>.spec.ts
-// 예전 위치(tests/suites/<id>.spec.ts)의 파일은 처음 쓸 때 지금 도메인 폴더로 옮긴다(정리 도우미 경로도 한 단계 깊게)
-function codeFile(id) {
-  const name = `${String(id).replace(/[^\w.-]/g, '_')}.spec.ts`;
-  const file = `tests/suites/${safeDomain(domain)}/${name}`;
-  const legacy = `${dir}tests/suites/${name}`;
-  if (!fs.existsSync(`${dir}${file}`) && fs.existsSync(legacy)) {
-    fs.mkdirSync(path.dirname(`${dir}${file}`), { recursive: true });
-    fs.writeFileSync(`${dir}${file}`, fs.readFileSync(legacy, 'utf8').replace(/from '\.\.\/support\//g, "from '../../support/"));
-    fs.rmSync(legacy);
-    log('sys', `테스트 코드를 도메인 폴더로 옮겼습니다: ${file}`);
-  }
-  return file;
+// 테스트 코드는 세트 폴더에 둔다: <데이터>/sets/<세트>/tests/code/<세트>.spec.ts (절대 경로; 세트당 한 파일)
+// 지금은 호출하는 쪽이 현재 묶음 id를 넘긴다(묶음 id = 세트 id 가 되는 건 다음 작업)
+function codeFile(setId) {
+  return `${setPaths(setId).code}/${safeId(setId)}.spec.ts`;
 }
 
 // 호스트를 다시 띄워도 이어서 진행하도록 대화 id·수행 기록·현재 화면을 저장한다
@@ -866,12 +858,12 @@ function writeCode(s) {
   const helpers = fs.existsSync(`${dir}tests/support`) ? fs.readdirSync(`${dir}tests/support`).filter((f) => f.endsWith('.ts')).map((f) => {
     const src = fs.readFileSync(`${dir}tests/support/${f}`, 'utf8');
     const ex = [...src.matchAll(/^export (?:async )?function (\w+\([^)]*\))/gm)].map((m) => m[1]).join(', ');
-    return `- import { … } from '../../support/${f.replace(/\.ts$/, '')}' : ${ex}`;
+    return `- import { … } from '@support/${f.replace(/\.ts$/, '')}' : ${ex}`;
   }).join('\n') : '';
   const sc = s.scenarios.map((c) => `${c.id} ${c.title}${roleLine(c)}\n  Given ${c.given.join(' / ')}\n  When ${c.when.join(' / ')}\n  Then ${c.then.join(' / ')}${c.cleanup ? `\n  정리: ${c.cleanup}` : ''}${tagLine(c.tags, c.issue)}${
     tags.inherited(doc, c).length ? `\n  TDD describe에 물려줄 태그: ${tags.inherited(doc, c).join(' ')}` : ''}`).join('\n');
   const tc = s.cases.map((c) => `${c.id} (${c.scenario}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}${tagLine((c.tags || []).filter((t) => !inh(c).includes(t)), c.issue)}`).join('\n');
-  instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(s.id)} (정리 도우미 경로는 '../../support/…')\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}`, { job: 'code' });
+  instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(s.id)} (정리 도우미는 '@support/…' 로 불러온다)\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}`, { job: 'code' });
 }
 
 // 코드에 들어가야 하는 id와 각 테스트가 가져야 하는 태그(케이스는 시나리오에서 물려받은 것 포함)
@@ -933,9 +925,9 @@ function retagSource(src, s) {
 
 function writeAppend(s) {
   const file = codeFile(s.id);
-  if (!fs.existsSync(`${dir}${file}`)) { log('err', '기존 테스트 코드 파일이 없습니다. 코드를 생성하세요'); return; }
+  if (!fs.existsSync(`${file}`)) { log('err', '기존 테스트 코드 파일이 없습니다. 코드를 생성하세요'); return; }
   setCodeExpect(s);
-  const code = fs.readFileSync(`${dir}${file}`, 'utf8');
+  const code = fs.readFileSync(`${file}`, 'utf8');
   appendBase = { file, code, ids: s.append };
   const doc = tagDoc();
   const scById = new Map(s.scenarios.map((c) => [c.id, c]));
@@ -952,15 +944,15 @@ async function appendCode(args) {
   if (!appendBase) return { ok: false, error: '덧붙일 기존 코드가 정해지지 않았습니다. 사이드패널에서 새 테스트 코드 추가를 누르세요' };
   const { file, code: base, ids } = appendBase;
   const code = `${base.trimEnd()}\n\n// ── 테스트 추가 ${new Date().toISOString().slice(0, 10)}: ${ids.join(', ')} ──\n${args.code.trim()}\n`;
-  fs.writeFileSync(`${dir}${file}`, code);
+  fs.writeFileSync(`${file}`, code);
   stepJob('check', '빠진 테스트·태그·중복 확인');
   const pre = await runSpec(file, null, { list: true });
-  if (pre.error && !pre.results.length) { fs.writeFileSync(`${dir}${file}`, base); stepJob('review', '코드에 문법 오류 · AI가 고치는 중'); return { ok: true, result: { compile_error: pre.error, note: '기존 파일은 되돌렸다. 조각을 고쳐 다시 저장한다' } }; }
+  if (pre.error && !pre.results.length) { fs.writeFileSync(`${file}`, base); stepJob('review', '코드에 문법 오류 · AI가 고치는 중'); return { ok: true, result: { compile_error: pre.error, note: '기존 파일은 되돌렸다. 조각을 고쳐 다시 저장한다' } }; }
   const chk = checkCode(pre.results);
   // 기존 테스트가 사라지거나 둘로 늘었는지도 본다(같은 id가 두 번이면 덧붙인 조각이 기존 것을 다시 쓴 것)
   const dup = codeExpect.filter((id) => pre.results.filter((r) => r.title.startsWith(`${id} `)).length > 1);
   if (chk.missing.length || chk.tagMismatch.length || dup.length) {
-    fs.writeFileSync(`${dir}${file}`, base);
+    fs.writeFileSync(`${file}`, base);
     log('err', `새 테스트 코드 검사: 빠진 ${chk.missing.length} · 태그 불일치 ${chk.tagMismatch.length} · 중복 ${dup.length} — 기존 파일로 되돌리고 AI에게 돌려줍니다`);
     stepJob('review', '검사에서 걸림 · AI가 고치는 중');
     return { ok: true, result: { not_run: '검사에서 걸려 실행하지 않았고 기존 파일로 되돌렸다', missing: chk.missing.length ? chk.missing : undefined, tag_mismatch: chk.tagMismatch.length ? chk.tagMismatch : undefined, duplicated: dup.length ? dup : undefined } };
@@ -1047,7 +1039,7 @@ function checkCode(results) {
 const listed = (results) => results.map(({ title, tags: tg, kind }) => ({ title, tags: tg, kind }));
 async function listCode(id) {
   const file = codeFile(id);
-  if (!fs.existsSync(`${dir}${file}`)) { send({ type: 'suite_listed', id, tests: [], error: '코드 파일이 없습니다' }); return; }
+  if (!fs.existsSync(`${file}`)) { send({ type: 'suite_listed', id, tests: [], error: '코드 파일이 없습니다' }); return; }
   const pre = await runSpec(file, null, { list: true });
   send({ type: 'suite_listed', id, tests: listed(pre.results), error: pre.error && !pre.results.length ? pre.error : undefined });
 }
@@ -1055,11 +1047,11 @@ async function listCode(id) {
 // 태그만 바꿔 끼우고 목록 검사만 한다(실행하지 않음). 지난 실행 결과는 사이드패널이 그대로 쓴다
 async function retagCode(s) {
   const file = codeFile(s.id);
-  if (!fs.existsSync(`${dir}${file}`)) { send({ type: 'suite_retag', id: s.id, ok: false, error: '코드 파일이 없습니다. 코드를 다시 생성하세요' }); return; }
-  const r = retagSource(fs.readFileSync(`${dir}${file}`, 'utf8'), s);
+  if (!fs.existsSync(`${file}`)) { send({ type: 'suite_retag', id: s.id, ok: false, error: '코드 파일이 없습니다. 코드를 다시 생성하세요' }); return; }
+  const r = retagSource(fs.readFileSync(`${file}`, 'utf8'), s);
   if (r.error) { send({ type: 'suite_retag', id: s.id, ok: false, error: r.error }); log('err', `태그만 반영하지 못했습니다: ${r.error}`); return; }
   setCodeExpect(s);
-  fs.writeFileSync(`${dir}${file}`, r.code);
+  fs.writeFileSync(`${file}`, r.code);
   const t = Date.now();
   const pre = await runSpec(file, null, { list: true });
   const chk = checkCode(pre.results);
@@ -1073,8 +1065,8 @@ async function saveCode(args) {
   if (!codeTarget) return { ok: false, error: '코드를 만들 테스트 묶음이 정해지지 않았습니다. 사이드패널에서 코드 생성을 다시 누르세요' };
   const id = codeTarget;
   const file = codeFile(id);
-  fs.mkdirSync(path.dirname(`${dir}${file}`), { recursive: true });
-  fs.writeFileSync(`${dir}${file}`, args.code);
+  fs.mkdirSync(path.dirname(`${file}`), { recursive: true });
+  fs.writeFileSync(`${file}`, args.code);
   // 실행 환경이 채워야 할 값: 코드가 읽는 환경변수
   const env = [...new Set(['KOALA_BASE_URL', ...[...args.code.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1])])];
   // 실행 전에 목록만 뽑아(몇 초) 빠진 id·태그 불일치를 먼저 본다. 있으면 실행하지 않고 바로 고치게 한다
@@ -1095,7 +1087,7 @@ async function saveCode(args) {
 let codeRunning = false;
 async function runCode(s, ids = [], only = false) {
   const file = codeFile(s.id);
-  if (!fs.existsSync(`${dir}${file}`)) { log('err', '테스트 코드 파일이 없습니다. 코드를 생성하세요'); return; }
+  if (!fs.existsSync(`${file}`)) { log('err', '테스트 코드 파일이 없습니다. 코드를 생성하세요'); return; }
   if (codeRunning) { log('err', '이미 테스트를 실행하고 있습니다'); return; }
   setCodeExpect(s);
   stopRequested = false;
@@ -1105,7 +1097,7 @@ async function runCode(s, ids = [], only = false) {
   if (only && !ids.length) { log('err', '실행할 테스트를 고르세요'); return; }
   if (only) log('sys', `고른 테스트 ${ids.length}개만 실행합니다: ${ids.join(', ')}`);
   const opt = ids.length ? { grep: `(${ids.join('|')}) `, merge: true } : {};
-  await runAndReport(s.id, file, fs.readFileSync(`${dir}${file}`, 'utf8'), opt);
+  await runAndReport(s.id, file, fs.readFileSync(`${file}`, 'utf8'), opt);
 }
 
 // 실행하고 결과를 사이드패널(진행·결과)과 AI(도구 결과)에 알린다
@@ -1188,7 +1180,7 @@ async function publishSuite(suite, baseVersion) {
   // 코드가 불러오는 정리 도우미도 함께 보낸다(서버가 그대로 돌릴 수 있게)
   if (suite.code?.source) {
     suite.code.support = {};
-    for (const [, f] of suite.code.source.matchAll(/from '(?:\.\.\/)+support\/([\w-]+)'/g)) {
+    for (const [, f] of suite.code.source.matchAll(/from '(?:(?:\.\.\/)+|@)support\/([\w-]+)'/g)) {
       const p = `${dir}tests/support/${f}.ts`;
       if (fs.existsSync(p)) suite.code.support[`support/${f}.ts`] = fs.readFileSync(p, 'utf8');
     }
