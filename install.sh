@@ -2,11 +2,12 @@
 # koala 설치·재설치 (macOS / Linux)
 #   curl -fsSL https://raw.githubusercontent.com/xivicWon/koala/main/install.sh | sh
 #   옵션(환경변수): KOALA_HOME=설치 위치(기본 ~/koala)  KOALA_TAG=v0.2.0(기본 최신 릴리즈)  KOALA_GRAPH=1(경로 그래프 DB도 켬)
-#   시험용: KOALA_REPO=받을 저장소  KOALA_NM_DIRS=Native Messaging 등록 폴더(줄바꿈으로 여러 개)  KOALA_LAUNCHER=실행기 경로
+#   시험용: KOALA_REPO=받을 저장소  KOALA_GITHUB_API=릴리즈 API 주소  KOALA_NM_DIRS=Native Messaging 등록 폴더(줄바꿈으로 여러 개)  KOALA_LAUNCHER=실행기 경로
 # 하는 일: 최신 GitHub 릴리즈 태그를 받고 → 의존성 설치 → .env 준비 → 사이드패널이 호스트를 자동으로 켜도록 등록
 set -eu
 
 GITHUB_REPO=xivicWon/koala
+GITHUB_API=${KOALA_GITHUB_API:-https://api.github.com}
 REPO=${KOALA_REPO:-https://github.com/$GITHUB_REPO.git}
 DEST=${KOALA_HOME:-$HOME/koala}
 NM_NAME=io.github.xivicwon.koala
@@ -32,7 +33,7 @@ fi
 if [ -n "${KOALA_TAG:-}" ]; then
   TAG=$KOALA_TAG
 else
-  TAG=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null \
+  TAG=$(curl -fsSL -H 'Accept: application/vnd.github+json' "$GITHUB_API/repos/$GITHUB_REPO/releases/latest" 2>/dev/null \
     | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).tag_name||"")}catch{}})') || true
   [ -n "$TAG" ] || die "GitHub에서 릴리즈를 찾지 못했습니다(https://github.com/$GITHUB_REPO/releases). 인터넷 연결을 확인하세요."
 fi
