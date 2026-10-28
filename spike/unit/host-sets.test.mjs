@@ -42,10 +42,12 @@ const writeTests = (id, suite) => {
 };
 
 const hosts = [];
+// 호스트가 예전 테스트 코드(tests/suites/)를 찾는 spike 폴더: 개발 폴더의 것을 옮기거나 게이트에 걸리지 않게 임시 폴더로
+const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-spike-'));
 async function startHost(data, extraEnv = {}) {
   const port = await freePort();
   assert.notEqual(port, 8765);
-  const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE,
+  const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_SPIKE_DIR: legacyDir, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE,
     KOALA_PG: 'postgres://koala:koala@127.0.0.1:9/koala', ...extraEnv }; // 그래프 DB는 없는 것으로(사용자 DB에 쓰지 않게)
   delete env.CLAUDECODE;
   const p = spawn(process.execPath, ['host.mjs'], { cwd: spike, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -110,6 +112,7 @@ after(async () => {
   pn?.ws.close();
   for (const p of hosts) await stopHost(p);
   if (data) fs.rmSync(data, { recursive: true, force: true });
+  fs.rmSync(legacyDir, { recursive: true, force: true });
 });
 
 const receivedIds = (m) => m.sets.filter((s) => s.received).map((s) => s.id).sort();
@@ -388,9 +391,7 @@ test('미리 연결 중에 세트를 바꾸면 끝낸 Claude 의 늦은 출력�
   }
 });
 
-test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는다 · 두 번째는 옮긴 것 없이 ok · 작업 중에는 거절', async (t) => {
-  // 호스트는 spike/tests/suites 도 옮긴다. 개발 폴더에 예전 묶음이 있으면 그것을 건드리지 않도록 돌리지 않는다
-  if (fs.existsSync(path.join(spike, 'tests', 'suites'))) return t.skip('spike/tests/suites 가 있어 돌리지 않음(실제 파일을 옮기게 된다)');
+test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는다 · 두 번째는 옮긴 것 없이 ok · 작업 중에는 거절', async () => {
   const old = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-migrate-'));
   const profA = { id: 'pa', name: '프로필 A', version: 2, target: { base_url: 'http://site-a.test', start_url: 'http://site-a.test/' } };
   const profB = { id: 'pb', name: '프로필 B', version: 1, target: { base_url: 'http://site-a.test' } };
@@ -402,7 +403,11 @@ test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는�
     fs.writeFileSync(path.join(b, 'logs', '2026-10-28.jsonl'), '{"k":"sys"}\n');
     putYaml(old, 'store/profiles/pa.yaml', { ...profA, kind: 'profile' });
     putYaml(old, 'store/profiles/pb.yaml', { ...profB, kind: 'profile' });
-    const h = await startHost(old, { FAKE_CLAUDE_HOLD: '\\[예외·오류 보강\\]' });
+    // 예전 테스트 코드는 KOALA_SPIKE_DIR 의 tests/suites 에서 찾는다(개발 폴더의 것은 건드리지 않는다)
+    const spk = path.join(old, 'spike');
+    fs.mkdirSync(path.join(spk, 'tests', 'suites', 'site-a.test'), { recursive: true });
+    fs.writeFileSync(path.join(spk, 'tests', 'suites', 'site-a.test', 'pa--s1.spec.ts'), "import { cleanup } from '../../support/cleanup';\n");
+    const h = await startHost(old, { FAKE_CLAUDE_HOLD: '\\[예외·오류 보강\\]', KOALA_SPIKE_DIR: spk });
     const p = await connectPanel(h);
     const suite = { id: 'pa--s1', name: '묶음', scenarios: [{ id: 'SC-1', title: '로그인', use: true }], cases: [], flow: [], coverage: [] };
     const req = { type: 'migrate', profiles: { pa: { data: profA }, pb: { data: profB } }, activeId: 'pb',
@@ -424,6 +429,9 @@ test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는�
       assert.ok(!fs.existsSync(path.join(old, 'domains')));
       assert.equal(stateOf(old, 'pb').sessionAlias, 'kaa-1');
       assert.equal(readJson(path.join(old, 'sets', 'pa', 'tests', 'tests.json')).scenarios[0].title, '로그인');
+      assert.equal(fs.readFileSync(path.join(old, 'sets', 'pa', 'tests', 'code', 'pa.spec.ts'), 'utf8'), "import { cleanup } from '@support/cleanup';\n");
+      assert.ok(!fs.existsSync(path.join(spk, 'tests', 'suites')));
+      assert.ok(r.archive && fs.existsSync(path.join(r.archive, 'tests', 'suites', 'site-a.test', 'pa--s1.spec.ts')));
 
       // 다시 켜지 않아도 세트 작업을 받는다
       at = p.mark();
@@ -457,8 +465,7 @@ test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는�
   }
 });
 
-test('migrate: 패널이 프로필 없이 보내면 이 PC 저장소의 서버 프로필로 옮기고 나머지는 skipped', async (t) => {
-  if (fs.existsSync(path.join(spike, 'tests', 'suites'))) return t.skip('spike/tests/suites 가 있어 돌리지 않음(실제 파일을 옮기게 된다)');
+test('migrate: 패널이 프로필 없이 보내면 이 PC 저장소의 서버 프로필로 옮기고 나머지는 skipped', async () => {
   const old = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-migrate-'));
   try {
     for (const d of ['site-a.test', 'site-z.test']) {

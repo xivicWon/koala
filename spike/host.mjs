@@ -242,8 +242,10 @@ const arr = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
 // 예전 데이터(도메인 버킷 .koa/domains/, tests/suites/)가 남아 있고 아직 옮기지 않았으면 세트 작업을 받지 않는다
 const nonEmpty = (d) => { try { return fs.readdirSync(d).length > 0; } catch { return false; } };
+// 예전 테스트 코드(tests/suites/)·공용 저장소를 찾는 spike 폴더. 시험은 KOALA_SPIKE_DIR 로 임시 폴더를 쓴다(개발 폴더의 예전 묶음을 옮기지 않게)
+const LEGACY_DIR = process.env.KOALA_SPIKE_DIR ? path.resolve(process.env.KOALA_SPIKE_DIR) : dir;
 const needsMigration = () => !fs.existsSync(path.join(DATA, 'sets', '.migrated'))
-  && (nonEmpty(path.join(DATA, 'domains')) || nonEmpty(path.join(dir, 'tests', 'suites')));
+  && (nonEmpty(path.join(DATA, 'domains')) || nonEmpty(path.join(LEGACY_DIR, 'tests', 'suites')));
 const MIGRATION_MSG = '기존 데이터를 세트로 옮긴 뒤 사용할 수 있습니다. 먼저 옮기기를 진행하세요';
 
 // 세트 스냅숏(set.json + received/ + secrets/)과 패널의 내 설정으로 지금까지의 프로필 모양을 만든다.
@@ -394,7 +396,7 @@ function migrate(ws, m) {
   const before = readJsonFile(path.join(DATA, 'sets', '.migrated'));
   let plan, r;
   try {
-    plan = planMigration({ root: DATA, spikeDir: dir, profiles: m.profiles || {}, activeId: m.activeId ?? null, extSuites: m.extSuites || {}, extTimelines: m.extTimelines || [] });
+    plan = planMigration({ root: DATA, spikeDir: LEGACY_DIR, profiles: m.profiles || {}, activeId: m.activeId ?? null, extSuites: m.extSuites || {}, extTimelines: m.extTimelines || [] });
     r = applyMigration(plan);
   } catch (e) { r = { ok: false, moved: 0, errors: [e.message] }; }
   if (!r.ok) {
@@ -412,7 +414,7 @@ function migrate(ws, m) {
   console.log(`[migrate] ${before ? '이미 옮겼음' : `세트 ${plan.sets.length}개로 옮겼습니다 · 파일 ${r.moved}개 · 보관 ${plan.archive}`}${skipped.length ? ` · 건너뜀 ${skipped.length}` : ''}`);
   for (const e of r.errors) console.log('[migrate]', e);
   for (const s of sockets) sendSets(s);
-  reply({ ok: true, moved: r.moved, setByProfile, timelineKeys, skipped, errors: r.errors });
+  reply({ ok: true, moved: r.moved, setByProfile, timelineKeys, skipped, errors: r.errors, archive: before?.archive || plan.archive });
 }
 
 // MCP 서버가 부르는 도구 호출 → 사이드패널로 넘기고 결과를 기다린다
