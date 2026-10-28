@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as sync from './sync.mjs';
 import { fileURLToPath } from 'node:url';
+import { DATA, PORT } from './paths.mjs';
 
 const root = fileURLToPath(new URL('./workspaces/', import.meta.url));
 const dir = fileURLToPath(new URL('.', import.meta.url));
@@ -50,7 +51,9 @@ export function prepare(profile) {
     // koa 도구(MCP) 설정은 작업 폴더가 바뀌어도 찾을 수 있게 절대 경로로 둔다
     fs.mkdirSync(path.dirname(versionFile), { recursive: true });
     fs.writeFileSync(path.join(ws, '.koa', 'mcp.json'), JSON.stringify({
-      mcpServers: { koala: { command: process.execPath, args: [path.join(dir, 'mcp-server.mjs')] } },
+      mcpServers: { koala: { command: process.execPath, args: [path.join(dir, 'mcp-server.mjs')],
+        // Claude CLI가 띄우는 프로세스라 호스트 환경을 믿지 않고 명시한다
+        env: { KOALA_PORT: String(PORT), KOALA_DATA_DIR: DATA } } },
     }, null, 2));
     fs.writeFileSync(versionFile, stamp);
   }

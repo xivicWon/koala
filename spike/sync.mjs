@@ -9,10 +9,12 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import YAML from 'yaml';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DATA } from './paths.mjs';
 
 const shared = fileURLToPath(new URL('./store/', import.meta.url));
-const local = fileURLToPath(new URL('./.koa/store/', import.meta.url));
+const local = `${DATA}/store/`;
 const ROOTS = [local, shared];
 const KINDS = ['profile', 'knowledge', 'plan', 'suite', 'test', 'tag', 'role'];
 
@@ -51,7 +53,7 @@ export function get(kind, id) {
 
 // 역할 문서의 기본 계정: 서버가 내려줄 값을 대신 채운다. 비밀값이라 git 밖(.koa/server-accounts/<id>.yaml)에 둔다
 function withAccounts(doc) {
-  const f = fileURLToPath(new URL(`./.koa/server-accounts/${doc.id}.yaml`, import.meta.url));
+  const f = path.join(DATA, 'server-accounts', `${doc.id}.yaml`);
   const acc = fs.existsSync(f) ? read(f)?.accounts || {} : {};
   return { ...doc, roles: (doc.roles || []).map((r) => ({ ...r, account: acc[r.key]?.user ? { user: acc[r.key].user, pass: acc[r.key].pass || '' } : null })) };
 }

@@ -16,7 +16,7 @@ import * as update from './update.mjs';
 import { hostToken, HEADER as TOKEN_HEADER } from './host-token.mjs';
 import { fileURLToPath } from 'node:url';
 
-const PORT = 8765;
+import { DATA, PORT } from './paths.mjs';
 // ---------- 이 PC의 Claude Code 찾기 (각자 PC에 설치·로그인돼 있다는 전제, 없으면 사이드패널에 경고) ----------
 const WIN = process.platform === 'win32';
 function findClaude() {
@@ -200,7 +200,7 @@ function audit(ev, data = {}) {
   } catch {}
 }
 function pruneLogs() {
-  const root = path.join(dir, '.koa', 'domains');
+  const root = path.join(DATA, 'domains');
   const cut = Date.now() - LOG_DAYS * 86400000;
   try {
     for (const d of fs.readdirSync(root)) {
@@ -218,10 +218,10 @@ const briefArgs = (a = {}) => Object.fromEntries(Object.entries(a).filter(([k]) 
 //   .koa/domains/<호스트>/state.json — 그 도메인의 대화 id·세션 이름·수행 기록·현재 화면·로그인 역할
 //   .koa/domains/<호스트>/recording.json, recordings/, drafts/
 // 어느 도메인인지는 사이드패널이 정해 보낸다(프로필 대상 주소를 고치는 도중에는 바뀌지 않게)
-const STATE = `${dir}.koa/state.json`;
+const STATE = path.join(DATA, 'state.json');
 let domain = 'default';
 const safeDomain = (d) => String(d || 'default').toLowerCase().replace(/[^\w.-]/g, '_');
-const bucket = (d = domain) => path.join(dir, '.koa', 'domains', safeDomain(d));
+const bucket = (d = domain) => path.join(DATA, 'domains', safeDomain(d));
 const recFile = () => path.join(bucket(), 'recording.json');
 const draftsDir = () => path.join(bucket(), 'drafts');
 // 프로필의 도메인: 대상 주소의 호스트 이름. 없으면 default
@@ -1402,7 +1402,7 @@ function retryWarm(reason) {
 // ---------- 저장된 상태 불러오기 ----------
 // 예전(도메인 구분 전) 데이터는 기록된 첫 주소의 도메인으로 옮긴다
 function migrateLegacy() {
-  if (fs.existsSync(path.join(dir, '.koa', 'domains'))) return;
+  if (fs.existsSync(path.join(DATA, 'domains'))) return;
   let st = null;
   try { st = JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return; }
   if (!st || !('sessionId' in st || 'steps' in st)) return;

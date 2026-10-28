@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import http from 'node:http';
 import { hostToken, HEADER } from './host-token.mjs';
+import { HOST_URL } from './paths.mjs';
 
 const locator = z.object({
   testid: z.string().optional().describe('data-testid 값. 있으면 최우선'),
@@ -16,7 +17,7 @@ const locator = z.object({
 // 시간 제한 없는 node:http로 부른다
 function post(body) {
   return new Promise((resolve, reject) => {
-    const req = http.request('http://127.0.0.1:8765/tool', { method: 'POST', headers: { 'content-type': 'application/json', [HEADER]: hostToken() } }, (res) => {
+    const req = http.request(`${HOST_URL}/tool`, { method: 'POST', headers: { 'content-type': 'application/json', [HEADER]: hostToken() } }, (res) => {
       let data = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { data += c; });
