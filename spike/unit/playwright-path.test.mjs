@@ -53,3 +53,16 @@ test('Windows 에서는 공백·특수문자 인자를 따옴표로 감싼다', 
   assert.ok(args.some((a) => a.startsWith('"') && a.endsWith('"') && a.includes('Jane Doe')));
   assert.equal(args[0], 'playwright');
 });
+
+// 파일 인자는 정규식: Windows 역슬래시 경로(공백·한글 포함)에 걸리고, 다른 세트·비슷한 이름에는 걸리지 않는다
+test('파일 인자 정규식은 역슬래시 경로에 걸리고 다른 세트에는 안 걸린다', () => {
+  const arg = playwrightArgs('/data/with space/sets/s/tests/code/s.spec.ts', { cwd: '/x' })[2];
+  const re = new RegExp(arg, 'i');
+  assert.ok(re.test('C:\\Users\\홍 길동\\koala\\spike\\.koa\\sets\\s\\tests\\code\\s.spec.ts'));
+  assert.ok(re.test('/Users/홍 길동/.koa/sets/s/tests/code/s.spec.ts'));
+  assert.ok(!re.test('C:\\Users\\홍 길동\\koala\\spike\\.koa\\sets\\t\\tests\\code\\t.spec.ts'));
+  assert.ok(!re.test('C:\\koala\\.koa\\sets\\xs\\tests\\code\\s.spec.ts'));
+  assert.ok(!re.test('C:\\koala\\mysets\\s\\tests\\code\\s.spec.ts'));
+  assert.ok(!re.test('C:\\koala\\.koa\\sets\\s\\tests\\code\\s.spec.tsx'));
+  assert.ok(!/["\s]/.test(arg)); // 따옴표가 필요 없는 인자
+});
