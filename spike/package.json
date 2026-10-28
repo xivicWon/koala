@@ -1,0 +1,32 @@
+{
+  "name": "koala",
+  "version": "0.2.7",
+  "description": "브라우저 확장으로 AI가 QA하고 Playwright 테스트로 남기는 도구(koa)",
+  "scripts": {
+    "start": "node host.mjs",
+    "graph:up": "docker compose up -d",
+    "graph:down": "docker compose down",
+    "test": "playwright test",
+    "dev:chrome": "node launch-chrome.mjs"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "dotenv": "^18.0.9",
+    "pg": "^8.23.1",
+    "ws": "^8.22.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "koala": {
+    "github": "xivicWon/koala"
+  }
+}

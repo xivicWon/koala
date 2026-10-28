@@ -1,0 +1,10 @@
+.env
+recording.json
+playwright/.auth/
+test-results/
+playwright-report/
+recordings/
+workspaces/
+drafts/
+.koa/
+tests/

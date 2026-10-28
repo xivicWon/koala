@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="sidepanel.css">
+  <script src="theme.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-l">
+      <img class="logo" src="icons/icon48.png" alt="">
+      <span class="brand-box"><span class="brand">koala</span><span id="ver" class="ver"></span></span>
+      <button type="button" id="upd-pill" class="upd-pill" hidden></button>
+      <span id="mode" class="pill mode" hidden></span>
+    </div>
+    <div class="top-ctx">
+      <button type="button" id="profile-chip" class="profile-chip" title="프로필"></button>
+      <button type="button" id="claude-btn" class="claude-btn" title="Claude 설정 보기"><span id="ai-dot" class="ai-dot off" role="status" aria-label="AI 연결 안 됨 (호스트 꺼짐)"></span><span class="claude-mark" aria-hidden="true"></span><span class="claude-name">Claude</span><span id="claude-model" class="claude-model" hidden></span><span id="claude-effort" class="claude-effort" hidden></span><span id="claude-session" class="claude-session" hidden></span></button>
+      <button type="button" id="theme-btn" class="icon-btn theme-btn" aria-label="테마"></button>
+    </div>
+  </header>
+
+  <section class="status">
+    <div class="band-top">
+      <div class="url-row" data-tip="AI가 조작하고 지켜보는 탭(대상 탭)의 지금 주소입니다. 다른 탭을 보면 그 탭으로 바뀝니다."><span class="url-k">대상 탭</span><span id="s-url" class="url mono">페이지 없음</span></div>
+      <span id="s-actor" class="role-tag actor" hidden></span>
+      <!-- 조작 재생: 속도·일시정지 -->
+      <div class="play">
+        <div class="seg" id="speed" role="radiogroup" title="조작 속도: 화면에서 조작을 얼마나 천천히 보여 줄지">
+          <button data-v="slow" title="느리게" aria-label="느리게"><svg class="spd" viewBox="0 0 6 10" width="6" height="10" aria-hidden="true"><path d="M1 1.5 5 5 1 8.5"/></svg></button><button data-v="normal" class="on" title="보통" aria-label="보통"><svg class="spd" viewBox="0 0 11 10" width="11" height="10" aria-hidden="true"><path d="M1 1.5 5 5 1 8.5 M6 1.5 10 5 6 8.5"/></svg></button><button data-v="fast" title="빠르게" aria-label="빠르게"><svg class="spd" viewBox="0 0 16 10" width="16" height="10" aria-hidden="true"><path d="M1 1.5 5 5 1 8.5 M6 1.5 10 5 6 8.5 M11 1.5 15 5 11 8.5"/></svg></button>
+        </div>
+        <button id="pause" class="icon-btn" title="다음 조작 전에 멈춤">❚❚</button>
+      </div>
+    </div>
+    <div class="metrics">
+      <span class="metric" data-tip="대상 탭의 화면 상태입니다.
+· 페이지 준비됨: 페이지와 데이터 요청이 모두 끝나 조작할 수 있음
+· 페이지 불러오는 중: 페이지를 여는 중
+· 데이터 받는 중: 화면은 떴지만 API 응답을 기다리는 중"><span id="s-load-dot" class="ld"></span><span id="s-load">-</span></span>
+      <span class="metric" data-tip="보냈지만 아직 응답을 받지 못한 요청 수입니다.
+3초 넘게 끝나지 않는 요청(실시간 연결 등)은 '장기'로 따로 세고, 화면 준비 판단에서는 뺍니다.">응답 대기 <b id="s-inflight">0</b></span>
+      <span class="grow"></span>
+      <button id="b-net" class="metric-btn" title="이 시나리오의 전체 요청">요청 <b id="c-net">0</b></button>
+      <button id="b-neterr" class="metric-btn" title="4xx·5xx·실패한 요청">API 오류 <b id="c-neterr">0</b></button>
+      <button id="b-con" class="metric-btn" title="콘솔 오류·경고">콘솔 <b id="c-con">0</b></button>
+    </div>
+  </section>
+
+  <div id="env-alert" class="env-alert" hidden></div>
+  <main id="timeline">
+    <div id="empty" class="empty">
+      <img src="icons/icon128.png" alt="">
+      <p>확인하고 싶은 흐름을 말로 적어 주세요.<br>AI가 화면에서 직접 조작하고, 확인한 내용은 테스트 코드로 남습니다.</p>
+    </div>
+  </main>
+
+  <div id="job-card" class="job-card" role="status" aria-live="polite" hidden></div>
+  <form id="f" class="composer">
+    <div class="run-mode-row">
+      <span id="suite-hint" class="hint-text">테스트를 수행한 뒤, 그 이력으로 TDD·BDD 테스트를 만들 수 있습니다</span>
+      <span class="grow"></span>
+      <button type="button" id="derive-btn" class="btn sm" disabled>이 수행으로 테스트 생성</button>
+      <button type="button" id="plan-btn" class="btn sm list-btn">테스트 목록</button>
+    </div>
+    <textarea id="q" rows="2" placeholder="예: 로그인하고 회원가입 화면의 입력란이 잘 보이는지 확인해줘"></textarea>
+    <div class="composer-row">
+      <div id="role-scope" class="role-scope" role="group" aria-label="수행할 역할" hidden></div>
+      <span class="grow"></span>
+      <span class="hint">⌘↵</span>
+      <button id="send" class="primary">실행</button>
+    </div>
+  </form>
+
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <b id="sheet-title"></b>
+        <span class="grow"></span>
+        <button id="sheet-close" class="icon-btn" title="닫기">✕</button>
+      </div>
+      <div id="net-tools" class="net-tools" hidden>
+        <span class="legend"><span class="sess on"></span>세션 있음 <span class="sess chg"></span>바뀜 <span class="sess off"></span>없음</span>
+        <span class="grow"></span>
+        <span class="hint-text">행을 눌러 상세를 열고, 영역을 체크해 복사하세요</span>
+      </div>
+      <div id="sheet-body" class="sheet-body"></div>
+    </div>
+  </div>
+  <script src="sidepanel.js"></script>
+  <script src="profile.js"></script>
+  <script src="claude-settings.js"></script>
+  <script src="suite.js"></script>
+  <script src="update.js"></script>
+  <script src="job.js"></script>
+</body>
+</html>

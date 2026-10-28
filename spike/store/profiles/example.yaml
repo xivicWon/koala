@@ -1,0 +1,20 @@
+# 프로필 예시: 대상 서비스 하나에 프로필 하나. 서버가 내려준다고 가정한 임시본이다.
+# 실제 서비스의 프로필은 .koa/store/profiles/ 에 둔다(git 밖). 사이드패널에서 고친 프로필도 그곳에 저장된다.
+id: example
+kind: profile
+version: 1
+updated_at: "2026-10-28T00:00:00.000Z"
+name: 예시 서비스
+knowledge:
+  - qa-common              # 서버가 내려주는 지식 문서(공통 QA 원칙)
+tags: qa-tags              # 서버가 내려주는 태그 문서
+claude:
+  model: null              # null 이면 Claude Code 기본 모델
+target:
+  base_url: http://localhost:3000
+  login_path: /login
+  env: local
+roles: example-roles       # 서버가 내려주는 역할 문서(역할·기본 계정)
+prompt: |
+  - 이 서비스에 대해 AI가 알아야 할 것을 적는다. 예: 로그인 화면의 입력란을 찾는 방법, 메뉴 구조, 느린 화면, 실행마다 바뀌는 testid.
+cleanup: []                # 테스트가 만든 데이터를 지우는 방법(API 등)

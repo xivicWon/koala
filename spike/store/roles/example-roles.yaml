@@ -1,0 +1,19 @@
+# 역할 문서 예시(서버가 내려준다고 가정한 임시본).
+# 역할마다 기본 계정을 함께 내려준다. 각 사용자는 확장에서 자기 계정으로 바꿔 쓸 수 있다.
+# 메뉴 권한은 서비스마다 설정 방식이 달라 여기에 적지 않는다. AI가 역할마다 직접 찾는다.
+# 기본 계정의 아이디·비밀번호는 저장소(git)에 두지 않는다. 임시 서버(sync.mjs)가 .koa/server-accounts/<id>.yaml 에서 채워 내려준다:
+#   accounts:
+#     ADMIN: { user: admin, pass: ... }
+id: example-roles
+kind: role
+version: 1
+updated_at: "2026-10-28T00:00:00.000Z"
+name: 예시 서비스 역할
+default_role: ADMIN        # 역할을 고르지 않은 테스트가 쓰는 역할
+roles:
+  - key: ADMIN
+    label: 관리자
+    desc: 모든 메뉴를 쓰는 관리자
+  - key: MEMBER
+    label: 일반 사용자
+    desc: 일반 기능만 쓰는 사용자

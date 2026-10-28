@@ -1,0 +1,295 @@
+// 프로필: 대상 서버·사이트 지식(프롬프트)·역할. 동기화 저장소에서 받아 chrome.storage.local 에 둔다.
+// 역할과 역할별 기본 계정은 서버의 역할 문서로 받는다. 사용자가 바꾼 계정은 공유하지 않고 이 확장에만 저장한다(키체인은 보류, 평문).
+const SYNC = 'http://127.0.0.1:8765/sync';
+const KEEP_HISTORY = 3;
+
+let profiles = {};   // id → { data, dirty, conflict, history: [이전 data…], syncedAt }
+let activeId = null;
+let localAcc = {};   // id → { 계정 key → { user, pass } } (사용자가 바꾼 계정)
+let roleDocs = {};   // 역할 문서 id → 문서(역할·기본 계정)
+let roleScope = {};  // 프로필 id → 이번에 수행할 역할 key 목록
+let remoteVer = {};  // id → 저장소 최신 버전
+let syncError = '';
+
+// 호스트는 자동 실행(/instruct)에도 같은 프로필을 쓰도록 바뀔 때마다 받아 둔다
+function sendProfileToHost() {
+  if (typeof ws !== 'undefined' && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'profile', profile: activeProfilePayload() }));
+}
+const saveProfiles = () => {
+  sendProfileToHost();
+  return chrome.storage.local.set({ profiles, activeProfile: activeId, profileLocal: localAcc, roleDocs, roleScope });
+};
+
+async function loadProfiles() {
+  const r = await chrome.storage.local.get(['profiles', 'activeProfile', 'profileLocal', 'roleDocs', 'roleScope']);
+  profiles = r.profiles || {};
+  activeId = r.activeProfile || null;
+  localAcc = r.profileLocal || {};
+  roleDocs = r.roleDocs || {};
+  roleScope = r.roleScope || {};
+  renderProfileChip();
+  renderRoleScope();
+  sendProfileToHost();
+}
+
+// 프로필의 역할: 서버 역할 문서(roles: <문서 id>). 예전 프로필은 역할을 직접 담고 있었다
+function roleSet(d) {
+  if (!d) return { roles: [], default_role: null };
+  const doc = typeof d.roles === 'string' ? roleDocs[d.roles] : { roles: d.roles || [], default_role: d.default_role };
+  const roles = doc?.roles || [];
+  return { roles, default_role: doc?.default_role || roles[0]?.key || null, doc_id: typeof d.roles === 'string' ? d.roles : null, version: doc?.version };
+}
+const accKey = (role) => `KOALA_${role}`;
+// 역할의 계정: 내가 바꾼 계정이 있으면 그것, 없으면 서버 기본 계정
+function roleAccount(pid, r) {
+  const def = r.account || null;
+  const mine = localAcc[pid]?.[accKey(r.key)];
+  const own = mine?.user && !(def && mine.user === def.user && (mine.pass || '') === (def.pass || ''));
+  const use = own ? mine : def;
+  return { key: accKey(r.key), role: r.key, label: `${r.label} 계정`, user: use?.user || '', pass: use?.pass || '', source: own ? 'mine' : def?.user ? 'server' : 'none', def };
+}
+
+// 활성 프로필의 역할(관리자·일반 사용자 등)
+const profileRoles = () => roleSet(profiles[activeId]?.data).roles;
+const defaultRoleKey = () => roleSet(profiles[activeId]?.data).default_role;
+const roleLabel = (key) => profileRoles().find((r) => r.key === key)?.label || key || '';
+// 로그인할 수 있는 역할(계정 값이 있는 것)
+const usableRoles = () => profileRoles().filter((r) => roleAccount(activeId, r).user);
+// 이번 지시를 수행할 역할: 고른 것이 없으면 로그인할 수 있는 역할 모두
+function scopeRoles() {
+  const ok = usableRoles().map((r) => r.key);
+  const picked = (roleScope[activeId] || ok).filter((k) => ok.includes(k));
+  return picked.length ? picked : ok.slice(0, 1);
+}
+
+// 입력창 옆 역할 칩: 이번 지시를 어느 역할로 수행할지 고른다
+function renderRoleScope() {
+  const el = document.getElementById('role-scope');
+  if (!el) return;
+  const roles = profileRoles();
+  el.hidden = roles.length < 2;
+  const on = new Set(scopeRoles());
+  el.innerHTML = roles.map((r) => {
+    const a = roleAccount(activeId, r);
+    return `<button type="button" class="role-chip ${on.has(r.key) ? 'on' : ''}" data-role-scope="${esc(r.key)}" ${a.user ? '' : 'disabled'}
+      title="${a.user ? `${esc(r.label)}로 수행 (${a.source === 'mine' ? '내 계정' : '서버 기본 계정'})` : `${esc(r.label)} 계정이 없습니다. 프로필에서 계정을 넣으세요`}">${esc(r.label)}</button>`;
+  }).join('');
+}
+document.getElementById('role-scope')?.addEventListener('click', (e) => {
+  const k = e.target.closest('[data-role-scope]')?.dataset.roleScope;
+  if (!k) return;
+  const cur = new Set(scopeRoles());
+  if (cur.has(k)) { if (cur.size > 1) cur.delete(k); } else cur.add(k);
+  roleScope[activeId] = profileRoles().map((r) => r.key).filter((x) => cur.has(x));
+  chrome.storage.local.set({ roleScope });
+  renderRoleScope();
+});
+
+async function pullRoleDoc(id) {
+  try {
+    const r = await fetch(`${SYNC}/roles/${encodeURIComponent(id)}`);
+    if (r.ok) roleDocs[id] = await r.json();
+  } catch {}
+}
+
+// 저장소 목록과 비교해 새 버전이 있으면 받는다. 내가 고친 게 있으면 덮어쓰지 않고 충돌로 표시한다
+async function syncProfiles() {
+  try {
+    const cat = await (await fetch(`${SYNC}/catalog`)).json();
+    syncError = '';
+    for (const item of cat.filter((c) => c.kind === 'profile')) {
+      remoteVer[item.id] = item.version;
+      const mine = profiles[item.id];
+      if (mine && mine.data.version >= item.version) continue;
+      if (mine?.dirty) { mine.conflict = true; continue; }
+      await pullProfile(item.id, { quiet: !mine });
+    }
+    // 역할 문서는 늘 새로 받는다(기본 계정이 바뀔 수 있다)
+    for (const id of new Set(Object.values(profiles).map((p) => p.data.roles).filter((x) => typeof x === 'string'))) await pullRoleDoc(id);
+    if (!activeId || !profiles[activeId]) activeId = Object.keys(profiles)[0] || null;
+    await saveProfiles();
+  } catch (e) {
+    syncError = '동기화 저장소에 연결할 수 없습니다';
+  }
+  renderProfileChip();
+  renderRoleScope();
+  if (sheetMode === 'profile') renderSheet();
+}
+
+async function pullProfile(id, { quiet } = {}) {
+  const doc = await (await fetch(`${SYNC}/profiles/${encodeURIComponent(id)}`)).json();
+  const mine = profiles[id];
+  const history = mine ? [mine.data, ...(mine.history || [])].slice(0, KEEP_HISTORY) : [];
+  profiles[id] = { data: doc, dirty: false, conflict: false, history, syncedAt: Date.now() };
+  remoteVer[id] = doc.version;
+  if (mine && !quiet) msg('sys', `프로필 "${doc.name}" v${mine.data.version} → v${doc.version} 업데이트를 받았습니다`);
+}
+
+async function pushProfile(id) {
+  const p = profiles[id];
+  const res = await fetch(`${SYNC}/profiles/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ base_version: p.data.version, data: p.data }),
+  });
+  const body = await res.json();
+  if (res.status === 409) {
+    p.conflict = true;
+    remoteVer[id] = body.current.version;
+    return { conflict: true, current: body.current };
+  }
+  profiles[id] = { ...p, data: body, dirty: false, conflict: false, history: [p.data, ...(p.history || [])].slice(0, KEEP_HISTORY) };
+  remoteVer[id] = body.version;
+  await saveProfiles();
+  return { ok: true, version: body.version };
+}
+
+function rollbackProfile(id) {
+  const p = profiles[id];
+  if (!p?.history?.length) return;
+  const [prev, ...rest] = p.history;
+  // 되돌린 내용은 로컬 수정으로 본다. 올리면 저장소에 새 버전으로 기록된다
+  profiles[id] = { ...p, data: { ...prev, version: p.data.version }, dirty: true, history: rest };
+  saveProfiles();
+}
+
+// 지시와 함께 호스트로 보내는 활성 프로필(계정 값은 로컬 값을 합친다)
+function activeProfilePayload() {
+  const p = profiles[activeId]?.data;
+  if (!p) return null;
+  return {
+    id: p.id, version: p.version, name: p.name, target: p.target, prompt: p.prompt, knowledge: p.knowledge, claude: p.claude,
+    tags: p.tags, ...(() => {
+      const rs = roleSet(p);
+      return {
+        roles: rs.roles.map(({ account, ...r }) => r), default_role: rs.default_role, role_doc: rs.doc_id && `${rs.doc_id}@v${rs.version}`,
+        accounts: rs.roles.map((r) => { const { def, ...a } = roleAccount(p.id, r); return a; }),
+      };
+    })(),
+  };
+}
+
+function profileStatus(id) {
+  const p = profiles[id];
+  if (!p) return { text: '없음', cls: 'off' };
+  if (p.conflict) return { text: `충돌 · 저장소 v${remoteVer[id]}`, cls: 'bad' };
+  if (p.dirty) return { text: `v${p.data.version} · 내 수정 있음`, cls: 'warn' };
+  if (remoteVer[id] > p.data.version) return { text: `v${p.data.version} · 새 버전 v${remoteVer[id]}`, cls: 'warn' };
+  return { text: `v${p.data.version} · 최신`, cls: 'ok' };
+}
+
+function renderProfileChip() {
+  const chip = document.getElementById('profile-chip');
+  if (!chip) return;
+  const p = profiles[activeId]?.data;
+  const st = activeId ? profileStatus(activeId) : { cls: 'off' };
+  chip.innerHTML = `<span class="pdot ${st.cls}"></span>${p ? esc(p.name) : '프로필 없음'}`;
+  chip.title = p ? `${p.name} · ${st.text}${syncError ? ` · ${syncError}` : ''}` : syncError || '프로필 없음';
+}
+
+// 시트: 프로필 보기·수정
+function renderProfileSheet(body) {
+  $('sheet-title').textContent = '프로필';
+  const p = profiles[activeId];
+  if (!p) {
+    body.innerHTML = `<div class="none">${syncError || '받은 프로필이 없습니다'}<br><button type="button" class="btn" data-pf="sync" style="margin-top:10px">동기화</button></div>`;
+    return;
+  }
+  const d = p.data;
+  const st = profileStatus(activeId);
+  const acc = localAcc[d.id] || {};
+  const rs = roleSet(d);
+  body.innerHTML = `<div class="pf">
+    <div class="pf-row">
+      <select class="pf-select" data-pf="select">${Object.values(profiles).map((x) =>
+        `<option value="${esc(x.data.id)}" ${x.data.id === activeId ? 'selected' : ''}>${esc(x.data.name)}</option>`).join('')}</select>
+      <span class="pf-status ${st.cls}">${st.text}</span>
+      <span class="grow"></span>
+      <button type="button" class="btn sm" data-pf="sync">동기화</button>
+      <button type="button" class="btn sm" data-pf="push" ${p.dirty ? '' : 'disabled'}>변경 올리기</button>
+      <button type="button" class="btn sm ghost" data-pf="rollback" ${p.history?.length ? '' : 'disabled'} title="받아 둔 이전 버전으로">이전 버전</button>
+    </div>
+    ${p.conflict ? `<div class="pf-alert">저장소에 다른 사람이 올린 새 버전(v${remoteVer[activeId]})이 있습니다.
+      <button type="button" class="btn sm" data-pf="take-remote">저장소 버전 받기 (내 수정 버림)</button></div>` : ''}
+    ${syncError ? `<div class="pf-alert">${syncError}</div>` : ''}
+
+    <label class="pf-label">대상 주소</label>
+    <input class="pf-input mono" data-field="target.base_url" value="${esc(d.target?.base_url ?? '')}">
+
+    <label class="pf-label">역할과 계정 <span class="pf-hint">${rs.doc_id ? `서버 역할 문서 ${esc(rs.doc_id)} v${rs.version ?? '?'}` : ''} · 바꾼 계정은 이 확장에만 저장됩니다</span></label>
+    ${rs.roles.length ? '' : '<div class="pf-hint">역할 정보가 없습니다. 동기화하세요</div>'}
+    ${rs.roles.map((r) => {
+      const a = roleAccount(d.id, r);
+      const mine = acc[a.key] || {};
+      const src = { mine: '<span class="tag ok">내 계정</span>', server: '<span class="tag">서버 기본 계정</span>', none: '<span class="tag warn">계정 없음</span>' }[a.source];
+      return `<div class="pf-acc">
+      <div class="pf-acc-h"><span class="role-tag">${esc(r.label)}</span>${r.key === rs.default_role ? '<span class="tag">기본 역할</span>' : ''}${src}
+        <span class="grow"></span>${a.source === 'mine' ? `<button type="button" class="btn sm ghost" data-pf="acc-reset" data-acc-key="${esc(a.key)}" ${a.def?.user ? '' : 'disabled'}>기본 계정으로</button>` : ''}</div>
+      <div class="pf-hint pf-role-d">${esc(r.desc || '')} <span class="mono">$${esc(a.key)}_USER · _PASS</span></div>
+      <div class="pf-acc-f">
+        <input class="pf-input" placeholder="${a.def?.user ? `기본: ${esc(a.def.user)}` : '아이디'}" data-acc="${esc(a.key)}" data-k="user" value="${esc(a.source === 'mine' ? mine.user ?? '' : '')}" autocomplete="off">
+        <input class="pf-input" placeholder="${a.def?.user ? '기본 비밀번호' : '비밀번호'}" type="password" data-acc="${esc(a.key)}" data-k="pass" value="${esc(a.source === 'mine' ? mine.pass ?? '' : '')}" autocomplete="new-password">
+      </div></div>`;
+    }).join('')}
+
+    <label class="pf-label">사이트 지식 (AI에게 함께 전달)</label>
+    <textarea class="pf-input pf-prompt mono" data-field="prompt" rows="12">${esc(d.prompt ?? '')}</textarea>
+    <div class="pf-hint">저장소 v${remoteVer[activeId] ?? '?'} · 받은 시각 ${p.syncedAt ? new Date(p.syncedAt).toLocaleString() : '-'} · 보관된 이전 버전 ${p.history?.length || 0}개</div>
+  </div>`;
+}
+
+// 시트 안의 입력·버튼 처리
+let pfSaveTimer;
+document.getElementById('sheet-body').addEventListener('input', (e) => {
+  if (sheetMode !== 'profile') return;
+  const p = profiles[activeId];
+  if (!p) return;
+  if (e.target.dataset.field) {
+    const path = e.target.dataset.field.split('.');
+    let o = p.data;
+    for (const k of path.slice(0, -1)) o = o[k] ??= {};
+    o[path.at(-1)] = e.target.value;
+    p.dirty = true;
+  }
+  if (e.target.dataset.acc) {
+    const id = p.data.id;
+    localAcc[id] ??= {};
+    localAcc[id][e.target.dataset.acc] = { ...localAcc[id][e.target.dataset.acc], [e.target.dataset.k]: e.target.value };
+  }
+  clearTimeout(pfSaveTimer);
+  pfSaveTimer = setTimeout(() => {
+    saveProfiles();
+    renderProfileChip();
+    renderRoleScope();
+    const st = profileStatus(activeId);
+    const el = document.querySelector('.pf-status');
+    if (el) { el.textContent = st.text; el.className = `pf-status ${st.cls}`; }
+    const push = document.querySelector('[data-pf=push]');
+    if (push) push.disabled = !p.dirty;
+  }, 300);
+});
+document.getElementById('sheet-body').addEventListener('change', (e) => {
+  if (sheetMode === 'profile' && e.target.dataset.pf === 'select') {
+    activeId = e.target.value;
+    saveProfiles();
+    renderProfileChip();
+    renderSheet();
+  }
+});
+document.getElementById('sheet-body').addEventListener('click', async (e) => {
+  if (sheetMode !== 'profile') return;
+  const act = e.target.closest('[data-pf]')?.dataset.pf;
+  if (!act || act === 'select') return;
+  if (act === 'sync') await syncProfiles();
+  if (act === 'push') {
+    const r = await pushProfile(activeId);
+    if (r.ok) msg('sys', `프로필을 v${r.version}으로 올렸습니다`);
+  }
+  if (act === 'take-remote') { profiles[activeId].dirty = false; await pullProfile(activeId); await saveProfiles(); }
+  if (act === 'rollback') rollbackProfile(activeId);
+  if (act === 'acc-reset') { delete localAcc[activeId]?.[e.target.closest('[data-acc-key]').dataset.accKey]; await saveProfiles(); }
+  renderProfileChip();
+  renderSheet();
+});
+document.getElementById('profile-chip').onclick = () => openSheet('profile');
+
+loadProfiles().then(syncProfiles);

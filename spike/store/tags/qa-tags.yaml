@@ -1,0 +1,77 @@
+# 서버가 내려주는 태그 문서의 예시(서버가 없을 때 쓰는 임시본). koa는 이 목록 밖의 태그를 쓰지 않는다.
+# 서비스에 맞게 고친 문서는 .koa/store/tags/ 에 같은 id로 두면 이 파일 대신 쓰인다
+id: qa-tags
+kind: tag
+version: 1
+updated_at: "2026-10-27T10:00:00.000Z"
+name: QA 태그
+description: 생성한 테스트(BDD 시나리오·TDD 케이스)에 붙이는 태그. Playwright tag로 들어가 CI에서 골라 돌릴 때 쓴다
+groups:
+  - id: scope
+    name: 실행 범위
+    tags:
+      - id: "@smoke"
+        description: 배포 직후 몇 분 안에 도는 최소 확인
+        apply_when: 로그인과 주요 등록·조회의 정상 흐름. 오류 주입·경계값·접근성 검증은 넣지 않는다
+      - id: "@regression"
+        description: 정기 회귀 테스트(매일 밤)
+        apply_when: 반복 실행할 가치가 있는 모든 테스트. 일회성 확인이 아니면 붙인다
+  - id: area
+    name: 기능 영역
+    inherit: true            # 시나리오에 붙이면 딸린 TDD 케이스가 물려받는다
+    tags:
+      - id: "@area-auth"
+        description: 로그인·세션
+        apply_when: 로그인, 로그아웃, 세션 만료를 검증의 대상으로 삼는 경우(로그인을 준비 단계로만 거치면 붙이지 않는다)
+      # 대상 서비스의 기능 영역은 서비스마다 정한다. 예:
+      # - id: "@area-order"
+      #   description: 주문 > 주문 등록
+      #   apply_when: /orders/new 화면의 입력·등록을 검증하는 경우
+  - id: priority
+    name: 우선순위
+    exclusive: true          # 하나만
+    tags:
+      - id: "@p1"
+        description: 핵심 업무가 막힘. 실패하면 배포를 멈춘다
+        auto: { field: priority, equals: high }
+      - id: "@p2"
+        description: 주요 기능의 일부 이상
+        auto: { field: priority, equals: medium }
+      - id: "@p3"
+        description: 사소하거나 우회 가능
+        auto: { field: priority, equals: low }
+  - id: nature
+    name: 검증 성격
+    tags:
+      - id: "@negative"
+        description: 잘못된 입력·권한 없음 등 실패해야 하는 경우를 검증
+        auto: { field: technique, in: [예외, 권한] }
+        apply_when: 시나리오는 오류·거부·미반영을 기대 결과로 삼을 때
+      - id: "@boundary"
+        description: 경계값·형식·길이
+        auto: { field: technique, in: [경계값] }
+        apply_when: 시나리오는 길이·형식 한계를 다룰 때
+      - id: "@a11y"
+        description: 키보드 탭 순서·포커스·접근성
+        auto: { field: technique, in: [접근성] }
+        apply_when: 시나리오는 Tab 이동·포커스를 검증할 때
+      - id: "@fault"
+        description: 브라우저에서 오류·지연·끊김을 주입해 검증(page.route)
+        apply_when: 코드가 page.route로 응답을 바꾸거나 막는 경우
+  - id: condition
+    name: 실행 조건
+    tags:
+      - id: "@data-change"
+        description: 실제 데이터를 만들거나 바꾼다. 운영 환경에서는 돌리지 않는다
+        auto: { field: changes_data, equals: true }
+        apply_when: TDD 케이스는 실제로 등록·저장 요청이 성공하는 경우
+  - id: status
+    name: 상태
+    tags:
+      - id: "@known-defect"
+        description: 알려진 결함으로 실패가 예상됨
+        assign: human        # AI는 붙이지 않는다
+        requires: issue      # 이슈 번호 필수(annotation으로 들어간다)
+      - id: "@flaky"
+        description: 결과가 들쭉날쭉해 원인 확인 중
+        assign: human

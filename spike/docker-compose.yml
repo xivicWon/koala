@@ -1,0 +1,15 @@
+# koala 경로 그래프 저장소 (PostgreSQL 16 + Apache AGE)
+services:
+  graph:
+    image: apache/age:release_PG16_1.5.0
+    container_name: koala-graph
+    environment:
+      POSTGRES_USER: koala
+      POSTGRES_PASSWORD: koala
+      POSTGRES_DB: koala
+    ports:
+      - "127.0.0.1:5532:5432"
+    volumes:
+      - koala-graph:/var/lib/postgresql/data
+volumes:
+  koala-graph:
