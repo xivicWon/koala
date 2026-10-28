@@ -222,12 +222,78 @@ function renderProfileChip() {
   chip.title = p ? `${p.name} · ${st.text}${syncError ? ` · ${syncError}` : ''}` : syncError || '프로필 없음';
 }
 
+// 시트 안의 작은 단계: null | 'new'(새 프로필 만들기) | 'rollback'(되돌리기 확인)
+let pfStep = null;
+let pfNewError = '';
+let pfNewVals = {}; // 새 프로필 입력값(검사에 걸려 다시 그려도 남게)
+
+// 새 프로필: 서버(동기화 저장소)에 v1로 만든다. id는 대상 주소의 호스트 이름에서 만든다(겹치면 -2, -3…)
+function newProfileForm() {
+  const cur = profiles[activeId]?.data;
+  return `<div class="pf-new">
+    <div class="pf-new-h"><b>새 프로필</b><span class="pf-hint">서버에 v1로 만듭니다</span></div>
+    <label class="pf-label">이름</label>
+    <input class="pf-input" data-new="name" placeholder="예: 주문 관리 (스테이징)" autocomplete="off" value="${esc(pfNewVals.name || '')}">
+    <label class="pf-label">대상 주소</label>
+    <input class="pf-input mono" data-new="base_url" placeholder="https://staging.example.com" autocomplete="off" value="${esc(pfNewVals.base_url || '')}">
+    <label class="pf-label">시작 URL <span class="pf-hint">선택. 대상 주소와 같은 도메인</span></label>
+    <input class="pf-input mono" data-new="start_url" placeholder="https://staging.example.com/login" autocomplete="off" value="${esc(pfNewVals.start_url || '')}">
+    ${cur ? `<label class="pf-check"><input type="checkbox" data-new="copy" ${pfNewVals.copy === false ? '' : 'checked'}> 지금 프로필(${esc(cur.name)})의 설정으로 시작 <span class="pf-hint">지식·태그·역할 문서·사이트 지식·정리 규칙을 복사합니다</span></label>` : ''}
+    ${pfNewError ? `<div class="pf-alert">${esc(pfNewError)}</div>` : ''}
+    <div class="pf-actions">
+      <button type="button" class="btn sm primary" data-pf="new-create">만들기</button>
+      <button type="button" class="btn sm" data-pf="new-cancel">취소</button>
+    </div>
+  </div>`;
+}
+async function createProfile(body) {
+  const v = (k) => body.querySelector(`[data-new="${k}"]`)?.value.trim() || '';
+  const name = v('name'), base = v('base_url'), start = v('start_url');
+  const copy = body.querySelector('[data-new="copy"]')?.checked;
+  pfNewVals = { name, base_url: base, start_url: start, copy };
+  let host = '';
+  try { host = new URL(base).hostname; } catch {}
+  if (!name) pfNewError = '이름을 적어 주세요';
+  else if (!host) pfNewError = '대상 주소를 http:// 또는 https://로 시작하는 주소로 적어 주세요';
+  else if (start && (() => { try { return new URL(start).hostname !== host; } catch { return true; } })()) pfNewError = '시작 URL은 대상 주소와 같은 도메인이어야 합니다';
+  else pfNewError = '';
+  if (pfNewError) return renderSheet();
+  const base0 = host.toLowerCase().replace(/[^a-z0-9.-]/g, '-');
+  let id = base0, n = 2;
+  while (profiles[id] || remoteVer[id]) id = `${base0}-${n++}`;
+  const src = copy ? profiles[activeId]?.data || {} : {};
+  const { id: _i, version: _v, updated_at: _u, hash: _h, name: _n, target: srcTarget = {}, ...rest } = src;
+  const data = {
+    ...rest, name,
+    knowledge: rest.knowledge || ['qa-common'], tags: rest.tags || 'qa-tags',
+    target: { ...(copy ? { login_path: srcTarget.login_path } : {}), base_url: base, ...(start ? { start_url: start } : {}) },
+  };
+  try {
+    const res = await fetch(`${SYNC}/profiles/${encodeURIComponent(id)}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ base_version: 0, data }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) { pfNewError = `만들지 못했습니다: ${e.message}`; return renderSheet(); }
+  await pullProfile(id, { quiet: true });
+  activeId = id;
+  pfStep = null;
+  pfNewVals = {};
+  await saveProfiles();
+  renderProfileChip();
+  renderSheet();
+  msg('sys', `새 프로필 "${name}"을 만들었습니다(v1). 대상 도메인 ${host}`);
+  changeDomainIfNeeded();
+}
+
 // 시트: 프로필 보기·수정
 function renderProfileSheet(body) {
   $('sheet-title').textContent = '프로필';
   const p = profiles[activeId];
-  if (!p) {
-    body.innerHTML = `<div class="none">${syncError || '받은 프로필이 없습니다'}<br><button type="button" class="btn" data-pf="sync" style="margin-top:10px">동기화</button></div>`;
+  if (!p || pfStep === 'new') {
+    body.innerHTML = `<div class="pf">
+      ${pfStep === 'new' ? newProfileForm() : `<div class="none">${syncError || '받은 프로필이 없습니다'}</div>`}
+      ${pfStep === 'new' ? '' : `<div class="pf-actions" style="justify-content:center"><button type="button" class="btn sm" data-pf="sync">동기화</button><button type="button" class="btn sm" data-pf="new-open">+ 새 프로필</button></div>`}
+    </div>`;
     return;
   }
   const d = p.data;
@@ -240,10 +306,20 @@ function renderProfileSheet(body) {
         `<option value="${esc(x.data.id)}" ${x.data.id === activeId ? 'selected' : ''}>${esc(x.data.name)}</option>`).join('')}</select>
       <span class="pf-status ${st.cls}">${st.text}</span>
       <span class="grow"></span>
-      <button type="button" class="btn sm" data-pf="sync">동기화</button>
-      <button type="button" class="btn sm" data-pf="push" ${p.dirty ? '' : 'disabled'}>변경 올리기</button>
-      <button type="button" class="btn sm ghost" data-pf="rollback" ${p.history?.length ? '' : 'disabled'} title="받아 둔 이전 버전으로">이전 버전</button>
+      <button type="button" class="btn sm" data-pf="new-open" title="새 대상 사이트의 프로필을 만듭니다">+ 새 프로필</button>
     </div>
+    <div class="pf-actions">
+      <button type="button" class="btn sm" data-pf="sync" title="서버에 새 버전이 있으면 받습니다">동기화</button>
+      <button type="button" class="btn sm ${p.dirty ? 'primary' : ''}" data-pf="push" ${p.dirty ? '' : 'disabled'} title="고친 내용을 서버에 저장합니다. 서버 프로필의 버전이 하나 올라가고 다른 사람도 받습니다">서버에 저장${p.dirty ? ` (v${d.version} → v${d.version + 1})` : ''}</button>
+      ${p.history?.length ? `<button type="button" class="btn sm" data-pf="rollback" title="받아 둔 이전 버전의 내용으로 되돌립니다">v${p.history[0].version}로 되돌리기</button>` : ''}
+    </div>
+    <div class="pf-hint pf-explain">${p.dirty
+      ? `고친 내용은 이 확장에만 있습니다. <b>서버에 저장</b>하면 서버 프로필이 v${d.version + 1}이 되고 다른 사람도 받습니다.`
+      : '고친 내용은 바로 이 확장에 저장됩니다. 다른 사람과 나누려면 <b>서버에 저장</b>을 누릅니다.'}</div>
+    ${pfStep === 'rollback' && p.history?.length ? `<div class="pf-confirm">
+      v${p.history[0].version}의 내용으로 되돌릴까요? 되돌린 내용은 '고친 내용'이 되어 이 확장에만 반영되고, 서버에는 <b>서버에 저장</b>을 눌러야 새 버전(v${d.version + 1})으로 저장됩니다.
+      <div class="pf-actions"><button type="button" class="btn sm primary" data-pf="rollback-yes">되돌리기</button><button type="button" class="btn sm" data-pf="rollback-no">취소</button></div>
+    </div>` : ''}
     ${p.conflict ? `<div class="pf-alert">저장소에 다른 사람이 올린 새 버전(v${remoteVer[activeId]})이 있습니다.
       <button type="button" class="btn sm" data-pf="take-remote">저장소 버전 받기 (내 수정 버림)</button></div>` : ''}
     ${syncError ? `<div class="pf-alert">${syncError}</div>` : ''}
@@ -323,6 +399,7 @@ document.getElementById('sheet-body').addEventListener('change', (e) => {
       return msg('err', 'AI 작업 중에는 다른 도메인의 프로필로 바꿀 수 없습니다. 끝난 뒤 바꾸세요');
     }
     activeId = e.target.value;
+    pfStep = null;
     saveProfiles();
     renderProfileChip();
     renderSheet();
@@ -339,19 +416,24 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (sheetMode !== 'profile') return;
   const act = e.target.closest('[data-pf]')?.dataset.pf;
   if (!act || act === 'select') return;
+  if (act === 'new-open') { pfStep = 'new'; pfNewError = ''; pfNewVals = {}; return renderSheet(); }
+  if (act === 'new-cancel') { pfStep = null; pfNewError = ''; pfNewVals = {}; return renderSheet(); }
+  if (act === 'new-create') return createProfile(document.getElementById('sheet-body'));
+  if (act === 'rollback') { pfStep = 'rollback'; return renderSheet(); }
+  if (act === 'rollback-no') { pfStep = null; return renderSheet(); }
   if (act === 'sync') await syncProfiles();
   if (act === 'push') {
     const r = await pushProfile(activeId);
-    if (r.ok) msg('sys', `프로필을 v${r.version}으로 올렸습니다`);
+    if (r.ok) msg('sys', `프로필을 서버에 저장했습니다(v${r.version})`);
   }
   if (act === 'take-remote') { profiles[activeId].dirty = false; await pullProfile(activeId); await saveProfiles(); }
-  if (act === 'rollback') rollbackProfile(activeId);
+  if (act === 'rollback-yes') { pfStep = null; rollbackProfile(activeId); msg('sys', '프로필을 이전 버전의 내용으로 되돌렸습니다. 서버에 저장해야 다른 사람에게 반영됩니다'); }
   if (act === 'acc-reset') { delete localAcc[activeId]?.[e.target.closest('[data-acc-key]').dataset.accKey]; await saveProfiles(); }
   renderProfileChip();
   renderSheet();
   if (!aiBusy) changeDomainIfNeeded(); // 동기화·이전 버전·저장소 버전 받기로 대상 주소가 바뀌었을 수 있다
 });
-document.getElementById('profile-chip').onclick = () => openSheet('profile');
+document.getElementById('profile-chip').onclick = () => { pfStep = null; pfNewError = ''; openSheet('profile'); };
 
 // 처음: 프로필 → 그 도메인의 타임라인·테스트 목록 → 호스트 연결(연결되면 동기화)
 loadProfiles().then(restoreDomainData).finally(connect);
