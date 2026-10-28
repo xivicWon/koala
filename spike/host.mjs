@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { DATA, PORT } from './paths.mjs';
 import { safeId, setPaths, readSet, listSets, receiveSet, createLocalSet, updateLocalSet, deleteSet, domainOfSet } from './sets.mjs';
 import * as testlist from './testlist.mjs';
+import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 
@@ -378,6 +379,40 @@ function receive(id) {
     scheduleWarm();
   }
   sendSets();
+}
+
+// 업데이트 뒤 첫 연결: 패널이 예전 프로필(계정 값은 뺀 것)·활성 프로필·suite@<도메인>·timeline@<도메인> 목록을 보내면
+// 도메인 데이터를 세트로 옮긴다(migrate-sets.mjs). 성공하면 sets/.migrated 가 생겨 세트 작업을 바로 받는다.
+// 이미 옮겼으면 다시 옮기지 않고 그때의 대응(setByProfile·timelineKeys)으로 답한다(패널이 마무리하다 멈췄을 때)
+function migrate(ws, m) {
+  const reply = (r) => ws.readyState === 1 && ws.send(JSON.stringify({ type: 'migrated', timelineKeys: {}, setByProfile: {}, skipped: [], errors: [], moved: 0, ...r }));
+  if (job || codeRunning) {
+    const e = 'AI 작업이나 테스트 실행 중에는 기존 데이터를 옮기지 않습니다. 끝난 뒤 패널을 다시 여세요';
+    console.log('[migrate]', e); // 패널이 답(errors)을 타임라인에 보여 준다
+    return reply({ ok: false, errors: [e] });
+  }
+  const before = readJsonFile(path.join(DATA, 'sets', '.migrated'));
+  let plan, r;
+  try {
+    plan = planMigration({ root: DATA, spikeDir: dir, profiles: m.profiles || {}, activeId: m.activeId ?? null, extSuites: m.extSuites || {}, extTimelines: m.extTimelines || [] });
+    r = applyMigration(plan);
+  } catch (e) { r = { ok: false, moved: 0, errors: [e.message] }; }
+  if (!r.ok) {
+    console.log('[migrate] 실패 · 원본은 그대로:', r.errors.join(' · '));
+    return reply({ ok: false, errors: r.errors });
+  }
+  let { setByProfile, timelineKeys, skipped } = plan;
+  if (before) {
+    // 계획 중 지금 있는 세트를 가리키는 것만 쓰고, 처음 옮길 때의 대응을 앞세운다
+    const exists = (map) => Object.fromEntries(Object.entries(map).filter(([, id]) => readSet(id)));
+    setByProfile = { ...exists(setByProfile), ...(before.setByProfile || {}) };
+    timelineKeys = { ...exists(timelineKeys), ...(before.timelineKeys || {}) };
+    skipped = before.skipped || [];
+  }
+  console.log(`[migrate] ${before ? '이미 옮겼음' : `세트 ${plan.sets.length}개로 옮겼습니다 · 파일 ${r.moved}개 · 보관 ${plan.archive}`}${skipped.length ? ` · 건너뜀 ${skipped.length}` : ''}`);
+  for (const e of r.errors) console.log('[migrate]', e);
+  for (const s of sockets) sendSets(s);
+  reply({ ok: true, moved: r.moved, setByProfile, timelineKeys, skipped, errors: r.errors });
 }
 
 // MCP 서버가 부르는 도구 호출 → 사이드패널로 넘기고 결과를 기다린다
@@ -1742,6 +1777,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       }
     }
     if (m.type === 'set_receive') receive(m.id);
+    if (m.type === 'migrate') migrate(ws, m);
     if (m.type === 'set_create_local') {
       try {
         const rec = createLocalSet(m.def || {});

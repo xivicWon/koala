@@ -105,6 +105,13 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
   const setByProfile = {};
   const taken = new Set();
   const skipped = [];
+  // 패널이 프로필을 보내지 않으면(확장 저장소를 지웠거나 비었다) 이 PC 저장소의 서버 프로필로 옮긴다.
+  // 이 PC 전용 프로필은 확장에만 있어 알 수 없다. 대응할 세트가 없는 데이터는 보관만 한다(skipped)
+  if (!Object.keys(profiles || {}).length) {
+    const dir = path.join(root, 'store/profiles');
+    const ids = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.yaml')).map((f) => readYaml(path.join(dir, f))?.id ?? f.slice(0, -5)) : [];
+    profiles = Object.fromEntries(ids.map((id) => [String(id), {}]));
+  }
 
   // 프로필 하나 → 세트 하나. 서버 프로필은 저장소 문서(.koa/store 먼저, 없으면 공용)로 서버 흉내 세트 정의를 만든다
   for (const pid of Object.keys(profiles).sort()) {

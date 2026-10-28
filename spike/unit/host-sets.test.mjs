@@ -387,3 +387,98 @@ test('미리 연결 중에 세트를 바꾸면 끝낸 Claude 의 늦은 출력�
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는다 · 두 번째는 옮긴 것 없이 ok · 작업 중에는 거절', async (t) => {
+  // 호스트는 spike/tests/suites 도 옮긴다. 개발 폴더에 예전 묶음이 있으면 그것을 건드리지 않도록 돌리지 않는다
+  if (fs.existsSync(path.join(spike, 'tests', 'suites'))) return t.skip('spike/tests/suites 가 있어 돌리지 않음(실제 파일을 옮기게 된다)');
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-migrate-'));
+  const profA = { id: 'pa', name: '프로필 A', version: 2, target: { base_url: 'http://site-a.test', start_url: 'http://site-a.test/' } };
+  const profB = { id: 'pb', name: '프로필 B', version: 1, target: { base_url: 'http://site-a.test' } };
+  try {
+    const b = path.join(old, 'domains', 'site-a.test');
+    fs.mkdirSync(path.join(b, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(b, 'state.json'), JSON.stringify({ domain: 'site-a.test', sessionId: 'sess-old', sessionAlias: 'kaa-1', steps: [{ action: 'goto' }] }));
+    fs.writeFileSync(path.join(b, 'recording.json'), '[]');
+    fs.writeFileSync(path.join(b, 'logs', '2026-10-28.jsonl'), '{"k":"sys"}\n');
+    putYaml(old, 'store/profiles/pa.yaml', { ...profA, kind: 'profile' });
+    putYaml(old, 'store/profiles/pb.yaml', { ...profB, kind: 'profile' });
+    const h = await startHost(old, { FAKE_CLAUDE_HOLD: '\\[예외·오류 보강\\]' });
+    const p = await connectPanel(h);
+    const suite = { id: 'pa--s1', name: '묶음', scenarios: [{ id: 'SC-1', title: '로그인', use: true }], cases: [], flow: [], coverage: [] };
+    const req = { type: 'migrate', profiles: { pa: { data: profA }, pb: { data: profB } }, activeId: 'pb',
+      extSuites: { 'site-a.test': { suite, suiteBase: 1, suiteApplied: true } }, extTimelines: ['site-a.test'] };
+    try {
+      await p.waitFor((m) => m.type === 'migration_needed', 0, 'migration_needed');
+      await p.waitFor((m) => m.type === 'sets', 0, '연결 시 sets');
+      let at = p.mark();
+      p.send(req);
+      const r = await p.waitFor((m) => m.type === 'migrated', at, 'migrated');
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      assert.deepEqual(r.setByProfile, { pa: 'pa', pb: 'pb' });
+      assert.deepEqual(r.timelineKeys, { 'site-a.test': 'pb' });
+      assert.deepEqual(r.skipped, []);
+      assert.ok(r.moved > 0);
+      const s = p.msgs.slice(at).find((m) => m.type === 'sets');
+      assert.ok(s, '옮긴 뒤 sets');
+      assert.deepEqual(receivedIds(s), ['pa', 'pb']);
+      assert.ok(!fs.existsSync(path.join(old, 'domains')));
+      assert.equal(stateOf(old, 'pb').sessionAlias, 'kaa-1');
+      assert.equal(readJson(path.join(old, 'sets', 'pa', 'tests', 'tests.json')).scenarios[0].title, '로그인');
+
+      // 다시 켜지 않아도 세트 작업을 받는다
+      at = p.mark();
+      p.send({ type: 'set', id: 'pa', prefs: {} });
+      const tl = await p.waitFor((m) => m.type === 'tests' && m.set === 'pa', at, 'pa 의 tests');
+      assert.equal(tl.suite.scenarios.length, 1);
+      assert.ok(!p.msgs.slice(at).some((m) => m.type === 'log' && m.text.includes('기존 데이터를 세트로 옮긴 뒤')));
+
+      // 두 번째: 옮긴 것 없이 ok, 같은 대응
+      at = p.mark();
+      p.send(req);
+      const r2 = await p.waitFor((m) => m.type === 'migrated', at, '두 번째 migrated');
+      assert.equal(r2.ok, true, JSON.stringify(r2.errors));
+      assert.equal(r2.moved, 0);
+      assert.deepEqual(r2.setByProfile, { pa: 'pa', pb: 'pb' });
+      assert.deepEqual(r2.timelineKeys, { 'site-a.test': 'pb' });
+
+      // 작업 중에는 거절
+      at = p.mark();
+      p.send({ type: 'reinforce', summary: '요약' });
+      await p.waitFor((m) => m.type === 'job' && m.kind === 'reinforce' && !m.done, at, '보강 작업 시작');
+      at = p.mark();
+      p.send(req);
+      const r3 = await p.waitFor((m) => m.type === 'migrated', at, '작업 중 migrated');
+      assert.equal(r3.ok, false);
+      assert.match(r3.errors.join(), /작업/);
+      p.send({ type: 'stop' });
+    } finally { p.ws.close(); await stopHost(h.p); }
+  } finally {
+    fs.rmSync(old, { recursive: true, force: true });
+  }
+});
+
+test('migrate: 패널이 프로필 없이 보내면 이 PC 저장소의 서버 프로필로 옮기고 나머지는 skipped', async (t) => {
+  if (fs.existsSync(path.join(spike, 'tests', 'suites'))) return t.skip('spike/tests/suites 가 있어 돌리지 않음(실제 파일을 옮기게 된다)');
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-migrate-'));
+  try {
+    for (const d of ['site-a.test', 'site-z.test']) {
+      fs.mkdirSync(path.join(old, 'domains', d), { recursive: true });
+      fs.writeFileSync(path.join(old, 'domains', d, 'recording.json'), '[]');
+    }
+    putYaml(old, 'store/profiles/pa.yaml', { id: 'pa', kind: 'profile', name: 'A', version: 1, target: { base_url: 'http://site-a.test' } });
+    const h = await startHost(old);
+    const p = await connectPanel(h);
+    try {
+      await p.waitFor((m) => m.type === 'migration_needed', 0, 'migration_needed');
+      const at = p.mark();
+      p.send({ type: 'migrate', profiles: {}, activeId: null, extSuites: {}, extTimelines: [] });
+      const r = await p.waitFor((m) => m.type === 'migrated', at, 'migrated');
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      assert.deepEqual(r.setByProfile, { pa: 'pa' });
+      assert.deepEqual(r.skipped, ['domains/site-z.test']);
+      assert.ok(fs.existsSync(path.join(old, 'sets', 'pa', 'work', 'recording.json')));
+    } finally { p.ws.close(); await stopHost(h.p); }
+  } finally {
+    fs.rmSync(old, { recursive: true, force: true });
+  }
+});

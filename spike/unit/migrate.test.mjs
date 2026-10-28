@@ -351,3 +351,17 @@ test('원본과 함께 남은 .migrating-<pid> 도 보관한 뒤 지운다', () 
   assert.deepEqual(json(path.join(archive(), 'domains.migrating-77/old.test/recording.json')), [{ action: 'old' }]);
   assert.equal(json(setPaths('pb', root).state).sessionId, 'sess-1');
 });
+
+test('패널이 프로필을 보내지 않으면(확장 저장소를 지움) 이 PC 저장소의 서버 프로필로 옮기고 나머지는 건너뛴다', () => {
+  put(root, 'domains/site-z.test/recording.json', [{ action: 'z' }]);
+  const plan = planMigration({ root, spikeDir, profiles: {}, activeId: null, extSuites: {}, extTimelines: [] });
+  assert.deepEqual(plan.setByProfile, { pa: 'pa', pb: 'pb' });
+  assert.ok(plan.sets.every((s) => s.source === 'server'));
+  // 활성 프로필을 모르므로 그 도메인 프로필 중 id 순 첫 번째(pa)
+  assert.deepEqual(plan.sets.find((s) => s.setId === 'pa').moves.map((m) => path.basename(m.to)).sort(), ['logs', 'recording.json', 'recordings', 'state.json']);
+  assert.deepEqual(plan.skipped, ['domains/site-z.test']);
+  const r = applyMigration(plan);
+  assert.equal(r.ok, true, r.errors.join());
+  assert.equal(json(setPaths('pa', root).state).sessionId, 'sess-1');
+  assert.deepEqual(json(path.join(archive(), 'domains/site-z.test/recording.json')), [{ action: 'z' }]);
+});

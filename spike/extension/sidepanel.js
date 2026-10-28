@@ -57,11 +57,13 @@ function connect() {
     // 끊기기 전의 진행 중 작업은 끝난 것으로 본다. 호스트가 아직 하고 있으면 연결하자마자 job 을 다시 보낸다
     if (jobNow && !jobNow.done) { jobNow = null; renderJob(); }
     clearStaleRun?.();
+    maybeMigrate(); // 옮길 예전 데이터가 있으면 세트 작업보다 먼저
     renderSetChip();
   };
   ws.onclose = () => {
     hostUp = false; renderEnvAlert();
     requeueSent(); // 받았다는 답이 없던 테스트 목록 변경은 다시 연결되면 보낸다
+    onMigrateSocketClosed();
     renderSetChip();
     if (sheetMode === 'set' || sheetMode === 'suite') renderSheet();
     startHost();
@@ -84,6 +86,7 @@ function connect() {
     if (m.type === 'sets') onSets(m);
     if (m.type === 'set_active') onSetActive(m);
     if (m.type === 'migration_needed') onMigrationNeeded();
+    if (m.type === 'migrated') onMigrated(m);
     if (m.type === 'tests') onTests(m);
     if (m.type === 'tests_saved') onTestsSaved(m);
     if (m.type === 'suite_tags') onSuiteTags(m);
@@ -113,7 +116,7 @@ $('f').onsubmit = (e) => {
   if (aiBusy) return stopRun();
   const text = $('q').value.trim();
   if (!text || ws?.readyState !== 1) return;
-  if (migrationNeeded) return msg('err', MIGRATION_TEXT);
+  if (migrationNeeded) return msg('err', migrationText());
   if (!setInfo()?.received) return msg('err', '세트를 먼저 고르세요 · 위쪽 세트 칩에서 세트를 받고 고릅니다');
   msg('me', text);
   const roles = profileRoles().length > 1 ? scopeRoles() : undefined;
