@@ -75,9 +75,9 @@ test('계획: 묶음은 접두 프로필 세트로, 수행 기록·타임라인�
   const pb = plan.sets.find((s) => s.setId === 'pb');
   assert.equal(pa.source, 'server');
   assert.equal(pa.domain, 'site-a.test');
-  assert.equal(pa.suite.id, 'pa--s1');
+  assert.equal(pa.suite.id, 'pa'); // 세트는 세트 id로 v1부터 새로 보낸다
   assert.equal(pa.suite.applied, true);
-  assert.equal(pa.suite.base_version, 2);
+  assert.equal(pa.suite.base_version, 0);
   assert.equal(pb.suite, undefined);
   assert.deepEqual(plan.skipped, []);
   // 계획만으로는 디스크가 바뀌지 않는다
@@ -104,9 +104,10 @@ test('적용: 세트 자리로 옮기고 원본은 보관 폴더로', () => {
 
   // 묶음·코드는 pa
   const t = loadTests('pa', root);
-  assert.equal(t.id, 'pa--s1');
+  assert.equal(t.id, 'pa');
   assert.equal(t.applied, true);
-  assert.equal(t.base_version, 2);
+  assert.equal(t.base_version, 0);
+  assert.equal(t.code.file, path.relative(spikeDir, `${pa.code}/pa.spec.ts`));
   assert.equal(t.code.source, "import { cleanup } from '@support/cleanup';\n");
   assert.equal(read(`${pa.code}/pa.spec.ts`), "import { cleanup } from '@support/cleanup';\ntest('x', () => {});\n");
   assert.ok(!fs.existsSync(pb.testsFile));
@@ -289,4 +290,64 @@ test('.migrated 를 쓰지 못하면 치운 원본을 제자리로 되돌린다'
   assert.ok(!fs.existsSync(path.join(root, 'sets/.migrated')));
   assert.deepEqual({ domains: tree(path.join(root, 'domains')), suites: tree(path.join(spikeDir, 'tests/suites')) }, before);
   assert.ok(!fs.readdirSync(root).some((f) => f.includes('.migrating-')));
+});
+
+test('인라인 역할의 계정 비밀번호는 세트 정의 어디에도 남지 않는다', () => {
+  putYaml(root, 'store/profiles/pa.yaml', { ...profA, kind: 'profile', roles: [{ key: 'ADMIN', name: '관리자', account: { user: 'u', pass: 'secret-xyz' } }] });
+  const local = { id: 'local-y', name: 'Y', target: { base_url: 'https://site-c.test' }, roles: [{ key: 'U', accounts: [{ password: 'secret-xyz' }] }] };
+  const r = applyMigration(planMigration(input({ profiles: { pa: { data: profA }, pb: { data: profB }, 'local-y': { local: true, data: local } } })));
+  assert.equal(r.ok, true, r.errors.join());
+  assert.deepEqual(readSet('pa', root).def.profile.roles, [{ key: 'ADMIN', name: '관리자' }]);
+  const all = JSON.stringify(tree(path.join(root, 'sets'))) + JSON.stringify(tree(path.join(root, 'store/sets')));
+  assert.ok(!all.includes('secret-xyz'));
+});
+
+test('저장소에 없는 참조 문서는 정의에서 빼고 표시한다 · 세트 받기는 성공', () => {
+  putYaml(root, 'store/knowledges/k1.yaml', { id: 'k1', kind: 'knowledge', version: 1 });
+  putYaml(root, 'store/profiles/pa.yaml', { ...profA, kind: 'profile', roles: 'no-roles', knowledge: ['k1', 'no-k'], tags: 'no-tags' });
+  const plan = planMigration(input());
+  const pa = plan.sets.find((s) => s.setId === 'pa');
+  assert.deepEqual(pa.def.migration_missing, ['role/no-roles', 'knowledge/no-k', 'tag/no-tags']);
+  assert.deepEqual(pa.def.knowledge, ['k1']);
+  assert.equal(pa.def.roles, undefined);
+  assert.equal(pa.def.tags, undefined);
+  assert.ok(plan.skipped.includes('pa: 참조 문서 없음 knowledge/no-k'));
+  const r = applyMigration(plan);
+  assert.equal(r.ok, true, r.errors.join());
+  const rec = readSet('pa', root);
+  assert.deepEqual(rec.refs.knowledge, ['k1@v1']);
+  assert.deepEqual(rec.def.migration_missing, ['role/no-roles', 'knowledge/no-k', 'tag/no-tags']);
+});
+
+test('손상된 도메인 state.json 은 보관만 하고 세트는 빈 상태로 시작한다', () => {
+  put(root, 'domains/site-a.test/state.json', '{ 깨짐');
+  const plan = planMigration(input());
+  assert.ok(plan.skipped.some((x) => x.startsWith('domains/site-a.test/state.json')));
+  const r = applyMigration(plan);
+  assert.equal(r.ok, true, r.errors.join());
+  assert.ok(!fs.existsSync(setPaths('pb', root).state));
+  assert.ok(fs.existsSync(`${setPaths('pb', root).work}/recording.json`));
+  assert.equal(read(path.join(archive(), 'domains/site-a.test/state.json')), '{ 깨짐');
+});
+
+test('앞선 실행이 치우다 멈춘 <이름>.migrating-<pid> 는 원본으로 다시 옮기고 남기지 않는다', () => {
+  fs.renameSync(path.join(root, 'domains'), path.join(root, 'domains.migrating-123'));
+  fs.renameSync(path.join(spikeDir, 'tests/suites'), path.join(spikeDir, 'tests/suites.migrating-123'));
+  const r = applyMigration(planMigration(input()));
+  assert.equal(r.ok, true, r.errors.join());
+  assert.ok(!fs.readdirSync(root).some((f) => f.includes('.migrating-')));
+  assert.ok(!fs.readdirSync(path.join(spikeDir, 'tests')).some((f) => f.includes('.migrating-')));
+  assert.equal(json(setPaths('pb', root).state).sessionId, 'sess-1');
+  assert.ok(fs.existsSync(`${setPaths('pa', root).code}/pa.spec.ts`));
+  assert.ok(fs.existsSync(path.join(archive(), 'domains/site-a.test/drafts/d.json')));
+  assert.ok(fs.existsSync(path.join(archive(), 'tests/suites/site-a.test/pa--s1.spec.ts')));
+});
+
+test('원본과 함께 남은 .migrating-<pid> 도 보관한 뒤 지운다', () => {
+  put(root, 'domains.migrating-77/old.test/recording.json', [{ action: 'old' }]);
+  const r = applyMigration(planMigration(input()));
+  assert.equal(r.ok, true, r.errors.join());
+  assert.ok(!fs.existsSync(path.join(root, 'domains.migrating-77')));
+  assert.deepEqual(json(path.join(archive(), 'domains.migrating-77/old.test/recording.json')), [{ action: 'old' }]);
+  assert.equal(json(setPaths('pb', root).state).sessionId, 'sess-1');
 });

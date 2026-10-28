@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import { fileURLToPath } from 'node:url';
 import { safeId, setPaths, readSet, receiveSet, createLocalSet } from './sets.mjs';
 import { saveTests } from './testlist.mjs';
 
@@ -24,27 +25,63 @@ const readYaml = (f) => { try { return YAML.parse(fs.readFileSync(f, 'utf8')); }
 const differs = (a, b) => fs.existsSync(a) && fs.existsSync(b) && !fs.readFileSync(a).equals(fs.readFileSync(b));
 // 테스트 코드의 정리 도우미 경로: 세트 코드 폴더에서는 별칭으로 쓴다
 const toSupport = (src) => String(src).replace(/(['"])(?:\.\.\/){1,2}support\//g, '$1@support/');
+// 계정·비밀번호는 어느 깊이에 있든 뺀다(인라인 역할의 account 등). 내 계정은 패널이 내 설정으로 옮긴다
+const SECRET_KEYS = ['account', 'accounts', 'pass', 'password'];
+const scrub = (v) => (Array.isArray(v) ? v.map(scrub)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => !SECRET_KEYS.includes(k)).map(([k, x]) => [k, scrub(x)]))
+  : v);
+// 앞선 실행이 원본을 치우다(이름을 바꾼 뒤) 멈췄으면 <이름>.migrating-<pid> 가 남는다.
+// main: 원본(없으면 가장 최근의 남은 것), extra: 그 밖의 남은 것
+const LEFTOVER = /\.migrating-\d+$/;
+function originalsOf(p) {
+  const dir = path.dirname(p);
+  const base = `${path.basename(p)}.migrating-`;
+  const left = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((n) => n.startsWith(base) && LEFTOVER.test(n)).map((n) => path.join(dir, n))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
+    : [];
+  const main = fs.existsSync(p) ? p : left.shift() ?? null;
+  return { main, extra: left };
+}
+// receiveSet 과 같은 순서로 찾는다: <root>/store 먼저, 없으면 공용 spike/store
+const shared = fileURLToPath(new URL('./store/', import.meta.url));
+const hasDoc = (kind, id, root) => [path.join(root, 'store'), shared].some((r) => fs.existsSync(path.join(r, `${kind}s`, `${safeId(id)}.yaml`)));
 
 // 프로필 문서 → 세트 정의. 대상 사이트 내용은 profile: 아래, 역할 문서·지식·태그는 참조로 둔다.
-// 계정(비밀번호)은 세트 정의에 넣지 않는다 — 내 계정은 패널이 내 설정으로 옮긴다
 function setDoc(id, prof) {
   const doc = { id, name: prof.name || id, version: prof.version ?? 1 };
   const profile = {};
   const refs = {};
   for (const [k, v] of Object.entries(prof)) {
-    if (META.includes(k) || k === 'accounts') continue;
+    if (META.includes(k) || SECRET_KEYS.includes(k)) continue;
     if (k === 'knowledge' || k === 'tags' || (k === 'roles' && typeof v === 'string')) refs[k] = v;
-    else profile[k] = v;
+    else profile[k] = scrub(v);
   }
   return { ...doc, profile, ...refs };
+}
+
+// 저장소에 없는 참조는 정의에서 빼고 migration_missing 에 남긴다(프로필 하나 때문에 옮기기 전체가 막히지 않게)
+function dropMissing(def, root, have = () => false) {
+  const missing = [];
+  const ok = (kind, id) => have(kind, id) || hasDoc(kind, id, root) || (missing.push(`${kind}/${id}`), false);
+  if (typeof def.roles === 'string' && !ok('role', def.roles)) delete def.roles;
+  for (const [key, kind] of [['knowledge', 'knowledge'], ['tags', 'tag']]) {
+    if (def[key] == null) continue;
+    const kept = arr(def[key]).filter((id) => ok(kind, id));
+    if (kept.length === arr(def[key]).length) continue;
+    if (kept.length) def[key] = Array.isArray(def[key]) ? kept : kept[0];
+    else delete def[key];
+  }
+  if (missing.length) def.migration_missing = missing;
+  return missing;
 }
 
 // 패널은 suite@<도메인> 에 { suite, suiteBase, suiteApplied } 를 둔다. 묶음만 온 경우도 받는다
 function unwrap(x) {
   if (x?.suite && typeof x.suite === 'object' && !Array.isArray(x.scenarios)) {
-    return { suite: x.suite, base: x.suiteBase ?? x.suite.base_version ?? 0, applied: x.suiteApplied ?? x.suite.applied ?? false };
+    return { suite: x.suite, applied: x.suiteApplied ?? x.suite.applied ?? false };
   }
-  if (x && typeof x === 'object' && x.id) return { suite: x, base: x.base_version ?? 0, applied: x.applied ?? false };
+  if (x && typeof x === 'object' && x.id) return { suite: x, applied: x.applied ?? false };
   return {};
 }
 
@@ -60,8 +97,9 @@ function localSetId(name, pid, root, taken) {
 
 export function planMigration({ root, spikeDir, profiles = {}, activeId = null, extSuites = {}, extTimelines = [] }) {
   const sharedStore = path.join(spikeDir, 'store');
-  const localTags = path.join(root, 'store/tags/qa-tags.yaml');
-  const tagsShadow = differs(localTags, path.join(sharedStore, 'tags/qa-tags.yaml'));
+  const tagsLeft = originalsOf(path.join(root, 'store/tags/qa-tags.yaml'));
+  const localTags = tagsLeft.main;
+  const tagsShadow = !!localTags && differs(localTags, path.join(sharedStore, 'tags/qa-tags.yaml'));
   const archive = path.join(root, `migrated-${today()}`);
   const sets = [];
   const setByProfile = {};
@@ -80,6 +118,10 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
     const setId = source === 'server' ? pid : localSetId(prof.name || pid, pid, root, taken);
     taken.add(setId);
     const def = setDoc(setId, prof);
+    if (source === 'server') {
+      // qa-tags 는 아래에서 이 세트의 사본으로 바꾸므로 있는 것으로 본다
+      for (const m of dropMissing(def, root, (kind, id) => kind === 'tag' && id === 'qa-tags' && tagsShadow)) skipped.push(`${setId}: 참조 문서 없음 ${m}`);
+    }
     let tagCopy = null;
     if (tagsShadow && arr(def.tags).includes('qa-tags')) {
       const tid = `${setId}-tags`;
@@ -102,8 +144,11 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
     return { set: null };
   };
 
-  const domainsDir = path.join(root, 'domains');
-  const folders = fs.existsSync(domainsDir)
+  const domainsLeft = originalsOf(path.join(root, 'domains'));
+  const suitesLeft = originalsOf(path.join(spikeDir, 'tests/suites'));
+  const domainsDir = domainsLeft.main;
+  const suitesDir = suitesLeft.main;
+  const folders = domainsDir
     ? fs.readdirSync(domainsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort()
     : [];
   // 같은 자리를 다투면 먼저 정한 것이 이긴다. 제 도메인 프로필이 있는 버킷을 default 대신 쓰는 경우보다 먼저 둔다
@@ -116,6 +161,12 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
     for (const [name, to, edit] of items) {
       const from = path.join(domainsDir, f, name);
       if (!fs.existsSync(from)) continue;
+      if (edit === 'state') {
+        try { JSON.parse(fs.readFileSync(from, 'utf8')); } catch {
+          skipped.push(`domains/${f}/state.json: 손상되어 보관만 함(세트는 빈 상태로 시작)`);
+          continue;
+        }
+      }
       if (used.has(to)) { skipped.push(`domains/${f}/${name}`); continue; }
       used.add(to);
       set.moves.push({ from, to, ...(edit ? { edit } : {}) });
@@ -124,17 +175,21 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
 
   // suite@<도메인> 하나만 세트의 tests.json 으로. 묶음 id 앞부분(<프로필>--)으로 가를 수 있으면 그 프로필의 세트
   for (const [d, raw] of Object.entries(extSuites || {})) {
-    const { suite, base, applied } = unwrap(raw);
+    const { suite, applied } = unwrap(raw);
     if (!suite) continue;
     const id = String(suite.id ?? '');
     const cut = id.lastIndexOf('--');
     const owner = (cut > 0 && bySet.get(setByProfile[id.slice(0, cut)])) || workSet(d).set;
     if (!owner || owner.suite) { skipped.push(`suite@${d}`); continue; }
-    const code = suite.code?.source ? { ...suite.code, source: toSupport(suite.code.source) } : suite.code;
-    owner.suite = { ...suite, ...(code !== undefined ? { code } : {}), applied, base_version: base };
+    const to = path.join(setPaths(owner.setId, root).code, `${safeId(owner.setId)}.spec.ts`);
+    // 세트는 세트 id로 v1부터 새로 보낸다(이미 보낸 묶음은 그대로). 코드 경로는 spike 폴더 기준
+    const code = suite.code && typeof suite.code === 'object'
+      ? { ...suite.code, file: path.relative(spikeDir, to), ...(suite.code.source ? { source: toSupport(suite.code.source) } : {}) }
+      : suite.code;
+    owner.suite = { ...suite, id: owner.setId, ...(code !== undefined ? { code } : {}), applied, base_version: 0 };
     const file = `${safeName(id)}.spec.ts`;
-    const from = [path.join(spikeDir, 'tests/suites', safeDomain(d), file), path.join(spikeDir, 'tests/suites', file)].find((f) => fs.existsSync(f));
-    if (from) owner.moves.push({ from, to: path.join(setPaths(owner.setId, root).code, `${safeId(owner.setId)}.spec.ts`), edit: 'support' });
+    const from = suitesDir && [path.join(suitesDir, safeDomain(d), file), path.join(suitesDir, file)].find((f) => fs.existsSync(f));
+    if (from) owner.moves.push({ from, to, edit: 'support' });
   }
 
   const timelineKeys = {};
@@ -146,10 +201,15 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
 
   // 원본은 모두 보관 폴더로(세트로 간 것도, 건너뛴 것도, 초안도)
   const archiveMoves = [];
-  if (fs.existsSync(domainsDir)) archiveMoves.push({ from: domainsDir, to: path.join(archive, 'domains') });
-  const suitesDir = path.join(spikeDir, 'tests/suites');
-  if (fs.existsSync(suitesDir)) archiveMoves.push({ from: suitesDir, to: path.join(archive, 'tests/suites') });
-  if (tagsShadow) archiveMoves.push({ from: localTags, to: path.join(archive, 'store/tags/qa-tags.yaml') });
+  // 앞선 실행이 남긴 <이름>.migrating-<pid> 도 보관한다(원본 자리를 대신한 것은 원본 이름으로, 그 밖은 제 이름으로)
+  const keep = ({ main, extra }, rel, take = true) => {
+    if (main && take) archiveMoves.push({ from: main, to: path.join(archive, rel) });
+    for (const x of extra) archiveMoves.push({ from: x, to: path.join(archive, path.dirname(rel), path.basename(x)) });
+    if (main && !take && LEFTOVER.test(main)) archiveMoves.push({ from: main, to: path.join(archive, path.dirname(rel), path.basename(main)) });
+  };
+  keep(domainsLeft, 'domains');
+  keep(suitesLeft, 'tests/suites');
+  keep(tagsLeft, 'store/tags/qa-tags.yaml', tagsShadow);
 
   return { root, spikeDir, sets, setByProfile, timelineKeys, archive, archiveMoves, skipped };
 }
@@ -244,6 +304,8 @@ export function applyMigration(plan) {
     plan.archiveMoves.forEach(verify);
     // 4. 원본 치우기: 같은 폴더 안 이름 바꾸기라 하나가 실패하면 앞의 것을 되돌린다
     for (const m of plan.archiveMoves) {
+      // 앞선 실행이 이미 치운 것은 그대로 두었다가 함께 지운다(되돌릴 때도 그대로)
+      if (LEFTOVER.test(m.from)) { staged.push({ tmp: m.from, left: true }); continue; }
       const tmp = `${m.from}.migrating-${process.pid}`;
       fs.renameSync(m.from, tmp);
       staged.push({ from: m.from, tmp });
@@ -259,7 +321,8 @@ export function applyMigration(plan) {
       skipped: plan.skipped,
     }, null, 2));
   } catch (e) {
-    for (const { from, tmp } of staged.reverse()) {
+    for (const { from, tmp, left } of staged.reverse()) {
+      if (left) continue;
       try { fs.renameSync(tmp, from); } catch (e2) { errors.push(`원본을 되돌리지 못했습니다(${tmp}): ${e2.message}`); }
     }
     return { ok: false, moved: 0, errors: [e.message, ...errors] };
