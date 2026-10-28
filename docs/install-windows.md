@@ -103,9 +103,10 @@ Remove-Item "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\io.github.xivicw
 
 ## 6. 처음 설정
 
-1. 사이드패널 상단의 **프로필 칩**에서 대상 서비스 프로필을 고릅니다. 처음에는 예시 프로필만 있습니다.
-   - 대상 서비스의 프로필은 `spike\.koa\store\profiles\<id>.yaml`에 둡니다. 형식은 `spike\store\profiles\example.yaml`을 참고합니다.
-2. 프로필 시트의 **역할과 계정**에서 역할별 테스트 계정을 입력합니다. 이 값은 내 확장에만 저장됩니다.
+1. 사이드패널 상단의 **세트 칩**에서 점검할 세트를 고릅니다. 처음에는 예시 세트만 있습니다.
+   - 서버 세트는 세트 시트에서 **받기**를 눌러 받습니다. 서버에 없는 사이트는 **이 PC 전용 세트**로 만듭니다.
+   - 지금은 공유 서버 대신 `spike\.koa\store\sets\<id>.yaml`에 세트 정의를 둡니다. 형식은 `spike\store\sets\`의 예시를 참고합니다.
+2. 세트 시트의 **역할과 계정**에서 역할별 테스트 계정을 입력합니다. 이 값은 세트마다 내 확장에만 저장됩니다.
 
 ## 업데이트
 
