@@ -90,7 +90,8 @@ function codeMatches(except = []) {
 const codeFresh = () => !!suite?.code?.source && !suite.code.running && suite.code.key === adoptedKey() && !missingCode().length && !notRun().length;
 let addOpen = false; // 테스트 추가 입력란을 연 상태
 const runPick = new Set(); // 테스트 코드 탭에서 실행하려고 고른 테스트 id
-let runConfirm = null;     // 대상 탭이 다른 도메인일 때 실행 확인을 기다리는 요청 { ids, only, actual }
+let runConfirm = null;
+let publishWip = false;    // 서버 전송을 눌러 공사 표지판(임시 형태로 보냄)을 띄운 상태     // 대상 탭이 다른 도메인일 때 실행 확인을 기다리는 요청 { ids, only, actual }
 let scopeOpen = false; // 범위 설명을 펼친 상태(다시 그려도 유지)
 const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span>');
 
@@ -327,6 +328,7 @@ function renderSuiteSheet(body) {
     ${suiteTab === 'coverage' ? coverageView() : suiteTab === 'flow' ? flowView() : suiteTab === 'bdd' ? bddView() : suiteTab === 'tdd' ? tddView() : codeView()}
     <div class="suite-actions">
     ${runConfirmView()}
+    ${publishWip ? wipSign('publish', { actions: '<button type="button" class="btn sm" data-suite="wip-cancel">보내지 않기</button><button type="button" class="wip-go sm" data-suite="wip-publish-go">알고 임시로 보내기</button>' }) : ''}
     ${suiteConflict ? `<div class="pf-alert suite-conflict">서버에 이 테스트 묶음의 v${suiteConflict.version}이 이미 있습니다(지금 초안의 기준: v${suiteBase || '없음'}).
       <span class="grow"></span>
       <button type="button" class="btn sm" data-suite="take-server">서버 v${suiteConflict.version} 불러오기</button>
@@ -643,7 +645,7 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
   }
   const cid = e.target.dataset.useC;
   if (cid) { suite.cases.find((x) => x.id === cid).use = e.target.checked; suiteApplied = false; saveSuite(); return renderSheet(); }
-  const act = e.target.closest('[data-suite]')?.dataset.suite;
+  let act = e.target.closest('[data-suite]')?.dataset.suite;
   if (act === 'apply') {
     // 지우지 않는다. 미채택 항목도 그대로 두어 언제든 다시 채택할 수 있다
     const n = (xs) => `${xs.filter((c) => c.use).length}/${xs.length}`;
@@ -722,6 +724,10 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     saveSuite();
   }
   if ((act === 'publish' || act === 'overwrite') && !deployServer()) { msg('err', '프로필에 배포 서버가 없어 보낼 수 없습니다. 프로필 → 배포 서버에 주소를 넣으세요'); return; }
+  // 서버 전송은 임시 형태다. 보내기 전에 공사 표지판으로 알리고, 알고 보내기를 누르면 보낸다
+  if (act === 'publish') { publishWip = true; renderSheet(); document.querySelector('[data-wip="publish"]')?.scrollIntoView({ block: 'nearest' }); return; }
+  if (act === 'wip-cancel') { publishWip = false; return renderSheet(); }
+  if (act === 'wip-publish-go') { publishWip = false; renderSheet(); act = 'publish'; }
   if ((act === 'publish' || act === 'overwrite') && suiteApplied && codeFresh() && !allTagProblems().length && ws?.readyState === 1) {
     const { flow, scenarios, cases, spec, code, tag_doc, ...rest } = suite;
     // 미채택도 함께 보낸다(adopted=false). 서버는 code를 받아 env 값만 자기 환경에 맞게 넣고 돌린다

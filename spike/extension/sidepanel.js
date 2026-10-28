@@ -761,6 +761,7 @@ function renderSheet() {
   if (sheetMode === 'suite') return renderSuiteSheet(body);
   if (sheetMode === 'release') return renderReleaseSheet(body);
   if (sheetMode === 'guide') return renderGuideSheet(body);
+  if (sheetMode === 'wip') return renderWipSheet(body);
   if (sheetMode === 'confirm') {
     // Claude 설정의 '기록까지 비우기'에서 연다. 지울 것을 호스트 기준(세션·기록 수)으로 보여 주고 항상 확인한다
     $('sheet-title').textContent = '기록까지 비울까요?';

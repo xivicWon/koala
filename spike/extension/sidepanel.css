@@ -741,3 +741,24 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 /* 대상 탭이 다른 도메인일 때의 안내: 버튼 사이 간격 */
 .domain-warn .btn { margin: 6px 6px 0 0; }
 .mi-ic.logs { -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3Cpath d='M8 12h8M8 15h5'/%3E%3C/svg%3E") center / contain no-repeat; }
+
+/* 공사 표지판: 아직 완성되지 않은 기능. 테마와 상관없이 노랑·검정으로 눈에 띄게 */
+:root { --wip-bg: #ffd21f; --wip-ink: #141414; --wip-soft: #fff4bf; }
+.wip { margin: 10px 0; border: 2px solid var(--wip-ink); border-radius: 8px; overflow: hidden; background: var(--wip-soft); color: var(--wip-ink); font-size: 12px; line-height: 1.55; box-shadow: 0 2px 0 var(--wip-ink); }
+.wip-stripe { height: 10px; background: repeating-linear-gradient(-45deg, var(--wip-bg) 0 10px, var(--wip-ink) 10px 20px); }
+.wip-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px 4px; background: var(--wip-bg); }
+.wip-h b { font-size: 13px; }
+.wip-k { padding: 1px 7px; border-radius: 4px; background: var(--wip-ink); color: var(--wip-bg); font-weight: 800; font-size: 11px; letter-spacing: .04em; }
+.wip-sub { font-size: 11px; font-weight: 600; }
+.wip-ic { width: 18px; height: 18px; flex: none; background: var(--wip-ink); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 9v4M12 17h.01'/%3E%3C/svg%3E") center / contain no-repeat; }
+.wip-b { padding: 8px 10px; display: grid; gap: 5px; }
+.wip-b > div { display: grid; grid-template-columns: 64px 1fr; gap: 6px; }
+.wip-l { font-weight: 700; }
+.wip-b ul { margin: 0; padding-left: 16px; }
+.wip-b .mono { font-size: 11px; }
+.wip-a { display: flex; justify-content: flex-end; gap: 6px; padding: 0 10px 8px; }
+.wip-go { height: 28px; padding: 0 12px; border: 2px solid var(--wip-ink); border-radius: 6px; background: var(--wip-bg); color: var(--wip-ink); font-weight: 700; cursor: pointer; }
+.wip-go:hover { filter: brightness(.95); }
+.wip .btn { background: #fff; color: var(--wip-ink); border-color: var(--wip-ink); }
+.mi-badge.wip { background: var(--wip-bg); color: var(--wip-ink); }
+.mi-ic.wip { -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 9v4M12 17h.01'/%3E%3C/svg%3E") center / contain no-repeat; }

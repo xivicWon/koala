@@ -17,6 +17,9 @@ let syncError = '';
 // ── 도메인: 작업 데이터(수행 기록·세션·타임라인·테스트 목록)는 프로필 대상 주소의 호스트 이름별로 따로 둔다 ──
 // viewDomain 은 지금 불러온 도메인. 대상 주소를 고치는 도중에는 바뀌지 않고, 입력을 마치거나 프로필을 바꿀 때 바뀐다
 let viewDomain = null;
+let pfWipSync = false; // 동기화를 눌렀으면 임시 저장소에서 받는다는 공사 표지판을 보여 준다
+// 지금 프로필과 같은 도메인을 쓰는 다른 프로필(세트 단위 관리 전에는 작업 데이터가 섞인다)
+const sameDomainProfiles = () => Object.keys(profiles || {}).filter((id) => id !== activeId && activeDomain() !== 'default' && domainOf(profiles[id]?.data) === activeDomain());
 const domainOf = (p) => { try { return new URL(p?.target?.base_url).hostname || 'default'; } catch { return 'default'; } };
 const activeDomain = () => domainOf(profiles[activeId]?.data);
 
@@ -297,6 +300,8 @@ function renderProfileSheet(body) {
       <button type="button" class="btn sm" data-pf="sync" title="저장소(지금은 이 PC의 임시 저장소)에 새 버전이 있으면 받습니다">동기화</button>
       ${local ? '<button type="button" class="btn sm danger-text" data-pf="delete">이 프로필 지우기</button>' : ''}
     </div>
+    ${pfWipSync ? wipSign('sync', { compact: true }) : ''}
+    ${sameDomainProfiles().length ? wipSign('sets', { compact: true }) : ''}
     <div class="pf-hint pf-explain">${local
       ? '이 PC에서만 쓰는 프로필입니다. 고친 내용은 바로 저장되고 다른 PC로는 가지 않습니다.'
       : '서버가 내려준 프로필입니다. 내용은 서버에서 바꾸고, 여기서는 <b>시작 URL</b>과 <b>계정</b>만 내 설정으로 바꿀 수 있습니다. 내 설정은 이 확장에만 저장됩니다.'}</div>
@@ -436,7 +441,7 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
     await saveProfiles();
     msg('sys', `이 PC 전용 프로필 "${name}"을 지웠습니다`);
   }
-  if (act === 'sync') await syncProfiles();
+  if (act === 'sync') { pfWipSync = true; await syncProfiles(); }
   if (act === 'pref-reset') { const next = { ...prefOf(activeId) }; delete next.start_url; profilePrefs[activeId] = next; await saveProfiles(); }
   if (act === 'acc-reset') { delete localAcc[activeId]?.[e.target.closest('[data-acc-key]').dataset.accKey]; await saveProfiles(); }
   renderProfileChip();
