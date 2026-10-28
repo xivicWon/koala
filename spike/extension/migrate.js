@@ -25,8 +25,9 @@ const localDay = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 const looksLikeDomain = (x) => x.includes('.') || x === 'default' || x === 'localhost';
 
 async function loadLegacy() {
-  const all = await chrome.storage.local.get(null).catch(() => ({}));
-  if (all.setsMigrated) return;
+  // 저장소를 읽지 못하면 아무것도 적지 않는다(setsMigrated 를 쓰면 예전 데이터를 다시 옮기지 않는다). 다음에 열 때 다시 본다
+  const all = await chrome.storage.local.get(null).catch(() => null);
+  if (!all || all.setsMigrated) return;
   const profiles = all.profiles || {};
   const known = new Set([all.activeSet, ...Object.keys(all.setPrefs || {}), ...(Array.isArray(all.setsCache) ? all.setsCache.map((s) => s?.id) : [])].filter(Boolean));
   const keys = LEGACY_KEYS.filter((k) => k in all);
@@ -96,7 +97,8 @@ async function finishMigration(m) {
   const prefs = { ...(now.setPrefs || {}) };
   for (const [pid, p] of Object.entries(L.profiles)) {
     const sid = map[pid];
-    if (!sid) { archive[`profile@${pid}`] = { profile: p, profileLocal: L.profileLocal[pid], profilePrefs: L.profilePrefs[pid], roleScope: L.roleScope[pid] }; continue; }
+    // 보관본에는 계정 비밀번호를 남기지 않는다(프로필의 인라인 역할 계정, 내 계정의 pass)
+    if (!sid) { archive[`profile@${pid}`] = { profile: noSecrets(p), profileLocal: noSecrets(L.profileLocal[pid]), profilePrefs: L.profilePrefs[pid], roleScope: L.roleScope[pid] }; continue; }
     const cur = prefs[sid] || {};
     // 이 PC 전용 프로필의 인라인 역할 계정은 세트 정의에 넣지 않았으므로 내 계정으로 옮긴다. 내가 바꾼 계정이 그 위에
     const inline = p?.local && Array.isArray(p.data?.roles) ? p.data.roles.filter((r) => r?.key && r.account?.user).map((r) => [accKey(r.key), { user: r.account.user, pass: r.account.pass || '' }]) : [];

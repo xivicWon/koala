@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import { planMigration, applyMigration } from '../migrate-sets.mjs';
-import { setPaths, readSet } from '../sets.mjs';
+import { setPaths, readSet, listSets } from '../sets.mjs';
 import { loadTests } from '../testlist.mjs';
 
 let root, spikeDir;
@@ -97,7 +97,8 @@ test('적용: 세트 자리로 옮기고 원본은 보관 폴더로', () => {
   const def = YAML.parse(read(path.join(root, 'store/sets/pa.yaml')));
   assert.equal(def.version, 4);
   assert.equal(def.profile.target.base_url, 'https://site-a.test');
-  assert.equal(def.profile.default_role, 'ADMIN');
+  assert.equal(def.default_role, 'ADMIN'); // 기본 역할은 호스트·세트 상세가 읽는 정의 맨 위
+  assert.equal(def.profile.default_role, undefined);
   assert.equal(def.profile.prompt, 'A 안내');
   assert.equal(readSet('pa', root).source, 'server');
   assert.equal(readSet('pb', root).source, 'server');
@@ -297,7 +298,8 @@ test('인라인 역할의 계정 비밀번호는 세트 정의 어디에도 남�
   const local = { id: 'local-y', name: 'Y', target: { base_url: 'https://site-c.test' }, roles: [{ key: 'U', accounts: [{ password: 'secret-xyz' }] }] };
   const r = applyMigration(planMigration(input({ profiles: { pa: { data: profA }, pb: { data: profB }, 'local-y': { local: true, data: local } } })));
   assert.equal(r.ok, true, r.errors.join());
-  assert.deepEqual(readSet('pa', root).def.profile.roles, [{ key: 'ADMIN', name: '관리자' }]);
+  assert.deepEqual(readSet('pa', root).def.roles, [{ key: 'ADMIN', name: '관리자' }]);
+  assert.equal(readSet('pa', root).def.profile.roles, undefined);
   const all = JSON.stringify(tree(path.join(root, 'sets'))) + JSON.stringify(tree(path.join(root, 'store/sets')));
   assert.ok(!all.includes('secret-xyz'));
 });
@@ -364,4 +366,35 @@ test('패널이 프로필을 보내지 않으면(확장 저장소를 지움) 이
   assert.equal(r.ok, true, r.errors.join());
   assert.equal(json(setPaths('pa', root).state).sessionId, 'sess-1');
   assert.deepEqual(json(path.join(archive(), 'domains/site-z.test/recording.json')), [{ action: 'z' }]);
+});
+
+test('역할: 서버 프로필의 인라인 역할·기본 역할은 정의 맨 위로, 이 PC 전용 프로필의 역할 문서 id 는 (계정을 빼고) 정의에 넣는다', () => {
+  putYaml(root, 'store/profiles/pa.yaml', { ...profA, kind: 'profile', default_role: 'MEMBER',
+    roles: [{ key: 'ADMIN', label: '관리자', account: { user: 'u', pass: 'secret-r1' } }, { key: 'MEMBER', label: '회원' }] });
+  putYaml(root, 'store/roles/doc-roles.yaml', { id: 'doc-roles', kind: 'role', version: 3, default_role: 'B',
+    roles: [{ key: 'A', label: '가', account: { user: 'd', pass: 'secret-r2' } }, { key: 'B', label: '나' }] });
+  const local = { id: 'local-r', name: '로컬 R', target: { base_url: 'https://site-c.test' }, roles: 'doc-roles' };
+  const gone = { id: 'local-g', name: '로컬 G', target: { base_url: 'https://site-d.test' }, roles: 'no-such-roles' };
+  const plan = planMigration(input({ profiles: { pa: { data: profA }, pb: { data: profB }, 'local-r': { local: true, data: local }, 'local-g': { local: true, data: gone } } }));
+  const r = applyMigration(plan);
+  assert.equal(r.ok, true, r.errors.join());
+  const pa = readSet('pa', root);
+  assert.deepEqual(pa.def.roles, [{ key: 'ADMIN', label: '관리자' }, { key: 'MEMBER', label: '회원' }]);
+  assert.equal(pa.def.default_role, 'MEMBER');
+  const lr = readSet(plan.setByProfile['local-r'], root);
+  assert.deepEqual(lr.def.roles, [{ key: 'A', label: '가' }, { key: 'B', label: '나' }]);
+  assert.equal(lr.def.default_role, 'B');
+  const lg = readSet(plan.setByProfile['local-g'], root);
+  assert.equal(lg.def.roles, undefined);
+  assert.deepEqual(lg.def.migration_missing, ['role/no-such-roles']);
+  assert.ok(plan.skipped.includes(`${plan.setByProfile['local-g']}: 참조 문서 없음 role/no-such-roles`));
+  // 세트 상세에도 역할·기본 역할이 보인다
+  const l = listSets(root, () => {});
+  const of = (id) => l.find((s) => s.id === id);
+  assert.deepEqual(of('pa').roles.map((x) => x.key), ['ADMIN', 'MEMBER']);
+  assert.equal(of('pa').default_role, 'MEMBER');
+  assert.deepEqual(of(lr.id).roles.map((x) => x.key), ['A', 'B']);
+  assert.equal(of(lr.id).default_role, 'B');
+  const all = JSON.stringify(tree(path.join(root, 'sets'))) + JSON.stringify(tree(path.join(root, 'store/sets')));
+  assert.ok(!all.includes('secret-r1') && !all.includes('secret-r2'));
 });

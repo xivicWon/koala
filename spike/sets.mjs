@@ -66,7 +66,7 @@ function resolveRefs(def, root) {
     if (!doc) missing.push(`${kind}/${id}`);
     return doc;
   };
-  const role = def.roles ? find('role', def.roles) : null;
+  const role = typeof def.roles === 'string' ? find('role', def.roles) : null; // 목록이면 정의에 든 인라인 역할
   const knowledge = arr(def.knowledge).map((id) => find('knowledge', id));
   const tags = arr(def.tags).map((id) => find('tag', id));
   return { missing, role, knowledge, tags };
@@ -131,20 +131,29 @@ export function receiveSet(id, root = DATA) {
 }
 
 // 받은 것과 저장소의 현재 판을 비교해 바뀐 것을 낸다. 받기 전에는 스냅숏을 건드리지 않는다
+// 저장소 문서를 읽지 못하면(YAML 이 깨짐) 던지지 않고 바뀐 것으로 알린다(목록 전체가 막히지 않게)
+const UNREADABLE = Symbol('unreadable');
+const tryDoc = (kind, id, root) => { try { return storeDoc(kind, id, root); } catch { return UNREADABLE; } };
+const unreadable = (kind, id) => `참조 문서를 읽지 못함 ${kind}/${id}`;
+// '<id>@v<판>' → [id, 판]. id 안에 '@v' 가 있어도 마지막 것으로 가른다
+const splitRef = (r) => { const s = String(r); const i = s.lastIndexOf('@v'); return i < 0 ? [s, undefined] : [s.slice(0, i), s.slice(i + 2)]; };
+
 export function checkUpdate(id, root = DATA) {
   const rec = readSet(id, root);
   if (!rec || rec.source !== 'server') return null;
-  const doc = storeDoc('set', rec.id, root);
+  const doc = tryDoc('set', rec.id, root);
+  if (doc === UNREADABLE) return { from: rec.version, to: rec.version, changed: [unreadable('set', rec.id)] };
   if (!doc) return null;
   const changed = [];
   if ((doc.version ?? 1) !== rec.version) changed.push(`세트 v${rec.version} → v${doc.version ?? 1}`);
-  const have = (list) => new Map(arr(list).map((r) => { const [rid, v] = r.split('@v'); return [rid, v]; }));
+  const have = (list) => new Map(arr(list).map(splitRef));
   const kinds = { roles: 'role', knowledge: 'knowledge', tags: 'tag' };
   for (const [key, kind] of Object.entries(kinds)) {
     const before = have(rec.refs?.[key]);
-    const wanted = arr(doc[key]);
+    const wanted = key === 'roles' && typeof doc.roles !== 'string' ? [] : arr(doc[key]); // 인라인 역할은 세트 판으로 본다
     for (const rid of wanted) {
-      const cur = storeDoc(kind, rid, root);
+      const cur = tryDoc(kind, rid, root);
+      if (cur === UNREADABLE) { changed.push(unreadable(kind, rid)); continue; }
       if (!cur) continue;
       if (!before.has(rid)) changed.push(`${LABEL[key]} ${rid} 추가`);
       else if (String(cur.version) !== before.get(rid)) changed.push(`${LABEL[key]} ${rid} v${before.get(rid)} → v${cur.version}`);
@@ -193,12 +202,25 @@ export function deleteSet(id, root = DATA) {
 }
 
 const readJsonOr = (f, v) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return v; } };
+// 세트의 역할 문서 { roles, default_role }. 정의에 든 인라인 역할이 먼저(앞선 옮기기가 profile 아래에 둔 것도 읽는다),
+// 역할 문서 id(문자열)면 받은 received/roles.json. 이 PC 전용 세트는 받기가 없으므로 저장소의 역할 문서(계정은 뺀다)
+export function roleDocOf(rec, root = DATA) {
+  const def = rec?.def || {};
+  if (typeof def.roles !== 'string') {
+    const roles = Array.isArray(def.roles) ? def.roles : Array.isArray(def.profile?.roles) ? def.profile.roles : [];
+    return { roles, default_role: def.default_role ?? def.profile?.default_role };
+  }
+  const got = readJsonOr(`${setPaths(rec.id, root).received}/roles.json`, null);
+  if (got || rec.source !== 'local') return got;
+  let doc = null;
+  try { doc = storeDoc('role', def.roles, root); } catch { /* 읽지 못하면 역할 없이 */ }
+  return doc ? { roles: (doc.roles || []).map(({ account, accounts, ...r }) => r), default_role: def.default_role ?? doc.default_role } : null;
+}
 // 패널이 세트 상세를 그리는 데 쓰는 것. 기본 계정은 있는지만 싣고 아이디·비밀번호 값은 싣지 않는다
 function details(rec, root) {
   const p = setPaths(rec.id, root);
   const def = rec.def || {};
-  const roleDoc = typeof def.roles === 'string' ? readJsonOr(`${p.received}/roles.json`, null)
-    : { roles: Array.isArray(def.roles) ? def.roles : [], default_role: def.default_role };
+  const roleDoc = roleDocOf(rec, root);
   const secrets = readJsonOr(`${p.secrets}/accounts.json`, {}) || {};
   const roles = (roleDoc?.roles || []).map((r) => ({ key: r.key, label: r.label || r.key, desc: r.desc || '', has_default: !!secrets[r.key]?.user }));
   const t = readJsonOr(p.testsFile, null);
@@ -217,7 +239,8 @@ const summary = (rec, received, update, root) => ({
   ...(received ? details(rec, root) : {}),
 });
 
-export function listSets(root = DATA) {
+// 읽지 못한 파일·받을 수 없는 문서는 건너뛰고 warn 으로 알린다(파일 하나 때문에 목록 전체가 막히지 않게)
+export function listSets(root = DATA, warn = (m) => console.warn(`[sets] ${m}`)) {
   const out = [];
   const seen = new Set();
   const dir = path.join(root, 'sets');
@@ -227,15 +250,22 @@ export function listSets(root = DATA) {
       try { rec = JSON.parse(fs.readFileSync(`${dir}/${d}/set.json`, 'utf8')); } catch { /* 받다 만 폴더 */ }
       if (!rec) continue;
       seen.add(safeId(rec.id));
-      out.push(summary(rec, true, checkUpdate(rec.id, root), root));
+      try { out.push(summary(rec, true, checkUpdate(rec.id, root), root)); } catch (e) { warn(`세트 ${rec.id}를 읽지 못해 목록에서 뺐습니다: ${e.message}`); }
     }
   }
   for (const r of [path.join(root, 'store'), shared]) {
     const sdir = `${r}/sets`;
     if (!fs.existsSync(sdir)) continue;
     for (const f of fs.readdirSync(sdir).filter((x) => x.endsWith('.yaml'))) {
-      const doc = YAML.parse(fs.readFileSync(`${sdir}/${f}`, 'utf8'));
-      if (!doc?.id || seen.has(safeId(doc.id))) continue;
+      let doc;
+      try { doc = YAML.parse(fs.readFileSync(`${sdir}/${f}`, 'utf8')); } catch (e) {
+        warn(`세트 문서 ${sdir}/${f}를 읽지 못해 건너뜁니다: ${e.message.split('\n')[0]}`);
+        continue;
+      }
+      if (!doc?.id) continue;
+      // 받기는 <id>.yaml 로 찾으므로 이름이 다른 문서는 받을 수 없다
+      if (`${safeId(doc.id)}.yaml` !== f) { warn(`세트 문서 ${sdir}/${f}의 id(${doc.id})가 파일 이름과 달라 건너뜁니다`); continue; }
+      if (seen.has(safeId(doc.id))) continue;
       seen.add(safeId(doc.id));
       out.push(summary({ id: doc.id, name: doc.name ?? doc.id, version: doc.version ?? 1, source: 'server', def: defOf(doc) }, false, null));
     }

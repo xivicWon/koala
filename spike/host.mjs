@@ -16,7 +16,7 @@ import * as update from './update.mjs';
 import { hostToken, HEADER as TOKEN_HEADER } from './host-token.mjs';
 import { fileURLToPath } from 'node:url';
 import { DATA, PORT } from './paths.mjs';
-import { safeId, setPaths, readSet, listSets, receiveSet, createLocalSet, updateLocalSet, deleteSet, domainOfSet } from './sets.mjs';
+import { safeId, setPaths, readSet, listSets, receiveSet, createLocalSet, updateLocalSet, deleteSet, domainOfSet, roleDocOf } from './sets.mjs';
 import * as testlist from './testlist.mjs';
 import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
@@ -256,8 +256,7 @@ function profileOf(id, prefs = {}) {
   const p = setPaths(id);
   const def = rec.def || {};
   const base = def.profile || {};
-  const roleDoc = typeof def.roles === 'string' ? readJsonFile(`${p.received}/roles.json`)
-    : { roles: Array.isArray(def.roles) ? def.roles : [], default_role: def.default_role };
+  const roleDoc = roleDocOf(rec);
   const roles = (roleDoc?.roles || []).map(({ account, ...r }) => r);
   const secrets = readJsonFile(`${p.secrets}/accounts.json`) || {};
   const mine = new Map(arr(prefs.accounts).filter((a) => a?.key).map((a) => [a.key, a]));
@@ -268,6 +267,7 @@ function profileOf(id, prefs = {}) {
     return { key, role: r.key, label: `${r.label || r.key} 계정`, user: use.user || '', pass: use.pass || '' };
   });
   for (const [key, a] of mine) if (!accounts.some((x) => x.key === key || x.role === key)) accounts.push({ key, label: a.label || key, user: a.user || '', pass: a.pass || '' });
+  // 역할은 정의 맨 위(또는 받은 역할 문서)의 것. profile 아래 남은 roles·default_role 이 덮어쓰지 않게 뒤에 둔다
   return {
     ...base, id: safeId(id), version: rec.version, name: rec.name, local: rec.source === 'local' || undefined,
     target: { ...base.target, start_url: prefs.start_url || base.target?.start_url || undefined },
@@ -778,20 +778,57 @@ const setBlocked = () => (needsMigration() ? MIGRATION_MSG : !activeSet ? '세�
 
 // 예외·오류 보강의 다시 저장: 세트에 이미 있는 id는 내용만 바꾸고 사용자가 정한 채택·태그·이슈는 그대로 둔다.
 // 없는 id는 세트 끝에 더한다(새 번호). 흐름·점검표는 보강한 초안 전체로 바꾼다
+const keepUser = (old, neu) => ({ ...neu, id: old.id, use: old.use, tags: old.tags ?? neu.tags, ...(old.issue !== undefined ? { issue: old.issue } : {}) });
 function mergeById(cur, { scenarios, cases, flow, coverage }) {
-  const keep = (old, neu) => ({ ...neu, id: old.id, use: old.use, tags: old.tags ?? neu.tags, ...(old.issue !== undefined ? { issue: old.issue } : {}) });
-  const replace = (list, items) => list.map((c) => { const n = items.find((x) => x.id === c.id); return n ? keep(c, n) : c; });
+  const replace = (list, items) => list.map((c) => { const n = items.find((x) => x.id === c.id); return n ? keepUser(c, n) : c; });
   const has = (list) => new Set(list.map((c) => c.id));
   const sc = has(cur.scenarios || []), tc = has(cur.cases || []);
   const base = {
     ...cur, scenarios: replace(cur.scenarios || [], scenarios), cases: replace(cur.cases || [], cases),
     flow: flow?.length ? flow : cur.flow, coverage: coverage?.length ? coverage : cur.coverage,
   };
-  return testlist.addTests(base, { scenarios: scenarios.filter((c) => !sc.has(c.id)), cases: cases.filter((c) => !tc.has(c.id)) });
+  const r = testlist.addTests(base, { scenarios: scenarios.filter((c) => !sc.has(c.id)), cases: cases.filter((c) => !tc.has(c.id)) });
+  // 고쳐 쓴 케이스가 이번에 새로 더한 시나리오를 가리키면 새 번호로 바꾼다(renamed 의 키는 세트에 없던 id 뿐이다)
+  const fresh = new Set(Object.values(r.renamed));
+  r.suite.cases = r.suite.cases.map((c) => (!fresh.has(c.id) && r.renamed[c.scenario] ? { ...c, scenario: r.renamed[c.scenario] } : c));
+  return r;
+}
+
+// 같은 Claude 대화(세트+세션 이름)에서 마지막으로 저장한 초안의 id → 세트에 들어간 id
+const savedIds = new Map();
+// 같은 대화의 다시 저장: 앞 저장의 대응표로 세트 항목을 찾은 초안 항목은 그 항목을 고쳐 쓰고(채택·태그·이슈 유지),
+// 나머지는 세트에 같은 id가 있어도 새로 더한다(새 번호). 흐름·점검표는 더한다.
+// 대응표의 키는 AI가 초안에 적은 id다(세트 id는 초안 id와 겹치기 쉬워 같은 항목으로 보지 않는다)
+function reviseDraft(cur, draft, prev) {
+  const exists = new Set([...(cur.scenarios || []), ...(cur.cases || [])].map((c) => c.id));
+  const target = (id) => { const t = Object.hasOwn(prev, id) ? prev[id] : null; return t && exists.has(t) ? t : null; };
+  const split = (list) => {
+    const rev = new Map(), add = [];
+    for (const c of list || []) { const t = target(c.id); if (t) rev.set(t, c); else add.push(c); }
+    return { rev, add };
+  };
+  const S = split(draft.scenarios), C = split(draft.cases);
+  const revisedS = Object.fromEntries([...S.rev].map(([t, c]) => [c.id, t]));
+  const base = {
+    ...cur,
+    scenarios: (cur.scenarios || []).map((c) => (S.rev.has(c.id) ? keepUser(c, S.rev.get(c.id)) : c)),
+    cases: (cur.cases || []).map((c) => (C.rev.has(c.id) ? keepUser(c, C.rev.get(c.id)) : c)),
+  };
+  const r = testlist.addTests(base, { scenarios: S.add, cases: C.add, flow: draft.flow, coverage: draft.coverage });
+  // 케이스의 시나리오 참조: 이번에 더한 것 → 새 번호, 고쳐 쓴 것 → 세트 id, 앞 저장의 것 → 대응표, 그 밖은 그대로
+  const ref = (x) => r.renamed[x] ?? revisedS[x] ?? target(x) ?? x;
+  const n = (cur.cases || []).length;
+  r.suite.cases = r.suite.cases.map((c, i) => {
+    const src = i < n ? C.rev.get(c.id) : C.add[i - n];
+    return src && src.scenario !== undefined ? { ...c, scenario: ref(src.scenario) } : c;
+  });
+  const ids = { ...Object.fromEntries([...S.rev, ...C.rev].map(([t, c]) => [c.id, t])), ...r.renamed };
+  return { suite: r.suite, renamed: r.renamed, ids, revised: S.rev.size + C.rev.size };
 }
 
 // 초안 저장(save_tests): 세트의 테스트 목록에 더한다. 새 id는 세트 안 최대 번호 다음부터 다시 매긴다(testlist.addTests).
-// 예외·오류 보강 중이면 같은 id는 고쳐 쓴다(mergeById)
+// 예외·오류 보강 중이면 같은 id는 고쳐 쓴다(mergeById). 보강이 아니어도 같은 대화에서 앞서 저장한 초안을 다시 저장하면
+// 앞 저장의 대응표(renamed)로 id를 바꿔 그 항목을 고쳐 쓰고, 나머지는 더한다. 새 대화의 저장은 언제나 더한다
 function saveTests(args) {
   stepJob('save', `BDD ${args.scenarios.length} · TDD ${args.cases.length}`);
   const why = setBlocked();
@@ -812,7 +849,9 @@ function saveTests(args) {
     flow: args.flow || [], coverage: args.coverage || [],
   };
   const reinforce = job?.kind === 'reinforce';
-  const { suite, renamed } = reinforce ? mergeById(cur, draft) : testlist.addTests(cur, draft);
+  const key = sessionAlias ? `${activeSet}\u0000${sessionAlias}` : null;
+  const r = reinforce ? mergeById(cur, draft) : reviseDraft(cur, draft, (key && savedIds.get(key)) || {});
+  const { suite, renamed } = r;
   const next = {
     ...suite, id: activeSet, name: cur.scenarios.length || cur.cases.length ? suite.name : profile?.name || suite.name,
     profile: profile?.id, scope: suite.scope || args.scope,
@@ -820,9 +859,12 @@ function saveTests(args) {
     spec, source: { steps: steps.length, created_at: new Date().toISOString() },
   };
   try { testlist.saveTests(activeSet, next); } catch (e) { log('err', `테스트 목록을 저장하지 못했습니다: ${e.message}`); return { ok: false, error: e.message }; }
+  // 보강 저장은 대응표를 바꾸지 않는다
+  if (key && !reinforce) savedIds.set(key, r.ids);
+  const merged = reinforce || r.revised > 0;
   send({ type: 'tests', set: activeSet, suite: next, added: Object.values(renamed), tag_doc: doc });
-  log('sys', `테스트 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개를 세트 ${activeSet}의 목록에 ${reinforce ? '반영했습니다(같은 id는 고쳐 씀)' : '더했습니다'} — 사용할 것을 골라 반영하세요`);
-  return { ok: true, result: { set: activeSet, scenarios: args.scenarios.length, cases: args.cases.length, renamed } };
+  log('sys', `테스트 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개를 세트 ${activeSet}의 목록에 ${merged ? '반영했습니다(같은 항목은 고쳐 씀)' : '더했습니다'} — 사용할 것을 골라 반영하세요`);
+  return { ok: true, result: { set: activeSet, scenarios: args.scenarios.length, cases: args.cases.length, renamed: reinforce ? renamed : r.ids } };
 }
 
 // 방금 수행한 이력을 바탕으로 TDD/BDD 초안을 만들게 한다(같은 대화에서 이어서)
@@ -1353,7 +1395,8 @@ function compactSession() {
 
 // 반영된 테스트 묶음을 서버로 보낸다. 만들기·보내기는 outbox.mjs 가 맡는다(임시 형태). 서버 주소는 프로필의 배포 서버(deploy.url)
 async function publishSuite(setId, baseVersion) {
-  const r = await outbox.send(setId, { server: profile?.deploy?.url, baseVersion });
+  let r;
+  try { r = await outbox.send(setId, { server: profile?.deploy?.url, baseVersion }); } catch (e) { r = { ok: false, error: `테스트 묶음을 보내지 못했습니다: ${e.message}` }; }
   if (!r.ok) {
     send({ type: 'suite_published', ok: false, error: r.error, ...(r.conflict ? { current: r.current } : {}) });
     return;
@@ -1751,7 +1794,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'session_clear') clearSession();
     if (m.type === 'session_compact') compactSession();
     if (m.type === 'reinforce') reinforceTests(m.summary);
-    if (m.type === 'publish') publishSuite(m.set || m.suite?.id || activeSet, m.base_version ?? 0); // 옛 모양({suite})도 받되 본문은 무시
+    if (m.type === 'publish') publishSuite(m.set || m.suite?.id || activeSet, m.base_version ?? 0).catch((e) => log('err', `테스트 묶음을 보내지 못했습니다: ${e.message}`)); // 옛 모양({suite})도 받되 본문은 무시
     if (m.type === 'write_code') writeCode(m.suite);
     if (m.type === 'suggest_tags') suggestTags(m.suite);
     if (m.type === 'retag_code') retagCode(m.suite);
@@ -1773,7 +1816,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       else if (!readSet(sid)) { const error = `세트 ${sid}를 아직 받지 않아 테스트 목록을 저장하지 않았습니다`; log('err', error); refuse('error', error); }
       else {
         try {
-          testlist.saveTests(sid, { ...testlist.applyPanelEdits(testlist.loadTests(sid), m.suite), id: safeId(sid) });
+          testlist.saveTests(sid, { ...testlist.applyPanelEdits(testlist.loadTests(sid), m.suite), id: sid });
           send({ type: 'tests_saved', set: sid, seq: m.seq });
         } catch (e) { const error = `테스트 목록을 저장하지 못했습니다: ${e.message}`; log('err', error); refuse('error', error); }
       }

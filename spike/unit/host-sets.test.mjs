@@ -299,6 +299,107 @@ test('code.key 는 호스트가 실행할 때 받은 채택 목록으로 정한�
   assert.equal(testsOf('a').code.key, 'SC-1:@t:I-1');
 });
 
+// 새 대화를 열고(reset → 지시) 세션 이름을 돌려준다
+async function newSession(text) {
+  const at = pn.mark();
+  pn.send({ type: 'reset' });
+  pn.send({ type: 'instruct', text, roles: [], set: 'a' });
+  const m = await pn.waitFor((x) => x.type === 'session' && x.alias, at, '새 세션 이름');
+  await pn.waitFor((x) => x.type === 'job' && x.done, at, '지시 끝').catch(() => {});
+  return m.alias;
+}
+
+test('같은 대화에서 다시 저장한 초안은 그 항목을 고쳐 쓰고(채택·태그·이슈 유지), 새 대화의 저장은 더한다', async () => {
+  pn.url = 'http://site-a.test/';
+  writeTests('a', { id: 'a', name: 'a', scenarios: [], cases: [], flow: [], coverage: [] });
+  const s1 = await newSession('첫 대화-다시저장');
+  let r = await callTool('save_tests', { title: '초안', scope: '', flow: [], coverage: [],
+    scenarios: [sc('SC-1', '첫째'), sc('SC-2', '둘째')], cases: [{ id: 'TC-1', scenario: 'SC-1', title: '케이스' }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  // 사용자가 SC-1 을 미채택·태그·이슈로 고쳤다
+  const t0 = testsOf('a');
+  writeTests('a', { ...t0, scenarios: t0.scenarios.map((c) => (c.id === 'SC-1' ? { ...c, use: false, tags: ['@mine'], issue: 'ISSUE-9' } : c)) });
+  r = await callTool('save_tests', { title: '초안', scope: '', flow: [], coverage: [],
+    scenarios: [sc('SC-1', '첫째 고침'), sc('SC-3', '셋째')], cases: [{ id: 'TC-1', scenario: 'SC-1', title: '케이스 고침' }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  let t = testsOf('a');
+  assert.deepEqual(t.scenarios.map((c) => [c.id, c.title]), [['SC-1', '첫째 고침'], ['SC-2', '둘째'], ['SC-3', '셋째']]);
+  assert.equal(t.scenarios[0].use, false);
+  assert.deepEqual(t.scenarios[0].tags, ['@mine']);
+  assert.equal(t.scenarios[0].issue, 'ISSUE-9');
+  assert.deepEqual(t.cases.map((c) => [c.id, c.title, c.scenario]), [['TC-1', '케이스 고침', 'SC-1']]);
+  assert.deepEqual(r.result.renamed, { 'SC-1': 'SC-1', 'SC-3': 'SC-3', 'TC-1': 'TC-1' });
+
+  // 새 대화: 같은 id 라도 더한다
+  const s2 = await newSession('둘째 대화-다시저장');
+  assert.notEqual(s2, s1);
+  r = await callTool('save_tests', { title: '새 초안', scope: '', flow: [], coverage: [], scenarios: [sc('SC-1', '새 대화의 첫째')], cases: [] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  t = testsOf('a');
+  assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1', 'SC-2', 'SC-3', 'SC-4']);
+  assert.equal(t.scenarios[0].title, '첫째 고침');
+  assert.equal(t.scenarios[3].title, '새 대화의 첫째');
+  // 그 대화에서 다시 저장: 초안 id SC-1 → 세트 SC-4 를 고쳐 쓰고, 세트 id 와 겹치는 새 초안 id SC-4 는 새로 더한다
+  r = await callTool('save_tests', { title: '새 초안', scope: '', flow: [], coverage: [], scenarios: [sc('SC-1', '새 대화의 첫째 고침'), sc('SC-4', '새 대화의 둘째')], cases: [] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  t = testsOf('a');
+  assert.deepEqual(t.scenarios.map((c) => [c.id, c.title]).slice(3), [['SC-4', '새 대화의 첫째 고침'], ['SC-5', '새 대화의 둘째']]);
+});
+
+test('패널 tests_save 는 세트 id 를 그대로 적는다(/ 나 한글이 있어도)', async () => {
+  const id = '서비스A/점검';
+  putYaml(data, 'store/sets/___A___.yaml', siteSet(id));
+  let at = pn.mark();
+  pn.send({ type: 'set_receive', id });
+  await pn.waitFor((m) => m.type === 'sets' && receivedIds(m).includes(id), at, '받기');
+  writeTests('___A___', { id, name: 'n', scenarios: [sc('SC-1', 'x', { use: true })], cases: [] });
+  at = pn.mark();
+  pn.send({ type: 'tests_save', set: id, seq: 9, suite: { scenarios: [{ id: 'SC-1', use: false }] } });
+  await pn.waitFor((m) => m.type === 'tests_saved' && m.set === id, at, 'tests_saved');
+  const t = testsOf('___A___');
+  assert.equal(t.id, id);
+  assert.equal(t.scenarios[0].use, false);
+});
+
+test('보내기: 목록이 깨졌거나 보낸 뒤 기준 버전 저장에 실패해도 호스트는 살아 있고 suite_published{ok:false}', async () => {
+  const id = 'pub';
+  putYaml(data, `store/sets/${id}.yaml`, { ...siteSet(id), profile: { target: { base_url: 'http://site-a.test', start_url: 'http://site-a.test/' }, deploy: { url: `http://127.0.0.1:${host.port}` } } });
+  let at = pn.mark();
+  pn.send({ type: 'set_receive', id });
+  await pn.waitFor((m) => m.type === 'sets' && receivedIds(m).includes(id), at, '받기');
+  at = pn.mark();
+  pn.send({ type: 'set', id, prefs: { accounts: [] } });
+  await pn.waitFor((m) => m.type === 'tests' && m.set === id, at, 'pub 의 tests');
+  const tests = path.join(data, 'sets', id, 'tests');
+  fs.mkdirSync(tests, { recursive: true });
+  fs.writeFileSync(path.join(tests, 'tests.json'), '{깨짐');
+  at = pn.mark();
+  pn.send({ type: 'publish', set: id, base_version: 0 });
+  const a = await pn.waitFor((m) => m.type === 'suite_published', at, '깨진 목록의 suite_published');
+  assert.equal(a.ok, false);
+  assert.match(a.error, /테스트 목록을 읽지 못해/);
+  assert.equal(host.p.exitCode, null);
+
+  writeTests(id, { id, name: 'n', applied: true, base_version: 0, flow: [], coverage: [],
+    scenarios: [sc('SC-1', '로그인', { use: true })], cases: [], code: { source: "test('SC-1 로그인', async () => {});\n", key: 'SC-1::' } });
+  fs.chmodSync(tests, 0o555);
+  try {
+    at = pn.mark();
+    pn.send({ type: 'publish', set: id, base_version: 0 });
+    const b = await pn.waitFor((m) => m.type === 'suite_published', at, '저장 실패의 suite_published');
+    assert.equal(b.ok, false);
+    assert.match(b.error, /보냈지만 기준 버전을 저장하지 못했습니다/);
+  } finally { fs.chmodSync(tests, 0o755); }
+  await sleep(100);
+  assert.equal(host.p.exitCode, null);
+  // 호스트는 계속 답한다
+  at = pn.mark();
+  pn.send({ type: 'publish', set: id, base_version: 1 });
+  const c = await pn.waitFor((m) => m.type === 'suite_published', at, '다시 보내기');
+  assert.equal(c.ok, true, c.error);
+  pn.send({ type: 'set', id: 'a', prefs: { accounts: [] } });
+});
+
 test('이 PC 전용 세트 고치기: 지금 세트가 작업 중이면 거절한다', async () => {
   let at = pn.mark();
   pn.send({ type: 'set_create_local', def: { name: 'loc', profile: { target: { base_url: 'http://site-a.test' }, prompt: '옛' } } });
@@ -484,6 +585,54 @@ test('migrate: 패널이 프로필 없이 보내면 이 PC 저장소의 서버 �
       assert.deepEqual(r.setByProfile, { pa: 'pa' });
       assert.deepEqual(r.skipped, ['domains/site-z.test']);
       assert.ok(fs.existsSync(path.join(old, 'sets', 'pa', 'work', 'recording.json')));
+    } finally { p.ws.close(); await stopHost(h.p); }
+  } finally {
+    fs.rmSync(old, { recursive: true, force: true });
+  }
+});
+
+test('migrate: 옮긴 세트의 역할·기본 역할이 호스트 프로필과 세트 상세에 보인다(인라인 역할, 이 PC 전용 프로필의 역할 문서 id)', async () => {
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-migrate-'));
+  const profA = { id: 'pa', name: '프로필 A', version: 1, target: { base_url: 'http://site-a.test' }, default_role: 'MEMBER',
+    roles: [{ key: 'ADMIN', label: '관리자', account: { user: 'u', pass: 'secret-h1' } }, { key: 'MEMBER', label: '회원' }] };
+  const profL = { id: 'local-r', name: '로컬 R', target: { base_url: 'http://site-a.test' }, roles: 'doc-roles' };
+  try {
+    fs.mkdirSync(path.join(old, 'domains', 'site-a.test'), { recursive: true });
+    fs.writeFileSync(path.join(old, 'domains', 'site-a.test', 'recording.json'), '[]');
+    putYaml(old, 'store/profiles/pa.yaml', { ...profA, kind: 'profile' });
+    putYaml(old, 'store/roles/doc-roles.yaml', { id: 'doc-roles', kind: 'role', version: 1, default_role: 'B',
+      roles: [{ key: 'A', label: '가', account: { user: 'd', pass: 'secret-h2' } }, { key: 'B', label: '나' }] });
+    const h = await startHost(old);
+    const p = await connectPanel(h);
+    const effective = () => fetch(`http://127.0.0.1:${h.port}/claude/effective`, { headers: { Origin: EXT, 'x-koala-token': h.token } }).then((r) => r.json());
+    try {
+      await p.waitFor((m) => m.type === 'migration_needed', 0, 'migration_needed');
+      await p.waitFor((m) => m.type === 'sets', 0, '연결 시 sets');
+      let at = p.mark();
+      p.send({ type: 'migrate', profiles: { pa: { data: profA }, 'local-r': { local: true, data: profL } }, activeId: 'pa', extSuites: {}, extTimelines: [] });
+      const r = await p.waitFor((m) => m.type === 'migrated', at, 'migrated');
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      const lid = r.setByProfile['local-r'];
+      const s = await p.waitFor((m) => m.type === 'sets' && receivedIds(m).includes(lid), at, '옮긴 뒤 sets');
+      const of = (id) => s.sets.find((x) => x.id === id);
+      assert.deepEqual(of('pa').roles.map((x) => x.key), ['ADMIN', 'MEMBER']);
+      assert.equal(of('pa').default_role, 'MEMBER');
+      assert.deepEqual(of(lid).roles.map((x) => x.key), ['A', 'B']);
+      assert.equal(of(lid).default_role, 'B');
+
+      at = p.mark();
+      p.send({ type: 'set', id: 'pa', prefs: {} });
+      await p.waitFor((m) => m.type === 'tests' && m.set === 'pa', at, 'pa 의 tests');
+      let ctx = (await effective()).profileContext;
+      assert.match(ctx, /- ADMIN 관리자: /);
+      assert.match(ctx, /- MEMBER 회원 \(기본\)/);
+      at = p.mark();
+      p.send({ type: 'set', id: lid, prefs: {} });
+      await p.waitFor((m) => m.type === 'tests' && m.set === lid, at, '이 PC 전용 세트의 tests');
+      ctx = (await effective()).profileContext;
+      assert.match(ctx, /- A 가: /);
+      assert.match(ctx, /- B 나 \(기본\)/);
+      assert.ok(!JSON.stringify(s).includes('secret-h1') && !ctx.includes('secret-h2'));
     } finally { p.ws.close(); await stopHost(h.p); }
   } finally {
     fs.rmSync(old, { recursive: true, force: true });

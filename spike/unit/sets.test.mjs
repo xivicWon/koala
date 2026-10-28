@@ -153,3 +153,54 @@ test('이 PC 전용 세트 고치기: 고친 칸만 바꾸고 나머지(역할 �
   receiveSet('a', root);
   assert.throws(() => updateLocalSet('a', { name: 'x' }, root));
 });
+
+test('깨진 세트 YAML·이름과 다른 id 는 목록에서 건너뛰고 알린다(던지지 않는다)', () => {
+  fs.mkdirSync(path.join(root, 'store/sets'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'store/sets/bad.yaml'), 'id: [깨짐\n  name: :');
+  put('store/sets/other.yaml', { id: 'not-other', name: '다른 이름', version: 1 });
+  const warns = [];
+  const l = listSets(root, (m) => warns.push(m));
+  assert.ok(l.some((s) => s.id === 'a'));
+  assert.ok(!l.some((s) => s.id === 'not-other'));
+  assert.equal(warns.length, 2, warns.join('\n'));
+  assert.match(warns.find((w) => w.includes('bad.yaml')), /읽지 못해 건너뜁니다/);
+  assert.match(warns.find((w) => w.includes('other.yaml')), /id\(not-other\)가 파일 이름과 달라/);
+});
+
+test('받은 세트가 가리키는 문서가 깨지면 checkUpdate 는 바뀐 것으로 알리고 목록은 그대로 나온다', () => {
+  receiveSet('a', root);
+  fs.writeFileSync(path.join(root, 'store/tags/t.yaml'), 'id: [깨짐');
+  assert.deepEqual(checkUpdate('a', root).changed, ['참조 문서를 읽지 못함 tag/t']);
+  fs.writeFileSync(path.join(root, 'store/sets/a.yaml'), 'id: [깨짐');
+  assert.deepEqual(checkUpdate('a', root).changed, ['참조 문서를 읽지 못함 set/a']);
+  const warns = [];
+  const l = listSets(root, (m) => warns.push(m));
+  assert.equal(l.find((s) => s.id === 'a').received, true);
+  assert.ok(warns.some((w) => w.includes('a.yaml')));
+});
+
+test('참조 판 가르기: id 안에 @v 가 있어도 마지막 @v 로 가른다', () => {
+  put('store/tags/x@vy.yaml'.replace('@', '_'), { id: 'x@vy', kind: 'tag', version: 1 });
+  put('store/sets/a.yaml', { ...baseSet, tags: ['x@vy'] });
+  assert.equal(receiveSet('a', root).ok, true);
+  assert.deepEqual(readSet('a', root).refs.tags, ['x@vy@v1']);
+  assert.equal(checkUpdate('a', root), null);
+  put('store/tags/x_vy.yaml', { id: 'x@vy', kind: 'tag', version: 2 });
+  assert.deepEqual(checkUpdate('a', root).changed, ['태그 x@vy v1 → v2']);
+});
+
+test('세트 상세 역할: 정의 맨 위 인라인 역할, 예전 옮기기가 profile 아래 둔 것, 이 PC 전용 세트의 역할 문서 id', () => {
+  const top = createLocalSet({ name: '맨 위', roles: [{ key: 'ADMIN', label: '관리자' }, { key: 'MEMBER', label: '회원' }], default_role: 'MEMBER' }, root);
+  const under = createLocalSet({ name: '아래', profile: { roles: [{ key: 'U', label: '사용자' }], default_role: 'U' } }, root);
+  put('store/roles/doc-roles.yaml', { id: 'doc-roles', kind: 'role', version: 2, default_role: 'B', roles: [{ key: 'A', label: '가', account: { user: 'u', pass: 'pw-zz' } }, { key: 'B', label: '나' }] });
+  const ref = createLocalSet({ name: '참조', roles: 'doc-roles' }, root);
+  const l = listSets(root, () => {});
+  const of = (id) => l.find((s) => s.id === id);
+  assert.deepEqual(of(top.id).roles.map((r) => r.key), ['ADMIN', 'MEMBER']);
+  assert.equal(of(top.id).default_role, 'MEMBER');
+  assert.deepEqual(of(under.id).roles.map((r) => r.key), ['U']);
+  assert.equal(of(under.id).default_role, 'U');
+  assert.deepEqual(of(ref.id).roles.map((r) => r.key), ['A', 'B']);
+  assert.equal(of(ref.id).default_role, 'B');
+  assert.ok(!JSON.stringify(l).includes('pw-zz'));
+});

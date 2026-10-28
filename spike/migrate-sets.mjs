@@ -45,19 +45,35 @@ function originalsOf(p) {
 }
 // receiveSet 과 같은 순서로 찾는다: <root>/store 먼저, 없으면 공용 spike/store
 const shared = fileURLToPath(new URL('./store/', import.meta.url));
-const hasDoc = (kind, id, root) => [path.join(root, 'store'), shared].some((r) => fs.existsSync(path.join(r, `${kind}s`, `${safeId(id)}.yaml`)));
+const docFile = (kind, id, root) => [path.join(root, 'store'), shared].map((r) => path.join(r, `${kind}s`, `${safeId(id)}.yaml`)).find((f) => fs.existsSync(f));
+const hasDoc = (kind, id, root) => !!docFile(kind, id, root);
 
 // 프로필 문서 → 세트 정의. 대상 사이트 내용은 profile: 아래, 역할 문서·지식·태그는 참조로 둔다.
+// 인라인 역할(목록)과 기본 역할은 호스트·세트 상세가 읽는 정의 맨 위에 둔다(계정은 뺀다)
 function setDoc(id, prof) {
   const doc = { id, name: prof.name || id, version: prof.version ?? 1 };
   const profile = {};
   const refs = {};
   for (const [k, v] of Object.entries(prof)) {
     if (META.includes(k) || SECRET_KEYS.includes(k)) continue;
-    if (k === 'knowledge' || k === 'tags' || (k === 'roles' && typeof v === 'string')) refs[k] = v;
+    if (k === 'knowledge' || k === 'tags' || k === 'roles' || k === 'default_role') refs[k] = k === 'roles' && typeof v !== 'string' ? scrub(v) : v;
     else profile[k] = scrub(v);
   }
   return { ...doc, profile, ...refs };
+}
+
+// 이 PC 전용 세트는 받기가 없어 역할 문서를 받지 못한다. 가리키던 역할 문서를 (계정을 빼고) 정의에 넣는다.
+// 저장소에 없으면 정의에서 빼고 migration_missing 에 남긴다
+function inlineRoleDoc(def, root) {
+  if (typeof def.roles !== 'string') return null;
+  const ref = def.roles;
+  const f = docFile('role', ref, root);
+  const doc = f ? readYaml(f) : null;
+  delete def.roles;
+  if (!doc) { def.migration_missing = [...(def.migration_missing || []), `role/${ref}`]; return `role/${ref}`; }
+  if (Array.isArray(doc.roles)) def.roles = scrub(doc.roles);
+  if (def.default_role == null && doc.default_role != null) def.default_role = doc.default_role;
+  return null;
 }
 
 // 저장소에 없는 참조는 정의에서 빼고 migration_missing 에 남긴다(프로필 하나 때문에 옮기기 전체가 막히지 않게)
@@ -128,6 +144,9 @@ export function planMigration({ root, spikeDir, profiles = {}, activeId = null, 
     if (source === 'server') {
       // qa-tags 는 아래에서 이 세트의 사본으로 바꾸므로 있는 것으로 본다
       for (const m of dropMissing(def, root, (kind, id) => kind === 'tag' && id === 'qa-tags' && tagsShadow)) skipped.push(`${setId}: 참조 문서 없음 ${m}`);
+    } else {
+      const m = inlineRoleDoc(def, root);
+      if (m) skipped.push(`${setId}: 참조 문서 없음 ${m}`);
     }
     let tagCopy = null;
     if (tagsShadow && arr(def.tags).includes('qa-tags')) {
