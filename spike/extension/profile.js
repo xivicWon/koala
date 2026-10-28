@@ -231,7 +231,7 @@ let pfNewVals = {}; // 새 프로필 입력값(검사에 걸려 다시 그려도
 function newProfileForm() {
   const cur = profiles[activeId]?.data;
   return `<div class="pf-new">
-    <div class="pf-new-h"><b>새 프로필</b><span class="pf-hint">서버에 v1로 만듭니다</span></div>
+    <div class="pf-new-h"><b>새 프로필</b><span class="pf-hint">이 PC의 임시 저장소에 v1로 만듭니다</span></div>
     <label class="pf-label">이름</label>
     <input class="pf-input" data-new="name" placeholder="예: 주문 관리 (스테이징)" autocomplete="off" value="${esc(pfNewVals.name || '')}">
     <label class="pf-label">대상 주소</label>
@@ -309,18 +309,18 @@ function renderProfileSheet(body) {
       <button type="button" class="btn sm" data-pf="new-open" title="새 대상 사이트의 프로필을 만듭니다">+ 새 프로필</button>
     </div>
     <div class="pf-actions">
-      <button type="button" class="btn sm" data-pf="sync" title="서버에 새 버전이 있으면 받습니다">동기화</button>
-      <button type="button" class="btn sm ${p.dirty ? 'primary' : ''}" data-pf="push" ${p.dirty ? '' : 'disabled'} title="고친 내용을 서버에 저장합니다. 서버 프로필의 버전이 하나 올라가고 다른 사람도 받습니다">서버에 저장${p.dirty ? ` (v${d.version} → v${d.version + 1})` : ''}</button>
+      <button type="button" class="btn sm" data-pf="sync" title="이 PC의 임시 저장소에 새 버전이 있으면 받습니다">동기화</button>
+      <button type="button" class="btn sm ${p.dirty ? 'primary' : ''}" data-pf="push" ${p.dirty ? '' : 'disabled'} title="고친 내용을 이 PC의 임시 저장소(spike/.koa/store)에 새 버전으로 저장합니다. 공유 서버가 없어 다른 PC로는 가지 않습니다">저장소에 저장${p.dirty ? ` (v${d.version} → v${d.version + 1})` : ''}</button>
       ${p.history?.length ? `<button type="button" class="btn sm" data-pf="rollback" title="받아 둔 이전 버전의 내용으로 되돌립니다">v${p.history[0].version}로 되돌리기</button>` : ''}
     </div>
     <div class="pf-hint pf-explain">${p.dirty
-      ? `고친 내용은 이 확장에만 있습니다. <b>서버에 저장</b>하면 서버 프로필이 v${d.version + 1}이 되고 다른 사람도 받습니다.`
-      : '고친 내용은 바로 이 확장에 저장됩니다. 다른 사람과 나누려면 <b>서버에 저장</b>을 누릅니다.'}</div>
+      ? `고친 내용은 이 확장에만 있습니다. <b>저장소에 저장</b>하면 이 PC의 임시 저장소에 v${d.version + 1}로 저장됩니다. 아직 공유 서버가 없어 다른 PC로는 가지 않습니다.`
+      : '고친 내용은 바로 이 확장에 저장됩니다. <b>저장소에 저장</b>하면 이 PC의 임시 저장소에 새 버전으로 남습니다. 아직 공유 서버가 없어 다른 PC로는 가지 않습니다.'}</div>
     ${pfStep === 'rollback' && p.history?.length ? `<div class="pf-confirm">
-      v${p.history[0].version}의 내용으로 되돌릴까요? 되돌린 내용은 '고친 내용'이 되어 이 확장에만 반영되고, 서버에는 <b>서버에 저장</b>을 눌러야 새 버전(v${d.version + 1})으로 저장됩니다.
+      v${p.history[0].version}의 내용으로 되돌릴까요? 되돌린 내용은 '고친 내용'이 되어 이 확장에만 반영되고, 저장소에는 <b>저장소에 저장</b>을 눌러야 새 버전(v${d.version + 1})으로 저장됩니다.
       <div class="pf-actions"><button type="button" class="btn sm primary" data-pf="rollback-yes">되돌리기</button><button type="button" class="btn sm" data-pf="rollback-no">취소</button></div>
     </div>` : ''}
-    ${p.conflict ? `<div class="pf-alert">저장소에 다른 사람이 올린 새 버전(v${remoteVer[activeId]})이 있습니다.
+    ${p.conflict ? `<div class="pf-alert">저장소에 이 확장이 받은 것보다 새 버전(v${remoteVer[activeId]})이 있습니다.
       <button type="button" class="btn sm" data-pf="take-remote">저장소 버전 받기 (내 수정 버림)</button></div>` : ''}
     ${syncError ? `<div class="pf-alert">${syncError}</div>` : ''}
 
@@ -440,10 +440,10 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (act === 'sync') await syncProfiles();
   if (act === 'push') {
     const r = await pushProfile(activeId);
-    if (r.ok) msg('sys', `프로필을 서버에 저장했습니다(v${r.version})`);
+    if (r.ok) msg('sys', `프로필을 이 PC의 임시 저장소에 저장했습니다(v${r.version})`);
   }
   if (act === 'take-remote') { profiles[activeId].dirty = false; await pullProfile(activeId); await saveProfiles(); }
-  if (act === 'rollback-yes') { pfStep = null; rollbackProfile(activeId); msg('sys', '프로필을 이전 버전의 내용으로 되돌렸습니다. 서버에 저장해야 다른 사람에게 반영됩니다'); }
+  if (act === 'rollback-yes') { pfStep = null; rollbackProfile(activeId); msg('sys', '프로필을 이전 버전의 내용으로 되돌렸습니다. 저장소에 저장해야 저장소에도 반영됩니다'); }
   if (act === 'acc-reset') { delete localAcc[activeId]?.[e.target.closest('[data-acc-key]').dataset.accKey]; await saveProfiles(); }
   renderProfileChip();
   renderSheet();
