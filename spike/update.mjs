@@ -14,6 +14,8 @@ const pkg = () => JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'ut
 const git = async (...args) => (await run('git', args, { cwd: dir })).stdout.trim();
 
 export const version = () => pkg().version;
+// GitHub 저장소(owner/name). 사이드패널이 '전체 기록' 링크를 만든다
+export const repo = () => process.env.KOALA_GITHUB_REPO || pkg().koala?.github || null;
 
 // 지금 체크아웃이 릴리즈 태그인가(아니면 개발 체크아웃)
 export async function installed() {

@@ -1500,7 +1500,7 @@ const RUNNING_VERSION = update.version();
 let updateInfo = null;
 async function checkUpdate(force = false) {
   // home: 이 호스트의 폴더. 확장이 다른 폴더(다른 설치본)에서 불러온 것이면 사이드패널이 알린다
-  updateInfo = { ...(await update.check()), version: RUNNING_VERSION, disk: update.version(), home: path.dirname(path.resolve(dir)) };
+  updateInfo = { ...(await update.check()), version: RUNNING_VERSION, disk: update.version(), home: path.dirname(path.resolve(dir)), repo: update.repo() };
   updateInfo.stale = updateInfo.disk !== RUNNING_VERSION;
   if (updateInfo.available) console.log(`[update] 새 릴리즈 ${updateInfo.latest.tag} (지금 v${updateInfo.version})`);
   if (force || updateInfo.available || updateInfo.stale) sendUpdate();

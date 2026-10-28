@@ -168,6 +168,15 @@ function releaseMd(text) {
     return li ? `<div class="li${sub ? ' sub' : ''}">${t}</div>` : `<div>${t}</div>`;
   }).join('');
 }
+// 버전 비교(0.2.10 > 0.2.9)
+const verParts = (v) => String(v).replace(/^v/, '').split('.').map((x) => Number.parseInt(x, 10) || 0);
+const verNewer = (a, b) => { const [x, y] = [verParts(a), verParts(b)]; for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+const sameMinor = (a, b) => { const [x, y] = [verParts(a), verParts(b)]; return x[0] === y[0] && x[1] === y[1]; };
+
+// 보여 주는 범위: 사용자가 아직 확인하지 않은 것
+//   펼침  — 아직 받지 않은 새 버전, 마지막으로 본 뒤 놓친 버전들(업데이트 직후), 지금 버전
+//   접힘  — '이전 버전 보기': 같은 마이너(예: 0.2.x)의 이전 버전
+//   그 밖 — GitHub 릴리즈 페이지 링크
 function renderReleaseSheet(body) {
   const cur = extVersion();
   $('sheet-title').textContent = releaseOpts.whatsNew ? `v${cur}로 업데이트되었습니다` : '릴리즈 노트';
@@ -176,15 +185,22 @@ function renderReleaseSheet(body) {
   const latest = updateState?.available && updateState.latest;
   const lv = latest?.tag?.replace(/^v/, '');
   if (latest && !list.some((x) => x.v === lv)) list.unshift({ v: lv, date: (latest.released_at || '').slice(0, 10), body: latest.notes || '(변경 내용 없음)', fresh: true });
-  if (!list.length) { body.innerHTML = '<div class="none">릴리즈 노트를 찾지 못했습니다. 호스트가 켜져 있는지 확인하세요.</div>'; return; }
-  const shown = releaseAll ? list : list.slice(0, 5);
-  body.innerHTML = `<div class="rel">
-    ${shown.map((x, i) => `<details class="rel-v" ${i === 0 || x.v === cur ? 'open' : ''}>
+  const since = releaseOpts.since;
+  const top = list.filter((x) => x.fresh || x.v === cur || (since && verNewer(x.v, since) && !verNewer(x.v, cur)));
+  const older = list.filter((x) => !top.includes(x) && !x.fresh && verNewer(cur, x.v) && sameMinor(x.v, cur));
+  const repo = updateState?.repo;
+  const card = (x, open) => `<details class="rel-v" ${open ? 'open' : ''}>
       <summary><b>v${esc(x.v)}</b><span class="rel-date">${esc(x.date)}</span>
-        ${x.fresh ? '<span class="rel-tag new">새 버전 · 업데이트하면 적용</span>' : x.v === cur ? '<span class="rel-tag cur">지금 버전</span>' : ''}</summary>
+        ${x.fresh ? '<span class="rel-tag new">새 버전 · 업데이트하면 적용</span>' : x.v === cur ? '<span class="rel-tag cur">지금 버전</span>' : since && verNewer(x.v, since) ? '<span class="rel-tag">이번에 함께 받음</span>' : ''}</summary>
       <div class="rel-body">${releaseMd(x.body)}</div>
-    </details>`).join('')}
-    ${!releaseAll && list.length > shown.length ? `<button type="button" class="btn sm ghost rel-more" data-rel="all">이전 버전 ${list.length - shown.length}개 더 보기</button>` : ''}
+    </details>`;
+  if (!top.length && !older.length) { body.innerHTML = '<div class="none">릴리즈 노트를 찾지 못했습니다. 호스트가 켜져 있는지 확인하세요.</div>'; return; }
+  const [maj, min] = verParts(cur);
+  body.innerHTML = `<div class="rel">
+    ${top.map((x) => card(x, true)).join('')}
+    ${older.length ? (releaseAll ? older.map((x) => card(x, false)).join('')
+      : `<button type="button" class="btn sm ghost rel-more" data-rel="all">이전 버전 보기 (${maj}.${min}.x · ${older.length}개)</button>`) : ''}
+    ${repo ? `<a class="rel-link" href="https://github.com/${esc(repo)}/releases" target="_blank" rel="noopener">전체 기록은 GitHub 릴리즈에서 보기 ↗</a>` : ''}
   </div>`;
 }
 document.getElementById('sheet-body').addEventListener('click', (e) => {
@@ -204,5 +220,6 @@ async function checkWhatsNew() {
     existing = !!r.profiles; // 이 기능 전부터 쓰던 사람(본 버전 기록이 없다)도 한 번 보여 준다
   } catch {}
   try { await chrome.storage.local.set({ seenRelease: v }); } catch {}
-  if ((seen ? seen !== v : existing) && !sheetMode) openRelease({ whatsNew: true });
+  // 마지막으로 본 버전 다음부터 지금 버전까지를 '놓친 버전'으로 펼쳐 보여 준다
+  if ((seen ? seen !== v : existing) && !sheetMode) openRelease({ whatsNew: true, since: seen });
 }
