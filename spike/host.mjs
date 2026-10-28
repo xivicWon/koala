@@ -343,8 +343,8 @@ function activateSet(id, prefs) {
   return true;
 }
 // 세트의 테스트 목록(원본은 호스트의 tests.json). 깨진 파일이면 알리고 보내지 않는다
-function sendTests(id = activeSet) {
-  try { send({ type: 'tests', set: id, suite: testlist.loadTests(id), tag_doc: id === activeSet ? tagDoc() : null }); return true; } catch (e) { log('err', e.message); return false; }
+function sendTests(id = activeSet, extra = {}) {
+  try { send({ type: 'tests', set: id, suite: testlist.loadTests(id), tag_doc: id === activeSet ? tagDoc() : null, ...extra }); return true; } catch (e) { log('err', e.message); return false; }
 }
 // 코드·실행 결과는 호스트가 세트의 tests.json 에 남긴다(패널을 다시 열어도, 보내기에도 같은 것을 쓴다)
 function saveCodeState(id, patch) {
@@ -984,6 +984,7 @@ function roleLine(c) {
 let codeTarget = null; // 코드를 만드는 테스트 묶음 id
 let codeExpect = [];   // 코드에 들어가야 하는 시나리오·케이스 id
 let codeTags = new Map(); // id → 실행 결과에 나와야 하는 태그(물려받은 것 포함)
+let codeKey = '';         // 코드를 만들 때(실행·태그 반영 때)의 채택 목록 표시. tests.json 의 code.key 는 호스트만 쓴다
 
 function writeCode(s) {
   if (s?.append?.length) return writeAppend(s);
@@ -1009,6 +1010,7 @@ function setCodeExpect(s) {
   const doc = tagDoc();
   const scById = new Map(s.scenarios.map((c) => [c.id, c]));
   codeTarget = activeSet; // 묶음 id = 세트 id
+  codeKey = testlist.adoptedKey(s);
   codeExpect = [...s.scenarios.map((c) => c.id), ...s.cases.map((c) => c.id)];
   codeTags = new Map([...s.scenarios.map((c) => [c.id, c.tags || []]),
     ...s.cases.map((c) => [c.id, [...new Set([...tags.inherited(doc, scById.get(c.scenario)), ...(c.tags || [])])]])]);
@@ -1197,9 +1199,14 @@ async function retagCode(s) {
   const chk = checkCode(pre.results);
   const ok = !pre.error && !chk.missing.length && !chk.tagMismatch.length;
   const tagsBy = new Map(pre.results.map((r) => [r.title, r.tags]));
-  saveCodeState(id, (prev) => ({ source: r.code, tag_mismatch: chk.tagMismatch,
-    ...(ok ? { results: (prev.results || []).map((x) => (tagsBy.has(x.title) ? { ...x, tags: tagsBy.get(x.title) } : x)), retagged_at: new Date().toISOString() } : {}) }));
-  send({ type: 'suite_retag', id, ok, code: r.code, results: pre.results.map(({ title, tags: tg }) => ({ title, tags: tg })), missing: chk.missing, tag_mismatch: chk.tagMismatch, error: pre.error && !pre.results.length ? pre.error : undefined });
+  // 통과하고 지난 실행 결과가 있으면 지금 채택 목록을 key 로, 아니면 비운다(다시 생성·실행해야 보낼 수 있다)
+  let key = '';
+  saveCodeState(id, (prev) => {
+    key = ok && prev.results?.length ? codeKey : '';
+    return { source: r.code, tag_mismatch: chk.tagMismatch, key,
+      ...(ok ? { results: (prev.results || []).map((x) => (tagsBy.has(x.title) ? { ...x, tags: tagsBy.get(x.title) } : x)), retagged_at: new Date().toISOString() } : {}) };
+  });
+  send({ type: 'suite_retag', id, ok, key, code: r.code, results: pre.results.map(({ title, tags: tg }) => ({ title, tags: tg })), missing: chk.missing, tag_mismatch: chk.tagMismatch, error: pre.error && !pre.results.length ? pre.error : undefined });
   log(ok ? 'sys' : 'err', `태그만 코드에 반영 · ${r.changed}곳 · 목록 검사 ${ok ? '통과' : `실패(빠진 테스트 ${chk.missing.length}, 태그 불일치 ${chk.tagMismatch.length})`} (${((Date.now() - t) / 1000).toFixed(1)}초, 테스트는 실행하지 않음)`);
 }
 
@@ -1279,11 +1286,13 @@ async function runAndReport(id, file, code, { grep = null, merge = false } = {})
   // 실행 결과는 세트 폴더에도 남긴다(테스트별 마지막 결과·실행 이력)
   try { testlist.recordResults(id, run.results, ranAt); } catch (e) { log('err', `실행 결과를 저장하지 못했습니다: ${e.message}`); }
   // 일부만 실행했으면(merge) 지난 결과에 이번 결과를 합친다(패널과 같은 규칙)
+  // 실행 결과가 없거나(중단·오류) 읽지 못했으면 서버로 보낼 수 없게 key 를 비운다(패널과 같은 규칙)
+  const key = run.error || !run.results.length ? '' : codeKey;
   saveCodeState(id, (prev) => ({
-    source: code, file, env, summary, error: run.error, ran_at: ranAt, tag_mismatch: tagMismatch,
+    source: code, file, env, summary, error: run.error, ran_at: ranAt, tag_mismatch: tagMismatch, key,
     results: merge ? [...(prev.results || []).filter((r) => !run.results.some((x) => x.title === r.title)), ...run.results] : run.results,
   }));
-  send({ type: 'suite_code', id, code, file, env, results: run.results, summary, error: run.error, ran_at: ranAt, tag_mismatch: tagMismatch, merge });
+  send({ type: 'suite_code', id, code, file, env, results: run.results, summary, error: run.error, ran_at: ranAt, tag_mismatch: tagMismatch, merge, key });
   return { ok: true, result: { file, ...summary, missing: missing.length ? missing : undefined, tag_mismatch: tagMismatch.length ? tagMismatch : undefined, error: run.error, failures: run.results.filter((r) => r.status === 'failed').map(({ title, error }) => ({ title, error })) } };
 }
 
@@ -1715,10 +1724,14 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'tests_save') {
       // 패널에서는 채택·태그·이슈·반영만 받는다. 기준 버전·코드·실행 결과·항목 내용은 호스트 것(applyPanelEdits)
       const sid = m.set || activeSet;
-      if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 테스트 목록 변경을 저장하지 않습니다. 끝난 뒤 다시 저장합니다');
+      // 거절하면 지금 목록을 refused 로 다시 보낸다(패널은 바꾼 것을 남겨 두었다가 작업이 끝나면 다시 보낸다). 저장하면 tests_saved 로 알린다
+      if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 테스트 목록 변경을 저장하지 않습니다. 끝난 뒤 다시 저장합니다'); sendTests(sid, { refused: true }); }
       else if (!readSet(sid)) log('err', `세트 ${sid}를 아직 받지 않아 테스트 목록을 저장하지 않았습니다`);
       else {
-        try { testlist.saveTests(sid, { ...testlist.applyPanelEdits(testlist.loadTests(sid), m.suite), id: safeId(sid) }); } catch (e) { log('err', `테스트 목록을 저장하지 못했습니다: ${e.message}`); }
+        try {
+          testlist.saveTests(sid, { ...testlist.applyPanelEdits(testlist.loadTests(sid), m.suite), id: safeId(sid) });
+          send({ type: 'tests_saved', set: sid, seq: m.seq });
+        } catch (e) { log('err', `테스트 목록을 저장하지 못했습니다: ${e.message}`); sendTests(sid, { refused: true }); }
       }
     }
     if (m.type === 'set_receive') receive(m.id);
@@ -1730,9 +1743,23 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       } catch (e) { log('err', `세트를 만들지 못했습니다: ${e.message}`); }
     }
     if (m.type === 'set_update_local') {
+      if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 세트를 고칠 수 없습니다. 끝난 뒤 다시 저장하세요'); return; }
       try {
-        const rec = updateLocalSet(m.id, m.def || {});
-        if (m.id === activeSet) { profile = profileOf(m.id, prefsBySet.get(m.id) || {}); domain = domainOfSet(rec); send({ type: 'set_active', id: m.id, domain, steps: steps.length }); }
+        const before = readSet(m.id);
+        const rec = updateLocalSet(m.id, m.patch || {});
+        if (m.id === activeSet) {
+          profile = profileOf(m.id, prefsBySet.get(m.id) || {});
+          domain = domainOfSet(rec);
+          // 사이트 지식·지식이 바뀌었으면 받기처럼 Claude 작업 폴더를 다시 만든다(떠 있는 Claude 는 먼저 끝낸다)
+          const brain = (r) => JSON.stringify([r?.def?.profile?.prompt ?? '', r?.def?.knowledge ?? null]);
+          if (brain(before) !== brain(rec)) {
+            stopClaude();
+            try { fs.rmSync(path.join(setPaths(m.id).claude, '.koa', 'version.json'), { force: true }); workspace.prepare(profile); } catch (e) { log('err', `Claude 작업 폴더를 만들지 못했습니다: ${e.message}`); }
+            scheduleWarm();
+          }
+          send({ type: 'set_active', id: m.id, domain, steps: steps.length });
+        }
+        log('sys', `이 PC 전용 세트 "${rec.name}"를 고쳤습니다`);
         sendSets();
       } catch (e) { log('err', `세트를 고치지 못했습니다: ${e.message}`); }
     }

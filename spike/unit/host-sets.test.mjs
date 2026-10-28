@@ -223,34 +223,87 @@ test('예외·오류 보강의 save_tests 는 같은 id를 고쳐 쓰고(채택�
   assert.equal(t.scenarios[2].title, '다시 만든 것');
 });
 
-test('패널 tests_save: 채택·태그·반영만 받고 호스트의 기준 버전·코드·항목 내용은 그대로, 작업 중에는 거절', async () => {
+test('패널 tests_save: 보낸 필드만 받고 호스트의 기준 버전·코드(code.key 포함)·항목 내용은 그대로, 작업 중에는 거절하고 목록을 다시 보낸다', async () => {
   pn.url = 'http://site-a.test/';
   writeTests('a', { id: 'a', name: 'a', applied: false, base_version: 5,
     code: { source: '호스트 코드', results: [{ title: 'SC-1 x', status: 'passed' }], key: 'k0' },
-    scenarios: [sc('SC-1', '호스트 제목', { use: true, tags: [] })], cases: [] });
-  pn.send({ type: 'tests_save', set: 'a', suite: { id: 'a', name: '패널 이름', applied: true, base_version: 0,
+    scenarios: [sc('SC-1', '호스트 제목', { use: true, tags: ['@host'] }), sc('SC-2', '둘째', { use: true, tags: ['@ai'] })], cases: [] });
+  let at = pn.mark();
+  pn.send({ type: 'tests_save', set: 'a', seq: 1, suite: { applied: true, base_version: 0,
     code: { source: '패널 코드', key: 'k1' },
-    scenarios: [sc('SC-1', '패널 제목', { use: false, tags: ['@t'] }), sc('SC-7', '패널에만')], cases: [] } });
-  await until(() => testsOf('a')?.applied === true, 'tests_save 반영');
+    scenarios: [{ id: 'SC-1', title: '패널 제목', use: false, tags: ['@t'] }, { id: 'SC-7', title: '패널에만', use: true }], cases: [] } });
+  const ack = await pn.waitFor((m) => m.type === 'tests_saved' && m.set === 'a', at, 'tests_saved');
+  assert.equal(ack.seq, 1);
   let t = testsOf('a');
+  assert.equal(t.applied, true);
   assert.equal(t.base_version, 5);
   assert.equal(t.code.source, '호스트 코드');
   assert.equal(t.code.results.length, 1);
-  assert.equal(t.code.key, 'k1');
-  assert.equal(t.name, '패널 이름');
-  assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1']);
+  assert.equal(t.code.key, 'k0');
+  assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1', 'SC-2']);
   assert.equal(t.scenarios[0].title, '호스트 제목');
   assert.equal(t.scenarios[0].use, false);
   assert.deepEqual(t.scenarios[0].tags, ['@t']);
+  assert.deepEqual(t.scenarios[1].tags, ['@ai']); // 보내지 않은 항목은 그대로
 
   await holdJob('reinforce', { type: 'reinforce', summary: '요약' });
-  const at = pn.mark();
-  pn.send({ type: 'tests_save', set: 'a', suite: { ...t, applied: false, scenarios: [{ ...t.scenarios[0], use: true }] } });
+  at = pn.mark();
+  pn.send({ type: 'tests_save', set: 'a', seq: 2, suite: { applied: false, scenarios: [{ id: 'SC-1', use: true }], cases: [] } });
   await pn.waitFor((m) => m.type === 'log' && m.kind === 'err' && /작업.*테스트 목록/.test(m.text), at, '작업 중 거절 안내');
+  const back = await pn.waitFor((m) => m.type === 'tests' && m.set === 'a' && m.refused, at, '거절 뒤 tests{refused}');
+  assert.equal(back.suite.scenarios[0].use, false);
+  assert.ok(!pn.msgs.slice(at).some((m) => m.type === 'tests_saved'));
   await stopJob();
   t = testsOf('a');
   assert.equal(t.applied, true);
   assert.equal(t.scenarios[0].use, false);
+});
+
+test('code.key 는 호스트가 실행할 때 받은 채택 목록으로 정한다(패널 값은 무시)', async () => {
+  pn.url = 'http://site-a.test/';
+  writeTests('a', { id: 'a', name: 'a', applied: true, base_version: 0, code: null,
+    scenarios: [sc('SC-1', '로그인', { use: true, tags: ['@t'], issue: 'I-1' })], cases: [] });
+  const file = path.join(data, 'sets', 'a', 'tests', 'code', 'a.spec.ts');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, "import { test } from '@playwright/test';\ntest('SC-1 로그인', { tag: '@t' }, async () => {});\n");
+  const at = pn.mark();
+  pn.send({ type: 'run_code', suite: { id: 'a', scenarios: [sc('SC-1', '로그인', { tags: ['@t'], issue: 'I-1' })], cases: [] }, ids: [], only: false });
+  const fin = await until(() => pn.msgs.slice(at).find((m) => m.type === 'suite_code' && !m.running), '실행 끝 suite_code', 60000);
+  assert.ok(fin.results.length > 0, JSON.stringify(fin.error));
+  assert.equal(fin.key, 'SC-1:@t:I-1');
+  assert.equal(testsOf('a').code.key, 'SC-1:@t:I-1');
+  const at2 = pn.mark();
+  pn.send({ type: 'tests_save', set: 'a', suite: { code: { key: '패널 값' }, scenarios: [{ id: 'SC-1', use: true }] } });
+  await pn.waitFor((m) => m.type === 'tests_saved', at2, 'tests_saved');
+  assert.equal(testsOf('a').code.key, 'SC-1:@t:I-1');
+});
+
+test('이 PC 전용 세트 고치기: 지금 세트가 작업 중이면 거절한다', async () => {
+  let at = pn.mark();
+  pn.send({ type: 'set_create_local', def: { name: 'loc', profile: { target: { base_url: 'http://site-a.test' }, prompt: '옛' } } });
+  const made = await pn.waitFor((m) => m.type === 'sets' && m.created, at, 'created');
+  const id = made.created;
+  at = pn.mark();
+  pn.send({ type: 'set', id, prefs: { accounts: [] } });
+  await pn.waitFor((m) => m.type === 'set_active' && m.id === id, at, '로컬 세트 고르기');
+  const setFile = path.join(data, 'sets', id, 'set.json');
+  // 고치기(작업 없음): 사이트 지식이 바뀌어 작업 폴더를 다시 만든다
+  at = pn.mark();
+  pn.send({ type: 'set_update_local', id, patch: { name: 'loc2', profile: { prompt: '새 지식' } } });
+  await pn.waitFor((m) => m.type === 'sets' && m.sets.some((s) => s.id === id && s.name === 'loc2'), at, '고친 뒤 sets');
+  assert.equal(readJson(setFile).def.profile.prompt, '새 지식');
+  assert.equal(readJson(setFile).def.profile.target.base_url, 'http://site-a.test');
+  // 작업 중 거절
+  pn.url = 'http://site-a.test/';
+  await holdJob('reinforce', { type: 'reinforce', summary: '요약' });
+  at = pn.mark();
+  pn.send({ type: 'set_update_local', id, patch: { name: 'loc3' } });
+  await pn.waitFor((m) => m.type === 'log' && m.kind === 'err' && /지금 세트를 고칠 수 없습니다/.test(m.text), at, '작업 중 고치기 거절');
+  await stopJob();
+  assert.equal(readJson(setFile).name, 'loc2');
+  at = pn.mark();
+  pn.send({ type: 'set', id: 'a', prefs: { accounts: [] } });
+  await pn.waitFor((m) => m.type === 'set_active' && m.id === 'a', at, 'a 로 돌아가기');
 });
 
 test('저장소의 세트 버전이 오르면 GET /sets 에 바뀐 것이 보인다', async () => {
@@ -274,8 +327,10 @@ test('옮기지 않은 예전 데이터가 있으면 migration_needed 를 보내
       const at = p2.mark();
       p2.send({ type: 'set_receive', id: 'a' });
       p2.send({ type: 'set', id: 'a', prefs: {} });
+      p2.send({ type: 'set_update_local', id: 'a', patch: { name: 'x' } });
       await p2.waitFor((m) => m.type === 'log' && m.text.includes('기존 데이터를 세트로 옮긴 뒤'), at, '거절 안내');
       await sleep(200);
+      assert.equal(p2.msgs.slice(at).filter((m) => m.type === 'log' && m.text.includes('기존 데이터를 세트로 옮긴 뒤')).length, 3);
       assert.ok(!fs.existsSync(path.join(old, 'sets', 'a', 'set.json')));
       assert.ok(!p2.msgs.slice(at).some((m) => m.type === 'tests' || m.type === 'set_active'));
     } finally { p2.ws.close(); await stopHost(h.p); }

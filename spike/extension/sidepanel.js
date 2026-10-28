@@ -59,6 +59,7 @@ function connect() {
   };
   ws.onclose = () => {
     hostUp = false; renderEnvAlert();
+    requeueSent(); // 받았다는 답이 없던 테스트 목록 변경은 다시 연결되면 보낸다
     renderSetChip();
     if (sheetMode === 'set' || sheetMode === 'suite') renderSheet();
     startHost();
@@ -82,6 +83,7 @@ function connect() {
     if (m.type === 'set_active') onSetActive(m);
     if (m.type === 'migration_needed') onMigrationNeeded();
     if (m.type === 'tests') onTests(m);
+    if (m.type === 'tests_saved') onTestsSaved(m);
     if (m.type === 'suite_tags') onSuiteTags(m);
     if (m.type === 'suite_retag') onSuiteRetag(m);
     if (m.type === 'suite_listed') onSuiteListed(m);
@@ -144,10 +146,7 @@ function saveTimeline() {
 new MutationObserver(saveTimeline).observe($('timeline'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
 async function restoreTimeline(d, label = d) {
   const key = timelineKey(d);
-  let { [key]: st, timelineState: legacy } = await chrome.storage.local.get([key, 'timelineState']).catch(() => ({}));
-  // 도메인 구분 전의 타임라인은 처음 불러오는 세트로 옮긴다
-  if (!st && legacy) { st = legacy; await chrome.storage.local.set({ [key]: st }).catch(() => {}); }
-  if (legacy) chrome.storage.local.remove('timelineState').catch(() => {});
+  const { [key]: st } = await chrome.storage.local.get([key]).catch(() => ({}));
   if (!st?.html) return;
   restoringTimeline = true;
   const empty = $('empty');

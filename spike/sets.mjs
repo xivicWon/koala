@@ -164,12 +164,24 @@ export function createLocalSet(def, root = DATA) {
   return record;
 }
 
-// 이 PC 전용 세트만 고친다. id·출처·만든 시각은 그대로
-export function updateLocalSet(id, def, root = DATA) {
+// 이 PC 전용 세트만 고친다. 고치기 화면이 다루는 것(이름, 대상 주소·시작 URL, 배포 서버, 사이트 지식)만 바꾸고
+// 나머지(역할 참조, 지식·태그, claude·cleanup, 모르는 키)는 그대로 둔다. 빈 문자열의 시작 URL 은 지운다. id·출처·만든 시각도 그대로
+export function updateLocalSet(id, patch, root = DATA) {
   const rec = readSet(id, root);
   if (!rec || rec.source !== 'local') throw new Error('이 PC 전용 세트만 고칠 수 있습니다');
-  const { name, ...rest } = def || {};
-  const next = { ...rec, name: name || rec.name, def: rest, updated_at: new Date().toISOString() };
+  const def = structuredClone(rec.def || {});
+  const pp = patch?.profile || {};
+  const prof = (def.profile ??= {});
+  if (pp.target) {
+    prof.target = { ...prof.target };
+    for (const k of ['base_url', 'start_url']) {
+      if (pp.target[k] === undefined) continue;
+      if (pp.target[k] === '' && k === 'start_url') delete prof.target[k]; else prof.target[k] = pp.target[k];
+    }
+  }
+  if (pp.deploy?.url !== undefined) prof.deploy = { ...prof.deploy, url: pp.deploy.url };
+  if (pp.prompt !== undefined) prof.prompt = pp.prompt;
+  const next = { ...rec, name: patch?.name || rec.name, def, updated_at: new Date().toISOString() };
   writeJson(setPaths(id, root).setFile, next);
   return next;
 }

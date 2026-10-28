@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadTests, saveTests, addTests, recordResults, applyPanelEdits } from '../testlist.mjs';
+import { loadTests, saveTests, addTests, recordResults, applyPanelEdits, adoptedKey } from '../testlist.mjs';
 import { setPaths } from '../sets.mjs';
 
 let root;
@@ -98,16 +98,16 @@ test('addTests: 명시한 use:false는 유지, 없으면 true', () => {
   assert.equal(suite.cases.at(-1).use, true);
 });
 
-test('applyPanelEdits: 패널에서는 채택·태그·이슈·새로 표시·반영·이름·범위만 받는다', () => {
+test('applyPanelEdits: 보낸 필드만 바꾸고(null 은 지움) 항목 내용·코드·기준 버전은 호스트 것', () => {
   const cur = { ...existing(), base_version: 3, code: { source: 'S', results: [{ title: 'SC-2', status: 'passed' }], key: 'k0' } };
   cur.scenarios[0].issue = 'I-1';
   cur.scenarios[1].added = true;
+  cur.scenarios[1].tags = ['@ai'];
   const panel = {
-    ...existing(), name: '새 이름', scope: '새 범위', applied: true, base_version: 0,
-    code: { source: '패널 코드', results: [], key: 'k1' },
+    applied: true, base_version: 0, code: { source: '패널 코드', key: 'k1' },
     scenarios: [
-      { id: 'SC-1', title: '패널이 바꾼 제목', use: true, tags: ['@t'] }, // issue 없음 → 지움
-      { id: 'SC-2', title: '조회', use: false, tags: [] },               // added 없음 → 지움
+      { id: 'SC-1', title: '패널이 바꾼 제목', use: true, issue: null }, // issue 지움, tags 는 안 보냄 → 그대로
+      { id: 'SC-2', added: null },                                      // added 만 지움, 호스트 태그는 그대로
       { id: 'SC-9', title: '패널에만 있는 항목', use: true },
     ],
   };
@@ -116,21 +116,26 @@ test('applyPanelEdits: 패널에서는 채택·태그·이슈·새로 표시·�
   assert.equal(next.scenarios[0].title, '로그인');
   assert.equal(next.scenarios[0].extra, 1);
   assert.equal(next.scenarios[0].use, true);
-  assert.deepEqual(next.scenarios[0].tags, ['@t']);
+  assert.deepEqual(next.scenarios[0].tags, ['x']);
   assert.equal('issue' in next.scenarios[0], false);
-  assert.equal(next.scenarios[1].use, false);
+  assert.equal(next.scenarios[1].use, true);
+  assert.deepEqual(next.scenarios[1].tags, ['@ai']);
   assert.equal('added' in next.scenarios[1], false);
   assert.equal(next.cases.length, 3);
   assert.equal(next.base_version, 3);
-  assert.equal(next.code.source, 'S');
-  assert.deepEqual(next.code.results, [{ title: 'SC-2', status: 'passed' }]);
-  assert.equal(next.code.key, 'k1');
+  assert.deepEqual(next.code, cur.code);
   assert.equal(next.applied, true);
-  assert.equal(next.name, '새 이름');
-  assert.equal(next.scope, '새 범위');
+  assert.equal(next.name, cur.name);
 });
 
-test('applyPanelEdits: 코드가 없으면 패널 코드로 만들지 않는다', () => {
-  const next = applyPanelEdits(existing(), { ...existing(), code: { source: 'x', key: 'k' } });
-  assert.equal(next.code, null);
+test('applyPanelEdits: applied 를 보내지 않으면 호스트 값 그대로', () => {
+  const next = applyPanelEdits({ ...existing(), applied: false }, { scenarios: [{ id: 'SC-1', use: true }] });
+  assert.equal(next.applied, false);
+  assert.equal(next.scenarios[0].use, true);
+});
+
+test('adoptedKey: 채택한 것의 id·태그·이슈(패널 suite.js 와 같은 식)', () => {
+  const s = { scenarios: [{ id: 'SC-1', tags: ['@a', '@b'], issue: 'I-1' }, { id: 'SC-2', use: false, tags: ['@x'] }], cases: [{ id: 'TC-1' }, { id: 'TC-2', use: true, tags: ['@c'] }] };
+  assert.equal(adoptedKey(s), 'SC-1:@a+@b:I-1,TC-1::,TC-2:@c:');
+  assert.equal(adoptedKey({}), '');
 });

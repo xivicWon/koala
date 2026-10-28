@@ -66,9 +66,9 @@ export function addTests(suite, { scenarios = [], cases = [], flow = [], coverag
   };
 }
 
-// 패널이 보낸 목록에서 사람이 정하는 것만 받는다: 항목의 채택·태그·이슈·새로 표시, 반영 여부, 이름·범위.
-// 항목 내용, 코드·실행 결과, 서버 기준 버전(base_version)은 호스트 것을 그대로 둔다(보낸 뒤 올린 버전을 패널이 되돌리지 않게).
-// 패널에만 있는 항목은 더하지 않는다(항목은 AI 저장으로만 생긴다). code.key(코드를 만들 때의 채택 목록 표시)만 패널 값을 쓴다
+// 패널이 보낸 바뀐 것만 받는다: 항목의 채택·태그·이슈·새로 표시, 반영 여부, 이름·범위. 보낸 필드만 바꾸고 null 이면 지운다.
+// 항목 내용, 코드·실행 결과·code.key, 서버 기준 버전(base_version)은 호스트 것을 그대로 둔다(보낸 뒤 올린 버전을 패널이 되돌리지 않게).
+// 패널에만 있는 항목은 더하지 않는다(항목은 AI 저장으로만 생긴다)
 const PANEL_ITEM = ['use', 'tags', 'issue', 'added'];
 export function applyPanelEdits(cur, panel = {}) {
   const pick = (list, from) => {
@@ -77,19 +77,22 @@ export function applyPanelEdits(cur, panel = {}) {
       const p = mine.get(c.id);
       if (!p) return c;
       const out = { ...c };
-      for (const k of PANEL_ITEM) { if (p[k] === undefined) delete out[k]; else out[k] = p[k]; }
+      for (const k of PANEL_ITEM) {
+        if (!Object.hasOwn(p, k)) continue;
+        if (p[k] === null) delete out[k]; else out[k] = p[k];
+      }
       return out;
     });
   };
-  return {
-    ...cur,
-    scenarios: pick(cur.scenarios, panel.scenarios),
-    cases: pick(cur.cases, panel.cases),
-    applied: !!panel.applied,
-    name: panel.name ?? cur.name,
-    scope: panel.scope ?? cur.scope,
-    code: cur.code ? { ...cur.code, key: panel.code?.key ?? cur.code.key } : cur.code,
-  };
+  const top = (k) => (Object.hasOwn(panel, k) && panel[k] !== null ? { [k]: k === 'applied' ? !!panel[k] : panel[k] } : {});
+  return { ...cur, scenarios: pick(cur.scenarios, panel.scenarios), cases: pick(cur.cases, panel.cases), ...top('applied'), ...top('name'), ...top('scope') };
+}
+
+// 코드를 만들 때의 채택 목록 표시: 채택한 항목의 id·태그·이슈. 패널(suite.js adoptedKey)과 같은 식이다.
+// 채택·태그·이슈가 바뀌면 이 값이 달라져 코드를 다시 만들어야 서버로 보낼 수 있다
+export function adoptedKey(s) {
+  return [...(s?.scenarios || []), ...(s?.cases || [])].filter((c) => c.use !== false)
+    .map((c) => `${c.id}:${(c.tags || []).join('+')}:${c.issue || ''}`).join(',');
 }
 
 // results: [{ title, status, … }]. last.json은 제목별 마지막 결과, runs/<ranAt>.json은 이번 실행.

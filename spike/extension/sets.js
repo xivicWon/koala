@@ -47,6 +47,7 @@ function setRow(s, why) {
 
 function renderSetSheet(body) {
   $('sheet-title').textContent = '세트';
+  if ((setStep === 'new' || setStep === 'edit') && body.querySelector('[data-new]')) captureSetForm(body); // 작업 상태가 바뀌어 다시 그려도 입력값을 잃지 않게
   const why = setBlockReason();
   const server = setList.filter((s) => s.source !== 'local');
   const local = setList.filter((s) => s.source === 'local');
@@ -72,11 +73,11 @@ const refList = (refs, ids) => (refs?.length ? refs : ids || []);
 function setDetail(s, why) {
   const local = s.source === 'local';
   const pref = prefOf(s.id);
-  if (local && setStep === 'edit') return `<div class="set-detail">${setForm('edit', s)}</div>`;
+  if (local && setStep === 'edit') return `<div class="set-detail">${setForm('edit', s, why)}</div>`;
   const roles = s.roles || [];
   return `<div class="set-detail">
     <div class="set-detail-h"><b>${esc(s.name)}</b><span class="pf-status ${s.update ? 'warn' : 'ok'}">${local ? '이 PC 전용' : `서버 v${esc(s.version)}`}</span><span class="grow"></span>
-      ${local ? `<button type="button" class="btn sm" data-set-act="edit-open" ${hostUp ? '' : 'disabled'}>고치기</button><button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why)}">지우기</button>` : ''}</div>
+      ${local ? `<button type="button" class="btn sm" data-set-act="edit-open" ${why ? 'disabled' : ''} title="${esc(why)}">고치기</button><button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why)}">지우기</button>` : ''}</div>
     ${s.update ? `<div class="set-update"><div><b>새 판 v${esc(s.update.to)}</b> <span class="pf-hint">지금 v${esc(s.update.from)} · 받기를 눌러야 바뀝니다</span></div>
       <ul>${s.update.changed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
       <div class="pf-actions"><button type="button" class="primary sm" data-set-act="receive" data-set-id="${esc(s.id)}" ${why ? 'disabled' : ''} title="${esc(why || '새 판으로 받습니다. 테스트·작업 데이터는 그대로 두고, Claude 작업 폴더를 다시 만듭니다')}">받기</button></div></div>` : ''}
@@ -130,7 +131,7 @@ function startUrlWarning(u, s) {
 }
 
 // 새 세트·고치기 입력(이 PC 전용 세트)
-function setForm(kind, s = null) {
+function setForm(kind, s = null, why = '') {
   const v = (k, d = '') => esc(setFormVals[k] ?? d);
   const cur = setInfo();
   return `<div class="pf-new">
@@ -149,12 +150,12 @@ function setForm(kind, s = null) {
     <div class="pf-hint">팀과 함께 쓰려면 서버 관리자에게 세트 등록을 요청하세요. 서버 세트는 받아서 쓰기만 합니다.</div>
     ${setFormError ? `<div class="pf-alert">${esc(setFormError)}</div>` : ''}
     <div class="pf-actions">
-      <button type="button" class="primary sm" data-set-act="${kind}-save">${kind === 'new' ? '만들기' : '저장'}</button>
+      <button type="button" class="primary sm" data-set-act="${kind}-save" ${why ? 'disabled' : ''} title="${esc(why)}">${kind === 'new' ? '만들기' : '저장'}</button>
       <button type="button" class="btn sm" data-set-act="${kind}-cancel">취소</button>
     </div>
   </div>`;
 }
-// 세트 정의(호스트 createLocalSet·updateLocalSet 이 받는 모양). 역할은 정의 안에 직접 둔다(이 PC 전용 세트는 역할 문서를 받지 않는다)
+// 새 세트의 정의(호스트 createLocalSet 이 받는 모양). 역할은 정의 안에 직접 둔다(이 PC 전용 세트는 역할 문서를 받지 않는다)
 function localDef(vals, from) {
   const roles = (from?.roles || []).map(({ key, label, desc }) => ({ key, label, desc }));
   return {
@@ -169,7 +170,8 @@ function localDef(vals, from) {
     tags: from?.tags?.length ? from.tags : ['qa-tags'],
   };
 }
-function readSetForm(body) {
+// 입력 중인 값을 setFormVals 에 담는다(다시 그려도 남게)
+function captureSetForm(body) {
   const v = (k) => body.querySelector(`[data-new="${k}"]`)?.value.trim();
   const vals = { name: v('name') || '', base_url: v('base_url') || '', start_url: v('start_url') || '' };
   if (body.querySelector('[data-new="deploy_url"]')) vals.deploy_url = v('deploy_url') || '';
@@ -177,6 +179,10 @@ function readSetForm(body) {
   const copy = body.querySelector('[data-new="copy"]');
   if (copy) vals.copy = copy.checked;
   setFormVals = vals;
+  return vals;
+}
+function readSetForm(body) {
+  const vals = captureSetForm(body);
   let host = '';
   try { host = new URL(vals.base_url).hostname; } catch {}
   setFormError = !vals.name ? '이름을 적어 주세요'
@@ -291,9 +297,11 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
     const vals = readSetForm(body);
     if (!vals || !s) return renderSheet();
     if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않습니다');
-    ws.send(JSON.stringify({ type: 'set_update_local', id: s.id, def: localDef(vals, s) }));
+    if (why) return msg('err', why);
+    // 고친 칸만 보낸다. 호스트는 나머지 정의(역할 참조·지식·태그·claude·cleanup·모르는 키)를 그대로 둔다
+    const patch = { name: vals.name, profile: { target: { base_url: vals.base_url, start_url: vals.start_url }, deploy: { url: vals.deploy_url ?? '' }, prompt: vals.prompt ?? '' } };
+    ws.send(JSON.stringify({ type: 'set_update_local', id: s.id, patch }));
     setStep = null; setFormVals = {};
-    msg('sys', `이 PC 전용 세트 "${vals.name}"를 고쳤습니다`);
     return renderSheet();
   }
   if (act === 'delete') { setStep = 'delete'; return renderSheet(); }

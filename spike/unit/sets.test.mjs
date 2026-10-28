@@ -124,18 +124,32 @@ test('목록 상세: 받은 세트의 배포 서버·참조 판·역할(기본 �
   assert.deepEqual(l.roles, [{ key: 'ADMIN', label: '관리자', desc: '모두', has_default: true }, { key: 'MEMBER', label: '회원', desc: '', has_default: false }]);
   assert.deepEqual(l.tests, { scenarios: 2, cases: 1 });
   assert.ok(l.received_at);
-  assert.ok(!JSON.stringify(listSets(root)).includes('"p"'));
+  // 기본 계정 값(아이디·비밀번호)과 그 키는 목록에 없다
+  put('server-accounts/r.yaml', { accounts: { ADMIN: { user: 'admin-user-zz', pass: 'secret-pass-zz' } } });
+  receiveSet('a', root);
+  const out = JSON.stringify(listSets(root));
+  assert.ok(!out.includes('admin-user-zz') && !out.includes('secret-pass-zz'));
+  assert.ok(!/"(user|pass)"\s*:/.test(out));
 });
 
-test('이 PC 전용 세트 고치기: 이름·정의를 바꾸고 서버 세트는 거절', () => {
-  const a = createLocalSet({ name: '내 세트', profile: { target: { base_url: 'http://localhost:3000' } } }, root);
-  const r = updateLocalSet(a.id, { name: '바꾼 이름', profile: { target: { base_url: 'http://localhost:4000' } }, roles: [{ key: 'ADMIN', label: '관리자' }] }, root);
+test('이 PC 전용 세트 고치기: 고친 칸만 바꾸고 나머지(역할 참조·claude·cleanup·모르는 키)는 보관, 서버 세트는 거절', () => {
+  const a = createLocalSet({ name: '내 세트', roles: 'doc-id', knowledge: ['k'], tags: ['t'], extra_key: { keep: 1 },
+    profile: { target: { base_url: 'http://localhost:3000', start_url: 'http://localhost:3000/login', login_path: '/login' }, deploy: { url: '' }, prompt: '옛 지식', claude: { model: 'm' }, cleanup: ['x'] } }, root);
+  const r = updateLocalSet(a.id, { name: '바꾼 이름', profile: { target: { base_url: 'http://localhost:4000', start_url: '' }, deploy: { url: 'http://127.0.0.1:8765' }, prompt: '새 지식' } }, root);
   assert.equal(r.name, '바꾼 이름');
-  assert.equal(readSet(a.id, root).def.profile.target.base_url, 'http://localhost:4000');
+  const d = readSet(a.id, root).def;
   assert.equal(readSet(a.id, root).id, a.id);
-  const l = listSets(root).find((s) => s.id === a.id);
-  assert.equal(l.base_url, 'http://localhost:4000');
-  assert.deepEqual(l.roles, [{ key: 'ADMIN', label: '관리자', desc: '', has_default: false }]);
+  assert.equal(d.profile.target.base_url, 'http://localhost:4000');
+  assert.equal('start_url' in d.profile.target, false);
+  assert.equal(d.profile.target.login_path, '/login');
+  assert.equal(d.profile.deploy.url, 'http://127.0.0.1:8765');
+  assert.equal(d.profile.prompt, '새 지식');
+  assert.deepEqual(d.profile.claude, { model: 'm' });
+  assert.deepEqual(d.profile.cleanup, ['x']);
+  assert.equal(d.roles, 'doc-id');
+  assert.deepEqual(d.knowledge, ['k']);
+  assert.deepEqual(d.extra_key, { keep: 1 });
+  assert.equal(listSets(root).find((s) => s.id === a.id).base_url, 'http://localhost:4000');
   receiveSet('a', root);
   assert.throws(() => updateLocalSet('a', { name: 'x' }, root));
 });

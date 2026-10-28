@@ -96,25 +96,42 @@ let scopeOpen = false; // 범위 설명을 펼친 상태(다시 그려도 유지
 const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span>');
 
 // 테스트 목록의 원본은 호스트의 세트 폴더(tests.json)다. 패널은 호스트가 보낸 것(tests)을 보여 주고,
-// 사람이 정하는 것(채택·태그·이슈·반영)만 tests_save 로 보낸다. 항목 내용·코드·실행 결과·서버 기준 버전은 호스트가 정한다.
-// AI 작업·테스트 실행 중에는 호스트가 저장을 받지 않으므로, 그동안 바꾼 것은 모아 두었다가 끝나면 보낸다
-let suiteDirty = false;
+// 사람이 바꾼 것만 항목·필드 단위로(채택·태그·이슈·새로 표시, 반영 여부) tests_save 로 보낸다(보낸 필드만 바뀌고 null 이면 지움).
+// 항목 내용·코드·code.key·실행 결과·서버 기준 버전은 호스트가 정한다.
+// AI 작업·테스트 실행 중에는 호스트가 저장을 받지 않으므로, 바꾼 필드를 모아 두었다가 끝나면 보낸다.
+// 보낸 것은 호스트가 tests_saved 로 받았다고 알릴 때까지 들고 있고, 거절(tests{refused})·연결 끊김이면 다시 모아 둔다
+let suiteEdits = new Map(); // 항목 id → 바꾼 필드 Set. '' 는 목록 전체 필드(applied)
+let suiteSent = null;       // { seq, edits } 보냈지만 아직 받았다는 답이 없는 것
+let suiteSeq = 0;
 const hostWorking = () => (typeof jobNow !== 'undefined' && !!jobNow && !jobNow.done) || !!suite?.code?.running;
-const panelItem = ({ id, use, tags, issue, added }) => ({ id, use, tags, issue, added });
-function saveSuite() {
-  if (!suite || !viewSet || suite.id !== viewSet) return;
-  if (hostWorking() || ws?.readyState !== 1) { suiteDirty = true; return; }
-  suiteDirty = false;
-  ws.send(JSON.stringify({ type: 'tests_save', set: viewSet, suite: {
-    id: suite.id, name: suite.name, scope: suite.scope, applied: suiteApplied,
-    scenarios: suite.scenarios.map(panelItem), cases: suite.cases.map(panelItem),
-    code: suite.code ? { key: suite.code.key } : undefined,
-  } }));
+function markEdit(id, ...fields) {
+  if (!suiteEdits.has(id)) suiteEdits.set(id, new Set());
+  for (const f of fields) suiteEdits.get(id).add(f);
 }
-function flushSuite() { if (suiteDirty && !hostWorking()) saveSuite(); }
+const mergeEdits = (into, from) => { for (const [id, fs] of from) { if (!into.has(id)) into.set(id, new Set()); for (const f of fs) into.get(id).add(f); } return into; };
+function requeueSent() { if (suiteSent) { mergeEdits(suiteEdits, suiteSent.edits); suiteSent = null; } }
+function saveSuite() {
+  if (!suite || !viewSet || suite.id !== viewSet || !suiteEdits.size) return;
+  if (suiteSent || hostWorking() || ws?.readyState !== 1) return; // 답을 받거나 작업이 끝나면 다시 부른다
+  const items = (list) => list.filter((c) => suiteEdits.has(c.id)).map((c) => {
+    const o = { id: c.id };
+    for (const f of suiteEdits.get(c.id)) o[f] = c[f] ?? null;
+    return o;
+  });
+  const payload = { scenarios: items(suite.scenarios), cases: items(suite.cases), ...(suiteEdits.get('')?.has('applied') ? { applied: suiteApplied } : {}) };
+  suiteSent = { seq: ++suiteSeq, edits: suiteEdits };
+  suiteEdits = new Map();
+  ws.send(JSON.stringify({ type: 'tests_save', set: viewSet, seq: suiteSent.seq, suite: payload }));
+}
+const flushSuite = () => { if (!hostWorking()) saveSuite(); };
+function onTestsSaved(m) {
+  if (m.set !== viewSet || suiteSent?.seq !== m.seq) return;
+  suiteSent = null;
+  flushSuite();
+}
 // 세트를 바꿀 때 지금 테스트 목록을 화면에서 내린다(호스트가 새 세트 것을 보낸다)
 function resetSuiteView() {
-  suite = null; suiteBase = 0; suiteApplied = false; suiteConflict = null; suiteDirty = false;
+  suite = null; suiteBase = 0; suiteApplied = false; suiteConflict = null; suiteEdits = new Map(); suiteSent = null;
   runPick.clear(); runConfirm = null; publishWip = false; addOpen = false;
   if (sheetMode === 'suite') renderSheet();
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
@@ -127,29 +144,33 @@ function onTests(m) {
   const old = suite?.id === m.set ? suite : null;
   const { applied, base_version, ...next } = m.suite;
   for (const c of [...next.scenarios, ...next.cases]) if (c.use === undefined) c.use = c.adopted !== false;
-  // 작업 중에 바꾼 것(아직 못 보낸 채택·태그·이슈)은 새 목록에도 남긴다
-  if (old && suiteDirty) {
+  // 호스트가 거절했으면 보낸 것을 다시 모아 둔다(작업이 끝나면 다시 보낸다)
+  if (m.refused) requeueSent();
+  // 아직 호스트에 들어가지 않은, 내가 바꾼 필드만 새 목록에 다시 얹는다(다른 항목·필드는 호스트 것)
+  const mineEdits = mergeEdits(new Map([...suiteEdits].map(([k, v]) => [k, new Set(v)])), suiteSent?.edits || new Map());
+  if (old && mineEdits.size) {
     const mine = new Map([...old.scenarios, ...old.cases].map((c) => [c.id, c]));
     for (const c of [...next.scenarios, ...next.cases]) {
       const o = mine.get(c.id);
-      if (!o) continue;
-      for (const k of ['use', 'tags', 'issue', 'added']) { if (o[k] === undefined) delete c[k]; else c[k] = o[k]; }
+      if (!o || !mineEdits.has(c.id)) continue;
+      for (const k of mineEdits.get(c.id)) { if (o[k] === undefined) delete c[k]; else c[k] = o[k]; }
     }
   }
   next.tag_doc = m.tag_doc || old?.tag_doc || null;
   // 코드 작성 목록·실행 진행은 호스트가 남기지 않는다. 같은 코드면 이어서 쓴다
   if (next.code && old?.code && old.code.source === next.code.source) {
-    next.code = { ...next.code, listed: old.code.listed, running: old.code.running, progress: old.code.progress, ...(suiteDirty ? { key: old.code.key } : {}) };
+    next.code = { ...next.code, listed: old.code.listed, running: old.code.running, progress: old.code.progress };
   }
   suite = next;
   suiteBase = base_version || 0;
-  suiteApplied = suiteDirty && old ? suiteApplied : !!applied;
+  suiteApplied = old && mineEdits.get('')?.has('applied') ? suiteApplied : !!applied;
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
   if (hasTests()) $('suite-hint').textContent = `테스트 목록: ${suite.name} · BDD ${suite.scenarios.length} · TDD ${suite.cases.length}`;
   if (m.added?.length) {
     const ns = suite.scenarios.filter((c) => m.added.includes(c.id)).length;
     const nc = suite.cases.filter((c) => m.added.includes(c.id)).length;
-    suiteApplied = false;
+    suiteApplied = false; // 새 항목이 더해지면 다시 골라 반영해야 한다(호스트 목록도 반영 전)
+    suiteEdits.get('')?.delete('applied');
     suiteTab = ns ? 'bdd' : nc ? 'tdd' : suiteTab;
     const card = document.createElement('div');
     card.className = 'plan-card';
@@ -181,8 +202,7 @@ $('plan-btn').onclick = () => { requestCodeList(); openSheet('suite'); };
 function onSuiteTags(m) {
   if (!suite || suite.id !== m.id) return;
   for (const c of [...suite.scenarios, ...suite.cases]) if (m.tags[c.id]) c.tags = m.tags[c.id];
-  suite.tag_doc = m.tag_doc; suite.tag_source = m.tag_source; // 호스트도 세트 목록에 태그를 남긴다
-  saveSuite();
+  suite.tag_doc = m.tag_doc; suite.tag_source = m.tag_source; // 호스트가 세트 목록에 태그를 이미 남겼다
   msg('sys', `태그를 붙였습니다 (${m.tag_source}) · 테스트 목록에서 확인하고 고치세요`);
   if (sheetMode === 'suite') renderSheet();
 }
@@ -190,15 +210,15 @@ function onSuiteTags(m) {
 function onSuiteCode(m) {
   if (!suite || suite.id !== m.id) return;
   // 실행 결과가 없거나(중단·오류) 읽지 못했으면 서버로 보낼 수 없게 키를 비운다
-  const key = m.running ? adoptedKey() : (m.error || !m.results?.length) ? '' : suite.code?.key ?? adoptedKey();
+  // key 는 호스트가 정한다(실행할 때 받은 채택 목록). 실행 중에는 지금 채택 목록으로 본다
+  const key = m.running ? adoptedKey() : m.key ?? ((m.error || !m.results?.length) ? '' : suite.code?.key ?? adoptedKey());
   // 일부만 실행했으면(merge) 지난 결과에 새 결과를 합친다
   const prev = suite.code?.results || [];
   const results = m.merge ? (m.running ? prev : [...prev.filter((r) => !(m.results || []).some((x) => x.title === r.title)), ...(m.results || [])]) : m.results;
   suite.code = { source: m.code, file: m.file, env: m.env, key, running: !!m.running, results, summary: m.summary, error: m.error, ran_at: m.ran_at, tag_mismatch: m.tag_mismatch,
     progress: m.running ? { total: 0, n: 0, done: [], current: null, steps: [] } : undefined,
     listed: suite.code?.listed };
-  saveSuite(); // 코드·결과는 호스트가 남긴다. 패널은 코드를 만들 때의 채택 목록 표시(key)만 보낸다(실행이 끝난 뒤)
-  if (sheetMode === 'suite') renderSheet();
+  if (sheetMode === 'suite') renderSheet(); // 코드·결과·key 는 호스트가 세트 목록에 남긴다
   if (!m.running) flushSuite();
 }
 
@@ -219,18 +239,17 @@ function onSuiteRetag(m) {
     msg('err', `태그만 반영하지 못했습니다: ${m.error || `빠진 테스트 ${m.missing?.length || 0} · 태그 불일치 ${m.tag_mismatch?.length || 0}`} · 코드를 다시 생성하세요`);
     if (m.code) suite.code.source = m.code;
     suite.code.tag_mismatch = m.tag_mismatch;
-    suite.code.key = ''; // 다시 생성해야 서버로 보낼 수 있다
+    suite.code.key = m.key ?? ''; // 다시 생성해야 서버로 보낼 수 있다
   } else {
     suite.code.listed = m.results;
     const byTitle = new Map(m.results.map((r) => [r.title, r.tags]));
     for (const r of suite.code.results || []) if (byTitle.has(r.title)) r.tags = byTitle.get(r.title);
     suite.code.source = m.code;
     suite.code.tag_mismatch = [];
-    suite.code.key = suite.code.results?.length ? adoptedKey() : ''; // 유효한 실행 결과가 있어야 서버로 보낼 수 있다
+    suite.code.key = m.key ?? (suite.code.results?.length ? adoptedKey() : ''); // 유효한 실행 결과가 있어야 서버로 보낼 수 있다
     suite.code.retagged_at = new Date().toISOString();
     msg('sys', '태그를 코드에 반영했습니다 · 지난 실행 결과를 그대로 씁니다');
   }
-  saveSuite();
   if (sheetMode === 'suite') renderSheet();
 }
 
@@ -240,8 +259,7 @@ function clearStaleRun() {
   if (!suite?.code?.running) return;
   suite.code.running = false;
   suite.code.error = '호스트가 다시 켜져 이전 실행이 중단되었습니다. 코드를 다시 생성하세요';
-  suite.code.key = '';
-  saveSuite();
+  suite.code.key = ''; // 이 화면에서만. 호스트 목록의 key 는 다음 tests 에서 다시 온다
   if (sheetMode === 'suite') renderSheet();
 }
 
@@ -312,7 +330,8 @@ function renderSuiteSheet(body) {
     ${publishWip ? wipSign('publish', { actions: '<button type="button" class="btn sm" data-suite="wip-cancel">보내지 않기</button><button type="button" class="wip-go sm" data-suite="wip-publish-go">알고 임시로 보내기</button>' }) : ''}
     ${suiteConflict ? `<div class="pf-alert suite-conflict">서버에 이 세트의 테스트 v${suiteConflict.version}이 이미 있습니다(이 PC 목록의 기준: v${suiteBase || '없음'}).
       <span class="grow"></span>
-      <button type="button" class="btn sm" data-suite="overwrite">덮어써서 v${suiteConflict.version + 1}로 올리기</button></div>` : ''}
+      <button type="button" class="btn sm" data-suite="overwrite">덮어써서 v${suiteConflict.version + 1}로 올리기</button></div>
+      ${wipSign('conflict', { compact: true })}` : ''}
       ${allTagProblems().length ? `<div class="pf-alert suite-conflict">태그 문제 ${allTagProblems().length}건 — 고쳐야 코드를 만들 수 있습니다: ${esc(allTagProblems().slice(0, 3).join(' / '))}${allTagProblems().length > 3 ? ' …' : ''}</div>` : ''}
       <span class="pf-hint">채택 BDD ${useS}/${suite.scenarios.length} · TDD ${useC}/${suite.cases.length}${suite.tag_source ? ` · 태그 ${esc(suite.tag_source)}` : ''}
         · ${!suiteApplied ? '<b class="next-step">고른 뒤 반영 → 코드 생성 → 서버 전송</b>'
@@ -564,6 +583,7 @@ document.getElementById('sheet-body').addEventListener('change', (e) => {
       const g = idx.get(t).group;
       // 하나만인 축은 바꿔 끼운다
       c.tags = [...(c.tags || []).filter((x) => !(g.exclusive && idx.get(x)?.group.id === g.id)), t];
+      markEdit(c.id, 'tags');
       saveSuite();
     }
     renderSheet();
@@ -572,7 +592,7 @@ document.getElementById('sheet-body').addEventListener('change', (e) => {
   }
   if (e.target.matches('[data-tag-filter]')) { suiteTagFilter = e.target.value; return renderSheet(); }
   const iss = e.target.dataset.issue;
-  if (iss) { [...suite.scenarios, ...suite.cases].find((x) => x.id === iss).issue = e.target.value.trim(); saveSuite(); renderSheet(); }
+  if (iss) { [...suite.scenarios, ...suite.cases].find((x) => x.id === iss).issue = e.target.value.trim(); markEdit(iss, 'issue'); saveSuite(); renderSheet(); }
 });
 const idx0 = (t) => tagIndex().get(t);
 
@@ -586,6 +606,7 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     const c = [...suite.scenarios, ...suite.cases].find((x) => x.id === id);
     c.tags = (c.tags || []).filter((x) => x !== t);
     if (!c.tags.some((x) => tagIndex().get(x)?.requires === 'issue')) delete c.issue;
+    markEdit(c.id, 'tags', 'issue');
     saveSuite(); return renderSheet();
   }
   if (act0(e) === 'tags' && ws?.readyState === 1 && !aiBusy) {
@@ -618,19 +639,21 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
   if (s) {
     const c = suite.scenarios.find((x) => x.id === s);
     c.use = e.target.checked;
-    for (const t of suite.cases.filter((x) => x.scenario === s)) t.use = c.use; // 시나리오를 미채택하면 딸린 TDD도 미채택, 다시 채택하면 함께 채택
+    for (const t of suite.cases.filter((x) => x.scenario === s)) { t.use = c.use; markEdit(t.id, 'use'); } // 시나리오를 미채택하면 딸린 TDD도 미채택, 다시 채택하면 함께 채택
     suiteApplied = false;
+    markEdit(s, 'use'); markEdit('', 'applied');
     saveSuite();
     return renderSheet();
   }
   const cid = e.target.dataset.useC;
-  if (cid) { suite.cases.find((x) => x.id === cid).use = e.target.checked; suiteApplied = false; saveSuite(); return renderSheet(); }
+  if (cid) { suite.cases.find((x) => x.id === cid).use = e.target.checked; suiteApplied = false; markEdit(cid, 'use'); markEdit('', 'applied'); saveSuite(); return renderSheet(); }
   let act = e.target.closest('[data-suite]')?.dataset.suite;
   if (act === 'apply') {
     // 지우지 않는다. 미채택 항목도 그대로 두어 언제든 다시 채택할 수 있다
     const n = (xs) => `${xs.filter((c) => c.use).length}/${xs.length}`;
     suiteApplied = true;
-    for (const c of [...suite.scenarios, ...suite.cases]) delete c.added; // 반영하면 '새로' 표시를 뗀다
+    for (const c of [...suite.scenarios, ...suite.cases]) if (c.added) { delete c.added; markEdit(c.id, 'added'); } // 반영하면 '새로' 표시를 뗀다
+    markEdit('', 'applied');
     saveSuite();
     msg('sys', `테스트 묶음 반영: 채택 BDD ${n(suite.scenarios)} · TDD ${n(suite.cases)} (미채택 항목은 보관)`);
     return renderSheet();
