@@ -293,11 +293,14 @@ input[type=radio]:checked { border-color: var(--accent); box-shadow: inset 0 0 0
 input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var(--bg), 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 .req-actions { align-items: center; }
 
-/* ---------- 프로필 ---------- */
-.profile-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; height: 24px; padding: 0 9px;
+/* ---------- 세트 칩 ---------- */
+.set-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; height: 24px; padding: 0 9px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 11.5px; color: var(--text-2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-chip:hover { border-color: var(--text-3); color: var(--text); }
+  overflow: hidden; white-space: nowrap; }
+.set-chip:hover { border-color: var(--text-3); color: var(--text); }
+.set-chip-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* 새 판 있음: 칩 끝의 작은 점 */
+.set-upd { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--run); box-shadow: 0 0 0 2px var(--run-soft); }
 .pdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
 .pdot.ok { background: var(--ok); } .pdot.warn { background: var(--warn); } .pdot.bad { background: var(--fail); }
 .pf { padding: 6px 0 10px; }
@@ -382,10 +385,10 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .play .seg button { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 20px; }
 .seg .spd { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .play .icon-btn { width: 26px; height: 22px; font-size: 10px; }
-.top .pill, .top .seg button, .profile-chip, .claude-btn, .brand { white-space: nowrap; }
+.top .pill, .top .seg button, .set-chip, .claude-btn, .brand { white-space: nowrap; }
 .top .pill, .seg { flex-shrink: 0; }
-/* 2줄: 프로필과 Claude는 자리가 모자라면 이름을 … 로 줄인다 */
-.profile-chip { flex: 0 1 auto; min-width: 0; max-width: 50%; }
+/* 2줄: 세트와 Claude는 자리가 모자라면 이름을 … 로 줄인다 */
+.set-chip { flex: 0 1 auto; min-width: 0; max-width: 50%; }
 .claude-btn { flex: 0 1 auto; min-width: 0; overflow: hidden; }
 .claude-model { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .claude-name, .claude-mark, .claude-effort { flex-shrink: 0; }
@@ -694,7 +697,34 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .rel-link { justify-self: center; font-size: 12px; color: var(--text-2); text-decoration: none; padding: 4px 0; }
 .rel-link:hover { color: var(--run); text-decoration: underline; }
 
-/* 프로필 시트: 동작 줄·새 프로필 */
+/* 세트 시트: 목록 · 상세(받은 정의 · 내 설정) */
+.set-group-h { display: flex; align-items: baseline; gap: 4px; margin: 14px 0 6px; font-size: 12px; }
+.set-group-h:first-child { margin-top: 2px; }
+.set-group-h .btn { align-self: center; }
+.set-none { margin: 0 0 4px; }
+.set-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin-bottom: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.set-row.on { border-color: var(--accent); background: var(--accent-soft); }
+.set-pick { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 0; border: 0; background: none; text-align: left; color: var(--text); }
+.set-pick:disabled { cursor: default; }
+.set-pick:not(:disabled):hover .set-row-name { text-decoration: underline; }
+.set-row-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 12.5px; }
+.set-row-meta { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 10.5px; }
+.set-row-st { flex: none; display: flex; align-items: center; gap: 4px; }
+.set-detail { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.set-detail-h { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+.set-detail-h b { min-width: 0; overflow-wrap: anywhere; }
+.set-update { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: var(--run-soft); color: var(--text); font-size: 12px; }
+.set-update b { color: var(--run); }
+.set-update ul { margin: 4px 0 0; padding-left: 18px; }
+.set-update .pf-hint { margin-left: 4px; }
+.set-sub { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px; margin: 16px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.set-sub .pf-hint { margin-left: 6px; }
+.set-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.set-chips .tag.mono { font-size: 10.5px; }
+.set-prompt { margin-top: 12px; }
+.set-when { margin: 8px 0 0; }
+
+/* 시트 동작 줄·새 세트 */
 .pf-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .pf-explain { margin: 6px 0 0; }
 .pf-explain b { color: var(--text); font-weight: 600; }

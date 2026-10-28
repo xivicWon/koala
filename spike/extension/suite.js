@@ -95,51 +95,71 @@ let publishWip = false;    // 서버 전송을 눌러 공사 표지판(임시 �
 let scopeOpen = false; // 범위 설명을 펼친 상태(다시 그려도 유지)
 const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span>');
 
-// 초안은 바뀔 때마다 확장 저장소에 도메인별로 저장한다(suite@<도메인>). 패널을 닫거나 확장을 다시 올려도 다시 만들 필요 없게
-const suiteKey = (d) => `suite@${d}`;
+// 테스트 목록의 원본은 호스트의 세트 폴더(tests.json)다. 패널은 호스트가 보낸 것(tests)을 보여 주고,
+// 사람이 정하는 것(채택·태그·이슈·반영)만 tests_save 로 보낸다. 항목 내용·코드·실행 결과·서버 기준 버전은 호스트가 정한다.
+// AI 작업·테스트 실행 중에는 호스트가 저장을 받지 않으므로, 그동안 바꾼 것은 모아 두었다가 끝나면 보낸다
+let suiteDirty = false;
+const hostWorking = () => (typeof jobNow !== 'undefined' && !!jobNow && !jobNow.done) || !!suite?.code?.running;
+const panelItem = ({ id, use, tags, issue, added }) => ({ id, use, tags, issue, added });
 function saveSuite() {
-  if (!viewDomain) return;
-  chrome.storage.local.set({ [suiteKey(viewDomain)]: suite ? { suite, suiteBase, suiteApplied } : null }).catch(() => {});
+  if (!suite || !viewSet || suite.id !== viewSet) return;
+  if (hostWorking() || ws?.readyState !== 1) { suiteDirty = true; return; }
+  suiteDirty = false;
+  ws.send(JSON.stringify({ type: 'tests_save', set: viewSet, suite: {
+    id: suite.id, name: suite.name, scope: suite.scope, applied: suiteApplied,
+    scenarios: suite.scenarios.map(panelItem), cases: suite.cases.map(panelItem),
+    code: suite.code ? { key: suite.code.key } : undefined,
+  } }));
 }
-// 초안이 어느 도메인 것인지: 초안의 프로필 → 그 프로필의 대상 주소
-const suiteDomain = (x) => (x?.profile && profiles?.[x.profile] ? domainOf(profiles[x.profile].data) : null);
-// 도메인을 바꿀 때 지금 테스트 목록을 화면에서 내린다(저장된 것은 그대로)
+function flushSuite() { if (suiteDirty && !hostWorking()) saveSuite(); }
+// 세트를 바꿀 때 지금 테스트 목록을 화면에서 내린다(호스트가 새 세트 것을 보낸다)
 function resetSuiteView() {
-  suite = null; suiteBase = 0; suiteApplied = false;
-  if (sheetMode === 'suite') closeSheet();
+  suite = null; suiteBase = 0; suiteApplied = false; suiteConflict = null; suiteDirty = false;
+  runPick.clear(); runConfirm = null; publishWip = false; addOpen = false;
+  if (sheetMode === 'suite') renderSheet();
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
 }
-async function restoreSuite(d) {
-  const key = suiteKey(d);
-  const got = await chrome.storage.local.get([key, 'suiteDraft']).catch(() => ({}));
-  let saved = got[key];
-  // 도메인 구분 전의 초안은 그 초안 프로필의 도메인으로 옮긴다
-  const legacy = got.suiteDraft;
-  if (legacy?.suite) {
-    const ld = suiteDomain(legacy.suite) || d;
-    await chrome.storage.local.set({ [suiteKey(ld)]: legacy }).catch(() => {});
-    if (ld === d && !saved) saved = legacy;
+const hasTests = () => !!(suite && (suite.scenarios.length || suite.cases.length));
+
+// 호스트가 보낸 세트의 테스트 목록: 세트를 고를 때, AI가 테스트를 만들거나 더했을 때(added)
+function onTests(m) {
+  if (m.set !== viewSet || !m.suite) return;
+  const old = suite?.id === m.set ? suite : null;
+  const { applied, base_version, ...next } = m.suite;
+  for (const c of [...next.scenarios, ...next.cases]) if (c.use === undefined) c.use = c.adopted !== false;
+  // 작업 중에 바꾼 것(아직 못 보낸 채택·태그·이슈)은 새 목록에도 남긴다
+  if (old && suiteDirty) {
+    const mine = new Map([...old.scenarios, ...old.cases].map((c) => [c.id, c]));
+    for (const c of [...next.scenarios, ...next.cases]) {
+      const o = mine.get(c.id);
+      if (!o) continue;
+      for (const k of ['use', 'tags', 'issue', 'added']) { if (o[k] === undefined) delete c[k]; else c[k] = o[k]; }
+    }
   }
-  if (legacy !== undefined) chrome.storage.local.remove('suiteDraft').catch(() => {});
-  if (saved?.suite) ({ suite, suiteBase, suiteApplied } = saved);
-  else {
-    // 확장 저장소가 비었으면 호스트가 남긴 최근 초안 사본(지금 도메인)을 불러온다
-    try {
-      const r = await fetch('http://127.0.0.1:8765/drafts/latest');
-      const x = r.ok ? await r.json() : null;
-      if (x && (suiteDomain(x) || d) === d) { const { base_version, ...rest } = x; suite = rest; suiteBase = base_version ?? 0; suiteApplied = false; saveSuite(); }
-    } catch {}
+  next.tag_doc = m.tag_doc || old?.tag_doc || null;
+  // 코드 작성 목록·실행 진행은 호스트가 남기지 않는다. 같은 코드면 이어서 쓴다
+  if (next.code && old?.code && old.code.source === next.code.source) {
+    next.code = { ...next.code, listed: old.code.listed, running: old.code.running, progress: old.code.progress, ...(suiteDirty ? { key: old.code.key } : {}) };
   }
-  // 태그 문서가 없으면(이전 초안) 서버에서 받는다
-  if (suite && !suite.tag_doc) {
-    try {
-      const id = profiles?.[activeId]?.data?.tags || 'qa-tags';
-      const r = await fetch(`http://127.0.0.1:8765/sync/tags/${id}`);
-      if (r.ok) { suite.tag_doc = await r.json(); saveSuite(); }
-    } catch {}
-  }
+  suite = next;
+  suiteBase = base_version || 0;
+  suiteApplied = suiteDirty && old ? suiteApplied : !!applied;
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
-  if (suite) $('suite-hint').textContent = `저장된 테스트 초안: ${suite.name} · 테스트 목록에서 이어서 고를 수 있습니다`;
+  if (hasTests()) $('suite-hint').textContent = `테스트 목록: ${suite.name} · BDD ${suite.scenarios.length} · TDD ${suite.cases.length}`;
+  if (m.added?.length) {
+    const ns = suite.scenarios.filter((c) => m.added.includes(c.id)).length;
+    const nc = suite.cases.filter((c) => m.added.includes(c.id)).length;
+    suiteApplied = false;
+    suiteTab = ns ? 'bdd' : nc ? 'tdd' : suiteTab;
+    const card = document.createElement('div');
+    card.className = 'plan-card';
+    card.innerHTML = `<div><b>테스트가 더해졌습니다</b> ${esc(suite.name)}</div>
+      <div class="plan-card-meta">새 시나리오 ${ns}개 · 새 케이스 ${nc}개 · 전체 BDD ${suite.scenarios.length} · TDD ${suite.cases.length} · 사용할 것을 골라 반영하세요</div>
+      <button type="button" class="btn sm open-suite">고르기</button>`;
+    append(card);
+    openSheet('suite');
+  } else if (sheetMode === 'suite') renderSheet();
+  flushSuite();
 }
 
 const PRIO = { high: '높음', medium: '중간', low: '낮음' };
@@ -161,40 +181,10 @@ $('plan-btn').onclick = () => { requestCodeList(); openSheet('suite'); };
 function onSuiteTags(m) {
   if (!suite || suite.id !== m.id) return;
   for (const c of [...suite.scenarios, ...suite.cases]) if (m.tags[c.id]) c.tags = m.tags[c.id];
-  suite.tag_doc = m.tag_doc; suite.tag_source = m.tag_source;
+  suite.tag_doc = m.tag_doc; suite.tag_source = m.tag_source; // 호스트도 세트 목록에 태그를 남긴다
   saveSuite();
   msg('sys', `태그를 붙였습니다 (${m.tag_source}) · 테스트 목록에서 확인하고 고치세요`);
   if (sheetMode === 'suite') renderSheet();
-}
-
-function onSuiteDraft(draft, base, tagDoc) {
-  if (tagDoc) draft.tag_doc = tagDoc;
-  for (const c of [...draft.scenarios, ...draft.cases]) if (c.use === undefined) c.use = c.adopted !== false;
-  if (suite && suite.id === draft.id) {
-    const offS = new Set(suite.scenarios.filter((c) => !c.use).map((c) => c.id));
-    const offC = new Set(suite.cases.filter((c) => !c.use).map((c) => c.id));
-    draft.scenarios.forEach((c) => { if (offS.has(c.id)) c.use = false; });
-    draft.cases.forEach((c) => { if (offC.has(c.id)) c.use = false; });
-  }
-  if (suite && suite.id === draft.id) {
-    // 사람이 붙인 태그·이슈는 새 초안에도 남긴다
-    for (const c of [...draft.scenarios, ...draft.cases]) {
-      const old = [...suite.scenarios, ...suite.cases].find((x) => x.id === c.id);
-      if (!old) continue;
-      const human = (old.tags || []).filter((t) => tagIndex().get(t)?.assign === 'human');
-      c.tags = [...new Set([...(c.tags || []), ...human])];
-      if (old.issue) c.issue = old.issue;
-    }
-  }
-  suite = draft; suiteBase = base; suiteApplied = false; suiteTab = 'coverage';
-  saveSuite();
-  const card = document.createElement('div');
-  card.className = 'plan-card';
-  card.innerHTML = `<div><b>테스트 초안</b> ${esc(draft.name)}</div>
-    <div class="plan-card-meta">흐름 ${draft.flow?.length || 0}단계 · BDD ${draft.scenarios.length}개 · TDD ${draft.cases.length}개 · 사용할 것을 골라 반영하세요</div>
-    <button type="button" class="btn sm open-suite">고르기</button>`;
-  append(card);
-  openSheet('suite');
 }
 
 function onSuiteCode(m) {
@@ -207,28 +197,14 @@ function onSuiteCode(m) {
   suite.code = { source: m.code, file: m.file, env: m.env, key, running: !!m.running, results, summary: m.summary, error: m.error, ran_at: m.ran_at, tag_mismatch: m.tag_mismatch,
     progress: m.running ? { total: 0, n: 0, done: [], current: null, steps: [] } : undefined,
     listed: suite.code?.listed };
-  saveSuite();
+  saveSuite(); // 코드·결과는 호스트가 남긴다. 패널은 코드를 만들 때의 채택 목록 표시(key)만 보낸다(실행이 끝난 뒤)
   if (sheetMode === 'suite') renderSheet();
-}
-
-// 테스트 추가로 온 새 항목을 덧붙인다(기존 항목·채택·태그는 그대로)
-function onSuiteAdd(m) {
-  if (!suite || suite.id !== m.id) return;
-  const have = new Set([...suite.scenarios, ...suite.cases].map((c) => c.id));
-  suite.scenarios.push(...m.scenarios.filter((c) => !have.has(c.id)));
-  suite.cases.push(...m.cases.filter((c) => !have.has(c.id)));
-  if (m.flow?.length) suite.flow = [...(suite.flow || []), ...m.flow];
-  suiteApplied = false;
-  suiteTab = m.scenarios.length ? 'bdd' : 'tdd';
-  saveSuite();
-  msg('sys', `새 항목이 추가됐습니다 · 시나리오 ${m.scenarios.length} · 케이스 ${m.cases.length} · 고른 뒤 반영하세요`);
-  openSheet('suite');
+  if (!m.running) flushSuite();
 }
 
 function onSuiteListed(m) {
   if (!suite?.code || suite.id !== m.id) return;
   suite.code.listed = m.tests;
-  saveSuite();
   if (sheetMode === 'suite') renderSheet();
 }
 // 패널을 열 때 작성 목록이 없으면 받아 온다(실행 없음)
@@ -288,16 +264,21 @@ function onSuitePublished(m) {
     return;
   }
   suiteConflict = null;
-  suiteBase = m.version;
-  saveSuite();
+  suiteBase = m.version; // 호스트가 세트 목록의 기준 버전을 올렸다
   msg('sys', `테스트 묶음을 ${m.server ? `배포 서버(${m.server})` : '서버'}로 보냈습니다 (v${m.version})`);
   if (sheetMode === 'suite') renderSheet();
 }
 
 function renderSuiteSheet(body) {
-  $('sheet-title').textContent = '테스트 목록';
+  $('sheet-title').textContent = `테스트 목록${setInfo(viewSet) ? ` · ${setInfo(viewSet).name}` : ''}`;
   if (!suite) {
-    body.innerHTML = `<div class="none">아직 만든 테스트가 없습니다.<br>테스트를 수행한 뒤 입력창에 <b>"지금까지 한 걸로 테스트 만들어줘"</b>라고 하세요.</div>`;
+    body.innerHTML = !viewSet ? '<div class="none">세트를 먼저 고르세요. 위쪽 세트 칩에서 세트를 받고 고릅니다.</div>'
+      : !hostUp ? '<div class="none">호스트에 연결되면 불러옵니다.<br><span class="pf-hint">테스트 목록은 이 PC의 호스트(세트 폴더)에 있습니다</span></div>'
+      : '<div class="none">테스트 목록을 불러오는 중…</div>';
+    return;
+  }
+  if (!hasTests()) {
+    body.innerHTML = `<div class="none">이 세트에는 아직 테스트가 없습니다.<br>테스트를 수행한 뒤 입력창에 <b>"지금까지 한 걸로 테스트 만들어줘"</b>라고 하세요.</div>`;
     return;
   }
   const useS = suite.scenarios.filter((c) => c.use).length;
@@ -329,9 +310,8 @@ function renderSuiteSheet(body) {
     <div class="suite-actions">
     ${runConfirmView()}
     ${publishWip ? wipSign('publish', { actions: '<button type="button" class="btn sm" data-suite="wip-cancel">보내지 않기</button><button type="button" class="wip-go sm" data-suite="wip-publish-go">알고 임시로 보내기</button>' }) : ''}
-    ${suiteConflict ? `<div class="pf-alert suite-conflict">서버에 이 테스트 묶음의 v${suiteConflict.version}이 이미 있습니다(지금 초안의 기준: v${suiteBase || '없음'}).
+    ${suiteConflict ? `<div class="pf-alert suite-conflict">서버에 이 세트의 테스트 v${suiteConflict.version}이 이미 있습니다(이 PC 목록의 기준: v${suiteBase || '없음'}).
       <span class="grow"></span>
-      <button type="button" class="btn sm" data-suite="take-server">서버 v${suiteConflict.version} 불러오기</button>
       <button type="button" class="btn sm" data-suite="overwrite">덮어써서 v${suiteConflict.version + 1}로 올리기</button></div>` : ''}
       ${allTagProblems().length ? `<div class="pf-alert suite-conflict">태그 문제 ${allTagProblems().length}건 — 고쳐야 코드를 만들 수 있습니다: ${esc(allTagProblems().slice(0, 3).join(' / '))}${allTagProblems().length > 3 ? ' …' : ''}</div>` : ''}
       <span class="pf-hint">채택 BDD ${useS}/${suite.scenarios.length} · TDD ${useC}/${suite.cases.length}${suite.tag_source ? ` · 태그 ${esc(suite.tag_source)}` : ''}
@@ -341,7 +321,7 @@ function renderSuiteSheet(body) {
           : needRun() ? `<b class="next-step">실행 결과가 없는 테스트 ${notRun().length}개 · 실행해야 서버로 보낼 수 있습니다</b>`
           : tagsOnly() ? '<b class="next-step">태그·이슈만 바뀌었습니다 · 태그만 코드에 반영하세요(실행 없음)</b>'
           : !codeFresh() ? `<b class="next-step">${suite.code?.source ? '채택이 바뀌었습니다 · 코드를 다시 생성하세요' : '반영됨 · 코드를 생성하세요'}</b>`
-          : `로컬 실행 통과 ${suite.code.summary?.passed ?? 0}/${suite.code.results?.length ?? 0}${suite.code.summary?.failed ? ` · 실패 ${suite.code.summary.failed}` : ''}${suiteBase ? ` · 서버 v${suiteBase}` : ''}${deployServer() ? '' : ' · <b class="next-step">배포 서버가 없습니다 · 프로필에서 설정하면 서버 전송을 쓸 수 있습니다</b>'}`}</span>
+          : `로컬 실행 통과 ${suite.code.summary?.passed ?? 0}/${suite.code.results?.length ?? 0}${suite.code.summary?.failed ? ` · 실패 ${suite.code.summary.failed}` : ''}${suiteBase ? ` · 서버 v${suiteBase}` : ''}${deployServer() ? '' : ' · <b class="next-step">세트에 배포 서버가 없습니다 · 세트 정의에 있어야 서버 전송을 쓸 수 있습니다</b>'}`}</span>
       <span class="grow"></span>
       <button type="button" class="btn" data-suite="reinforce" ${todo ? '' : 'disabled'} title="미수행 예외·오류를 실제로 수행하고(필요하면 오류 주입) 초안을 갱신합니다">예외·오류 보강 수행</button>
       <button type="button" class="btn" data-suite="apply" ${suiteApplied ? 'disabled' : ''}>반영</button>
@@ -350,7 +330,7 @@ function renderSuiteSheet(body) {
       ${canAppend() ? `<button type="button" class="primary" data-suite="append" ${suiteApplied && !aiBusy && !allTagProblems().length ? '' : 'disabled'} title="코드가 없는 새 항목만 AI가 써서 기존 파일 끝에 덧붙이고, 새 테스트만 실행합니다">새 테스트 코드 추가 (${missingCode().length})</button>` : ''}
       ${needRun() ? `<button type="button" class="primary" data-suite="run" ${aiBusy ? 'disabled' : ''} title="코드는 그대로 두고, 실행 결과가 없는 테스트만 실행합니다(AI 없음)">테스트 실행 (${notRun().length})</button>` : ''}
       <button type="button" class="${suiteApplied && !codeFresh() && !tagsOnly() && !needRun() && !canAppend() ? 'primary' : 'btn'}" data-suite="code" ${suiteApplied && !suite.code?.running && !allTagProblems().length ? '' : 'disabled'} title="채택한 테스트로 Playwright 코드를 만들고 로컬에서 실행해 확인합니다">${suite.code?.source ? '코드 다시 생성' : '코드 생성'}</button>
-      <button type="button" class="${codeFresh() && deployServer() ? 'primary' : 'btn'}" data-suite="publish" ${suiteApplied && codeFresh() && deployServer() ? '' : 'disabled'} title="${!deployServer() ? '프로필에 배포 서버가 없습니다. 프로필 → 배포 서버에 주소를 넣으세요' : codeFresh() ? `코드와 실행에 필요한 환경변수 목록을 함께 ${deployServer()}로 보냅니다` : '먼저 코드를 생성하세요'}">서버 전송</button>
+      <button type="button" class="${codeFresh() && deployServer() ? 'primary' : 'btn'}" data-suite="publish" ${suiteApplied && codeFresh() && deployServer() ? '' : 'disabled'} title="${!deployServer() ? '세트에 배포 서버가 없습니다. 서버 세트는 서버에서, 이 PC 전용 세트는 세트 → 고치기에서 넣습니다' : codeFresh() ? `코드와 실행에 필요한 환경변수 목록을 함께 ${deployServer()}로 보냅니다` : '먼저 코드를 생성하세요'}">서버 전송</button>
     </div>
   </div>`;
 }
@@ -440,7 +420,7 @@ function pickBar() {
     <button type="button" class="${n ? 'primary' : 'btn'} sm" data-suite="run-picked" ${n && ws?.readyState === 1 ? '' : 'disabled'} title="고른 테스트만 로컬에서 실행하고 결과를 지난 결과에 합칩니다(AI 없음)">고른 테스트 실행${n ? ` (${n})` : ''}</button></div>`;
 }
 
-// 테스트는 프로필 대상 주소로 별도 브라우저 창에서 돈다. 지금 탭이 다른 도메인이면 헷갈리지 않게 한 번 묻는다
+// 테스트는 세트 대상 주소로 별도 브라우저 창에서 돈다. 지금 탭이 다른 도메인이면 헷갈리지 않게 한 번 묻는다
 async function tabMismatch() {
   const d = activeDomain();
   if (!d || d === 'default') return null;
@@ -462,8 +442,8 @@ function sendRun(ids, only) {
 }
 function runConfirmView() {
   if (!runConfirm) return '';
-  const base = profiles[activeId]?.data?.target?.base_url || activeDomain();
-  return `<div class="pf-alert suite-conflict"><span>지금 탭은 <b>${esc(runConfirm.actual)}</b> 입니다. 테스트는 이 탭이 아니라 프로필 대상 주소(${esc(base)})로 새 브라우저 창에서 실행합니다. 그래도 실행할까요?</span>
+  const base = setInfo()?.base_url || activeDomain();
+  return `<div class="pf-alert suite-conflict"><span>지금 탭은 <b>${esc(runConfirm.actual)}</b> 입니다. 테스트는 이 탭이 아니라 세트 대상 주소(${esc(base)})로 새 브라우저 창에서 실행합니다. 그래도 실행할까요?</span>
     <span class="grow"></span>
     <button type="button" class="btn sm" data-suite="run-cancel">취소</button>
     <button type="button" class="primary sm" data-suite="run-confirm">그래도 실행</button></div>`;
@@ -650,6 +630,7 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     // 지우지 않는다. 미채택 항목도 그대로 두어 언제든 다시 채택할 수 있다
     const n = (xs) => `${xs.filter((c) => c.use).length}/${xs.length}`;
     suiteApplied = true;
+    for (const c of [...suite.scenarios, ...suite.cases]) delete c.added; // 반영하면 '새로' 표시를 뗀다
     saveSuite();
     msg('sys', `테스트 묶음 반영: 채택 BDD ${n(suite.scenarios)} · TDD ${n(suite.cases)} (미채택 항목은 보관)`);
     return renderSheet();
@@ -707,32 +688,18 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     closeSheet();
     return;
   }
-  if (act === 'take-server' && suiteConflict) {
-    // 서버 문서를 불러온다(adopted → 채택 상태). 지금 초안은 덮인다
-    const d = suiteConflict;
-    for (const c of [...d.scenarios, ...d.cases]) c.use = c.adopted !== false;
-    suite = { ...d, spec: d.spec ?? suite.spec, tag_doc: suite.tag_doc };
-    if (d.code) suite.code = { ...d.code, key: adoptedKey() };
-    suiteBase = d.version; suiteApplied = true; suiteConflict = null;
-    saveSuite();
-    msg('sys', `서버 v${d.version}을 불러왔습니다`);
-    return renderSheet();
-  }
   if (act === 'overwrite' && suiteConflict) {
     suiteBase = suiteConflict.version; // 서버 버전을 기준으로 다시 보낸다 → 다음 버전으로 저장
     suiteConflict = null;
-    saveSuite();
   }
-  if ((act === 'publish' || act === 'overwrite') && !deployServer()) { msg('err', '프로필에 배포 서버가 없어 보낼 수 없습니다. 프로필 → 배포 서버에 주소를 넣으세요'); return; }
+  if ((act === 'publish' || act === 'overwrite') && !deployServer()) { msg('err', '세트에 배포 서버가 없어 보낼 수 없습니다. 서버 세트는 서버에서, 이 PC 전용 세트는 세트 → 고치기에서 넣습니다'); return; }
   // 서버 전송은 임시 형태다. 보내기 전에 공사 표지판으로 알리고, 알고 보내기를 누르면 보낸다
   if (act === 'publish') { publishWip = true; renderSheet(); document.querySelector('[data-wip="publish"]')?.scrollIntoView({ block: 'nearest' }); return; }
   if (act === 'wip-cancel') { publishWip = false; return renderSheet(); }
   if (act === 'wip-publish-go') { publishWip = false; renderSheet(); act = 'publish'; }
   if ((act === 'publish' || act === 'overwrite') && suiteApplied && codeFresh() && !allTagProblems().length && ws?.readyState === 1) {
-    const { flow, scenarios, cases, spec, code, tag_doc, ...rest } = suite;
-    // 미채택도 함께 보낸다(adopted=false). 서버는 code를 받아 env 값만 자기 환경에 맞게 넣고 돌린다
-    const clean = { ...rest, flow, scenarios: scenarios.map(({ use, ...c }) => ({ ...c, adopted: !!use })), cases: cases.map(({ use, ...c }) => ({ ...c, adopted: !!use })),
-      code: { runner: 'playwright', file: code.file, source: code.source, env: code.env, local_run: { ...code.summary, ran_at: code.ran_at, results: code.results.map(({ title, status }) => ({ title, status })) } } };
-    ws.send(JSON.stringify({ type: 'publish', suite: clean, base_version: suiteBase }));
+    // 보낼 내용(채택분·코드·실행 결과)은 호스트가 세트 폴더에서 만든다(outbox.mjs, 임시 형태). 패널은 세트와 기준 버전만 보낸다
+    flushSuite();
+    ws.send(JSON.stringify({ type: 'publish', set: viewSet, base_version: suiteBase }));
   }
 });
