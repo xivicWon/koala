@@ -1338,17 +1338,27 @@ async function waitTabComplete(max = 15000) {
 $('ver').textContent = `v${chrome.runtime.getManifest().version}`;
 // 타임라인 복원과 호스트 연결은 프로필을 불러온 뒤 profile.js 가 한다(도메인을 알아야 하므로)
 
-// 대상 탭이 프로필 도메인이 아니어서 실행하지 않았을 때: 프로필 주소로 이동하는 버튼을 보여 준다
+// 대상 탭이 프로필 도메인이 아니어서 멈췄을 때: 프로필 주소로 이동하거나, 승인하고 그대로 진행한다
 function onDomainMismatch(m) {
   const d = document.createElement('div');
-  d.className = 'err';
-  d.textContent = `대상 탭이 ${m.actual} 입니다. 이 프로필의 도메인(${m.expected})에서만 실행합니다. `;
+  d.className = 'err domain-warn';
+  d.textContent = `대상 탭이 ${m.actual} 입니다. 이 프로필의 도메인은 ${m.expected} 입니다. 그대로 진행하면 ${m.actual} 화면을 조작하고, 기록은 ${m.expected} 쪽에 남습니다. `;
+  const btns = [];
+  const done = () => btns.forEach((x) => { x.disabled = true; });
   if (m.go) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'btn sm'; b.textContent = `${m.go} 로 이동`;
-    b.onclick = async () => { b.disabled = true; try { await chrome.tabs.update(tabId ?? (await activeTab()).id, { url: m.go }); } catch (e) { msg('err', `이동하지 못했습니다: ${e.message}`); } };
-    d.appendChild(b);
+    b.onclick = async () => { done(); try { await chrome.tabs.update(tabId ?? (await activeTab()).id, { url: m.go }); } catch (e) { msg('err', `이동하지 못했습니다: ${e.message}`); } };
+    btns.push(b);
   }
+  if (m.can_force) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn sm'; b.textContent = '그래도 진행';
+    b.title = `${m.actual} 에서 이번 지시를 그대로 실행합니다`;
+    b.onclick = () => { if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않습니다'); done(); ws.send(JSON.stringify({ type: 'domain_override' })); };
+    btns.push(b);
+  }
+  d.append(...btns);
   append(d);
 }
 

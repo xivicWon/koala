@@ -89,6 +89,8 @@ function codeMatches(except = []) {
 // 서버로 보낼 수 있는 상태: 코드가 지금 목록과 맞고, 채택한 항목 모두 실행 결과가 있다
 const codeFresh = () => !!suite?.code?.source && !suite.code.running && suite.code.key === adoptedKey() && !missingCode().length && !notRun().length;
 let addOpen = false; // 테스트 추가 입력란을 연 상태
+const runPick = new Set(); // 테스트 코드 탭에서 실행하려고 고른 테스트 id
+let runConfirm = null;     // 대상 탭이 다른 도메인일 때 실행 확인을 기다리는 요청 { ids, only, actual }
 let scopeOpen = false; // 범위 설명을 펼친 상태(다시 그려도 유지)
 const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span>');
 
@@ -324,6 +326,7 @@ function renderSuiteSheet(body) {
       <span class="st-name">${esc(name)}</span>${badge ? `<span class="st-badge ${tone}">${esc(badge)}</span>` : ''}</button>`).join('')}</div>
     ${suiteTab === 'coverage' ? coverageView() : suiteTab === 'flow' ? flowView() : suiteTab === 'bdd' ? bddView() : suiteTab === 'tdd' ? tddView() : codeView()}
     <div class="suite-actions">
+    ${runConfirmView()}
     ${suiteConflict ? `<div class="pf-alert suite-conflict">서버에 이 테스트 묶음의 v${suiteConflict.version}이 이미 있습니다(지금 초안의 기준: v${suiteBase || '없음'}).
       <span class="grow"></span>
       <button type="button" class="btn sm" data-suite="take-server">서버 v${suiteConflict.version} 불러오기</button>
@@ -400,26 +403,68 @@ function codeView() {
   const ref = `<details class="case-d"><summary>녹화 기반 참고 코드(수행 전체)</summary><pre class="cs-pre mono">${esc(suite.spec || '(없음)')}</pre></details>`;
   if (!c?.source) return `<div class="none">아직 코드가 없습니다. 반영한 뒤 <b>코드 생성</b>을 누르면 채택한 테스트만 코드로 만들고 로컬에서 돌려 봅니다.</div>${ref}`;
   const icon = { passed: ['ok', '통과'], failed: ['err', '실패'], skipped: ['', '보류'], notrun: ['', '미실행'] };
+  const pickable = !c.running && !aiBusy;
   const row = (r) => `<div class="case run-row">
-    <div class="case-h"><span class="tag ${icon[r.status][0]}">${icon[r.status][1]}</span><b class="case-title">${esc(r.title)}</b>
+    <div class="case-h">${pickable && r.id ? `<input type="checkbox" data-pick="${esc(r.id)}" ${runPick.has(r.id) ? 'checked' : ''} title="골라서 실행">` : ''}<span class="tag ${icon[r.status][0]}">${icon[r.status][1]}</span><b class="case-title">${esc(r.title)}</b>
       <span class="grow"></span>${(r.tags || []).map((t) => `<span class="tchip mini">${esc(t)}</span>`).join('')}<span class="pf-hint">${r.ms ? `${(r.ms / 1000).toFixed(1)}초` : ''}</span></div>
     ${r.steps ? `<div class="gwt run-steps">${r.steps.map((x) => `<div class="${x.status}"><span class="kw">${esc(x.title.split(' ')[0])}</span>${esc(x.title.slice(x.title.indexOf(' ') + 1))}</div>`).join('')}</div>` : ''}
     ${r.error ? `<pre class="cs-pre mono run-err">${esc(r.error)}</pre>` : ''}</div>`;
   // BDD 시나리오 테스트와 TDD 케이스 테스트를 나눠 보여 준다
   // 작성된 테스트 목록을 기준으로, 실행 결과가 있으면 붙인다(없으면 미실행)
   const part = (kind, label) => {
-    const xs = codeTests().filter((t) => (t.kind || 'tdd') === kind).map((t) => ({ ...t, ...(testFor(t.title, c.results) || { status: 'notrun' }) }));
+    const xs = codeTests().filter((t) => (t.kind || 'tdd') === kind).map((t) => ({ ...t, id: t.title.split(' ')[0], ...(testFor(t.title, c.results) || { status: 'notrun' }) }));
     if (!xs.length) return '';
     const ran = xs.filter((r) => r.status !== 'notrun');
     return `<div class="run-part"><b>${label}</b> <span class="pf-hint">작성 ${xs.length}${ran.length ? ` · 통과 ${ran.filter((r) => r.status === 'passed').length}/${ran.length}` : ' · 미실행'}</span></div>${xs.map(row).join('')}`;
   };
   const mis = c.tag_mismatch?.length ? `<div class="pf-alert">코드의 태그가 목록과 다른 테스트 ${c.tag_mismatch.length}개: ${c.tag_mismatch.map((x) => `${esc(x.id)}(목록 ${esc(x.want)} / 코드 ${esc(x.got)})`).join(', ')}</div>` : '';
-  const rows = mis + part('bdd', 'BDD 시나리오') + part('tdd', 'TDD 케이스');
+  const rows = mis + (pickable ? pickBar() : '') + part('bdd', 'BDD 시나리오') + part('tdd', 'TDD 케이스');
   const why = c.running ? '' : needRun() ? ' · <b class="next-step">실행 결과 없음 · 테스트 실행 필요</b>' : tagsOnly() ? ' · <b class="next-step">태그만 바뀜 · 태그만 코드에 반영</b>' : c.key !== adoptedKey() ? ' · <b class="next-step">채택이 바뀌어 다시 생성해야 합니다</b>' : '';
   return `<div class="pf-hint" style="margin:0 0 6px">${esc(c.file)}${why}
       <br>실행 환경이 채울 값: <span class="mono">${(c.env || []).map(esc).join(', ')}</span></div>
     ${c.running ? progressView(c.progress, row) : rows || (c.error ? `<pre class="cs-pre mono run-err">${esc(c.error)}</pre>` : '')}
     <details class="case-d" open><summary>코드</summary><pre class="cs-pre mono">${esc(c.source)}</pre></details>${ref}`;
+}
+
+// 골라서 실행: 작성된 테스트 중 일부만 돌리고 지난 결과에 합친다(AI 없음)
+const codeIds = () => [...new Set(codeTests().map((t) => t.title.split(' ')[0]))];
+function pickBar() {
+  const all = codeIds();
+  if (!all.length) return '';
+  for (const id of [...runPick]) if (!all.includes(id)) runPick.delete(id);
+  const n = runPick.size;
+  return `<div class="pick-bar"><label><input type="checkbox" data-pick-all ${n && n === all.length ? 'checked' : ''}> 전체 선택</label>
+    <span class="pf-hint">${n ? `${n}개 고름` : '실행할 테스트를 고르세요'}</span><span class="grow"></span>
+    <button type="button" class="${n ? 'primary' : 'btn'} sm" data-suite="run-picked" ${n && ws?.readyState === 1 ? '' : 'disabled'} title="고른 테스트만 로컬에서 실행하고 결과를 지난 결과에 합칩니다(AI 없음)">고른 테스트 실행${n ? ` (${n})` : ''}</button></div>`;
+}
+
+// 테스트는 프로필 대상 주소로 별도 브라우저 창에서 돈다. 지금 탭이 다른 도메인이면 헷갈리지 않게 한 번 묻는다
+async function tabMismatch() {
+  const d = activeDomain();
+  if (!d || d === 'default') return null;
+  try { const h = new URL((await activeTab()).url).hostname; return h && h !== d ? h : null; } catch { return null; }
+}
+async function requestRun(ids, only) {
+  const actual = await tabMismatch();
+  if (actual) { runConfirm = { ids, only, actual }; return renderSheet(); }
+  sendRun(ids, only);
+}
+function sendRun(ids, only) {
+  runConfirm = null;
+  if (ws?.readyState !== 1 || aiBusy) return renderSheet();
+  const scenarios = suite.scenarios.filter((c) => c.use).map(({ use, ...c }) => c);
+  const cases = suite.cases.filter((c) => c.use).map(({ use, ...c }) => c);
+  ws.send(JSON.stringify({ type: 'run_code', suite: { id: suite.id, scenarios, cases }, ids, only }));
+  suiteTab = 'code';
+  renderSheet();
+}
+function runConfirmView() {
+  if (!runConfirm) return '';
+  const base = profiles[activeId]?.data?.target?.base_url || activeDomain();
+  return `<div class="pf-alert suite-conflict"><span>지금 탭은 <b>${esc(runConfirm.actual)}</b> 입니다. 테스트는 이 탭이 아니라 프로필 대상 주소(${esc(base)})로 새 브라우저 창에서 실행합니다. 그래도 실행할까요?</span>
+    <span class="grow"></span>
+    <button type="button" class="btn sm" data-suite="run-cancel">취소</button>
+    <button type="button" class="primary sm" data-suite="run-confirm">그래도 실행</button></div>`;
 }
 
 function progressView(p, row) {
@@ -577,6 +622,12 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     setTimeout(() => card?.classList.remove('flash'), 1200);
     return;
   }
+  const pick = e.target.dataset.pick;
+  if (pick) { e.target.checked ? runPick.add(pick) : runPick.delete(pick); return renderSheet(); }
+  if (e.target.matches('[data-pick-all]')) {
+    if (e.target.checked) codeIds().forEach((id) => runPick.add(id)); else runPick.clear();
+    return renderSheet();
+  }
   const filter = e.target.closest('[data-filter]')?.dataset.filter;
   if (filter) { suiteFilter = filter; return renderSheet(); }
   const tab = e.target.closest('[data-stab]')?.dataset.stab;
@@ -621,13 +672,10 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     closeSheet();
     return;
   }
-  if (act === 'run' && needRun() && ws?.readyState === 1 && !aiBusy) {
-    const scenarios = suite.scenarios.filter((c) => c.use).map(({ use, ...c }) => c);
-    const cases = suite.cases.filter((c) => c.use).map(({ use, ...c }) => c);
-    ws.send(JSON.stringify({ type: 'run_code', suite: { id: suite.id, scenarios, cases }, ids: notRun() }));
-    suiteTab = 'code';
-    return renderSheet();
-  }
+  if (act === 'run' && needRun() && ws?.readyState === 1 && !aiBusy) return requestRun(notRun(), false);
+  if (act === 'run-picked' && runPick.size && ws?.readyState === 1 && !aiBusy && !suite.code?.running) return requestRun([...runPick], true);
+  if (act === 'run-confirm' && runConfirm) return sendRun(runConfirm.ids, runConfirm.only);
+  if (act === 'run-cancel') { runConfirm = null; return renderSheet(); }
   if (act === 'retag' && tagsOnly() && ws?.readyState === 1) {
     const scenarios = suite.scenarios.filter((c) => c.use).map(({ use, ...c }) => c);
     const cases = suite.cases.filter((c) => c.use).map(({ use, ...c }) => c);
