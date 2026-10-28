@@ -92,18 +92,39 @@ let addOpen = false; // 테스트 추가 입력란을 연 상태
 let scopeOpen = false; // 범위 설명을 펼친 상태(다시 그려도 유지)
 const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span>');
 
-// 초안은 바뀔 때마다 확장 저장소에 저장한다(패널을 닫거나 확장을 다시 올려도 다시 만들 필요 없게)
+// 초안은 바뀔 때마다 확장 저장소에 도메인별로 저장한다(suite@<도메인>). 패널을 닫거나 확장을 다시 올려도 다시 만들 필요 없게
+const suiteKey = (d) => `suite@${d}`;
 function saveSuite() {
-  chrome.storage.local.set({ suiteDraft: suite ? { suite, suiteBase, suiteApplied } : null }).catch(() => {});
+  if (!viewDomain) return;
+  chrome.storage.local.set({ [suiteKey(viewDomain)]: suite ? { suite, suiteBase, suiteApplied } : null }).catch(() => {});
 }
-(async () => {
-  const { suiteDraft } = await chrome.storage.local.get('suiteDraft').catch(() => ({}));
-  if (suiteDraft?.suite) ({ suite, suiteBase, suiteApplied } = suiteDraft);
+// 초안이 어느 도메인 것인지: 초안의 프로필 → 그 프로필의 대상 주소
+const suiteDomain = (x) => (x?.profile && profiles?.[x.profile] ? domainOf(profiles[x.profile].data) : null);
+// 도메인을 바꿀 때 지금 테스트 목록을 화면에서 내린다(저장된 것은 그대로)
+function resetSuiteView() {
+  suite = null; suiteBase = 0; suiteApplied = false;
+  if (sheetMode === 'suite') closeSheet();
+  if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
+}
+async function restoreSuite(d) {
+  const key = suiteKey(d);
+  const got = await chrome.storage.local.get([key, 'suiteDraft']).catch(() => ({}));
+  let saved = got[key];
+  // 도메인 구분 전의 초안은 그 초안 프로필의 도메인으로 옮긴다
+  const legacy = got.suiteDraft;
+  if (legacy?.suite) {
+    const ld = suiteDomain(legacy.suite) || d;
+    await chrome.storage.local.set({ [suiteKey(ld)]: legacy }).catch(() => {});
+    if (ld === d && !saved) saved = legacy;
+  }
+  if (legacy !== undefined) chrome.storage.local.remove('suiteDraft').catch(() => {});
+  if (saved?.suite) ({ suite, suiteBase, suiteApplied } = saved);
   else {
-    // 확장 저장소가 비었으면 호스트가 남긴 최근 초안 사본을 불러온다
+    // 확장 저장소가 비었으면 호스트가 남긴 최근 초안 사본(지금 도메인)을 불러온다
     try {
-      const d = await (await fetch('http://127.0.0.1:8765/drafts/latest')).json();
-      if (d) { const { base_version, ...rest } = d; suite = rest; suiteBase = base_version ?? 0; suiteApplied = false; saveSuite(); }
+      const r = await fetch('http://127.0.0.1:8765/drafts/latest');
+      const x = r.ok ? await r.json() : null;
+      if (x && (suiteDomain(x) || d) === d) { const { base_version, ...rest } = x; suite = rest; suiteBase = base_version ?? 0; suiteApplied = false; saveSuite(); }
     } catch {}
   }
   // 태그 문서가 없으면(이전 초안) 서버에서 받는다
@@ -114,8 +135,9 @@ function saveSuite() {
       if (r.ok) { suite.tag_doc = await r.json(); saveSuite(); }
     } catch {}
   }
+  if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
   if (suite) $('suite-hint').textContent = `저장된 테스트 초안: ${suite.name} · 테스트 목록에서 이어서 고를 수 있습니다`;
-})();
+}
 
 const PRIO = { high: '높음', medium: '중간', low: '낮음' };
 const prioTag = (p) => `<span class="prio ${p}">${PRIO[p] || p}</span>`;

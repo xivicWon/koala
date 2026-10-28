@@ -62,7 +62,6 @@ function checkClaude() {
 }
 checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
-const REC = `${dir}recording.json`;
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order']);
 const TOOLS = ['run', 'snapshot', 'screenshot', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
   'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code'];
@@ -131,7 +130,7 @@ function profileContext() {
     return `- ${r.key} ${r.label}${r.key === def ? ' (기본)' : ''}: ${r.desc || ''}${a ? ` · 계정 $${a.key}_USER / $${a.key}_PASS${secretValue(`${a.key}_USER`) ? '' : ' (값 미입력: 이 역할로는 로그인할 수 없다)'}` : ' · 계정 없음'}`;
   }).join('\n');
   const accs = (profile.accounts || []).filter((a) => !a.role).map((a) => `- ${a.label || a.key}: $${a.key}_USER / $${a.key}_PASS${a.user ? '' : ' (값 미입력)'}`).join('\n');
-  return `\n\n[대상 서비스: ${profile.name} · 프로필 v${profile.version}]\n주소: ${profile.target?.base_url ?? '-'}\n`
+  return `\n\n[대상 서비스: ${profile.name} · 프로필 v${profile.version}]\n주소: ${profile.target?.base_url ?? '-'}${profile.target?.start_url ? ` · 테스트 시작 URL: ${profile.target.start_url}` : ''}\n`
     + `${roles ? `역할과 계정(값은 이름으로만 넘긴다):\n${roles}\n` : ''}${accs ? `계정(값은 이름으로만 넘긴다):\n${accs}\n` : ''}`
     + `${profile.prompt ? `사이트 지식:\n${profile.prompt}` : ''}`;
 }
@@ -185,22 +184,69 @@ const pending = new Map();
 
 const send = (m) => panel?.readyState === 1 && panel.send(JSON.stringify(m));
 const log = (kind, text) => { send({ type: 'log', kind, text }); console.log(`[${kind}] ${text}`); };
+// ── 도메인별 작업 데이터 ──
+// 수행 기록·Claude 세션·현재 화면·보관본·테스트 초안을 대상 도메인(프로필 대상 주소의 호스트 이름)마다 따로 둔다.
+//   .koa/state.json                 — 전체: 지금 도메인, 세션 이름 번호(kaa-N)
+//   .koa/domains/<호스트>/state.json — 그 도메인의 대화 id·세션 이름·수행 기록·현재 화면·로그인 역할
+//   .koa/domains/<호스트>/recording.json, recordings/, drafts/
+// 어느 도메인인지는 사이드패널이 정해 보낸다(프로필 대상 주소를 고치는 도중에는 바뀌지 않게)
 const STATE = `${dir}.koa/state.json`;
+let domain = 'default';
+const safeDomain = (d) => String(d || 'default').toLowerCase().replace(/[^\w.-]/g, '_');
+const bucket = (d = domain) => path.join(dir, '.koa', 'domains', safeDomain(d));
+const recFile = () => path.join(bucket(), 'recording.json');
+const draftsDir = () => path.join(bucket(), 'drafts');
+// 프로필의 도메인: 대상 주소의 호스트 이름. 없으면 default
+function domainOf(p) {
+  try { return new URL(p?.target?.base_url).hostname || 'default'; } catch { return 'default'; }
+}
+const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
+
 // 호스트를 다시 띄워도 이어서 진행하도록 대화 id·수행 기록·현재 화면을 저장한다
 function saveState() {
   try {
-    fs.mkdirSync(`${dir}.koa`, { recursive: true });
-    fs.writeFileSync(STATE, JSON.stringify({ sessionId, sessionAlias, aliasSeq, steps, curScreen, lastStamp, actor, savedAt: new Date().toISOString() }, null, 2));
+    fs.mkdirSync(bucket(), { recursive: true });
+    fs.writeFileSync(path.join(bucket(), 'state.json'), JSON.stringify({ domain, sessionId, sessionAlias, steps, curScreen, lastStamp, actor, savedAt: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(STATE, JSON.stringify({ domain, aliasSeq, savedAt: new Date().toISOString() }, null, 2));
   } catch {}
 }
-const saveRec = () => { fs.writeFileSync(REC, JSON.stringify(steps, null, 2)); saveState(); };
+const saveRec = () => { fs.mkdirSync(bucket(), { recursive: true }); fs.writeFileSync(recFile(), JSON.stringify(steps, null, 2)); saveState(); };
 // 새 시나리오로 지우기 전에 직전 기록을 recordings/<시각>.json 으로 보관한다
 function archiveRec() {
   if (!steps.length) return;
-  fs.mkdirSync(`${dir}recordings`, { recursive: true });
-  const file = `${dir}recordings/${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const d = path.join(bucket(), 'recordings');
+  fs.mkdirSync(d, { recursive: true });
+  const file = path.join(d, `${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   fs.writeFileSync(file, JSON.stringify(steps, null, 2));
-  log('sys', `직전 기록 ${steps.length}단계를 보관했습니다: recordings/${file.split('/').pop()}`);
+  log('sys', `직전 기록 ${steps.length}단계를 보관했습니다: recordings/${path.basename(file)} (${domain})`);
+}
+// 도메인의 작업 데이터를 불러온다(없으면 빈 상태)
+function loadDomain(d) {
+  domain = d;
+  let st = {};
+  try { st = JSON.parse(fs.readFileSync(path.join(bucket(), 'state.json'), 'utf8')); } catch { /* 처음 */ }
+  sessionId = st.sessionId || null;
+  sessionAlias = st.sessionAlias || null;
+  steps = Array.isArray(st.steps) ? st.steps : [];
+  curScreen = st.curScreen || null;
+  lastStamp = st.lastStamp || null;
+  actor = st.actor || null;
+  return st;
+}
+// 다른 도메인의 프로필로 바뀌면 지금 데이터를 저장하고 그 도메인의 데이터로 바꾼다. 작업 중에는 바꾸지 않는다
+function switchDomain(d) {
+  if (!d || d === domain) return true;
+  if (job || codeRunning) { log('err', `AI 작업이나 테스트 실행 중에는 다른 도메인(${d})으로 바꿀 수 없습니다. 끝난 뒤 프로필을 다시 고르세요`); return false; }
+  saveState();
+  stopClaude();
+  const from = domain;
+  loadDomain(d);
+  saveState();
+  sendSession(); sendActor();
+  send({ type: 'domain', domain, steps: steps.length });
+  console.log(`[domain] ${from} → ${domain} · 대화 ${sessionId ? sessionId.slice(0, 8) : '없음'} · 기록 ${steps.length}단계`);
+  log('sys', `대상 도메인 ${domain}의 작업 데이터로 바꿨습니다 · 세션 ${sessionAlias || '없음'} · 수행 기록 ${steps.length}단계`);
+  return true;
 }
 
 // MCP 서버가 부르는 도구 호출 → 사이드패널로 넘기고 결과를 기다린다
@@ -557,7 +603,7 @@ function saveTests(args) {
   stepJob('save', `BDD ${args.scenarios.length} · TDD ${args.cases.length}`);
   let spec = '';
   try {
-    execFileSync(process.execPath, ['generate.mjs', 'koa-suite-draft'], { cwd: dir });
+    execFileSync(process.execPath, ['generate.mjs', 'koa-suite-draft', recFile()], { cwd: dir });
     spec = fs.readFileSync(`${dir}tests/koa-suite-draft.spec.ts`, 'utf8');
     fs.rmSync(`${dir}tests/koa-suite-draft.spec.ts`, { force: true });
   } catch (e) { spec = `// 코드 생성 실패: ${e.message}`; }
@@ -573,10 +619,10 @@ function saveTests(args) {
     spec, source: { steps: steps.length, created_at: new Date().toISOString() },
   };
   // 다시 만들지 않아도 되도록 초안 사본을 파일로 남긴다
-  fs.mkdirSync(`${dir}drafts`, { recursive: true });
+  fs.mkdirSync(draftsDir(), { recursive: true });
   const base = sync.get('suite', id)?.version ?? 0;
   // 기준 버전도 함께 남겨야 복원한 초안을 서버로 보낼 때 충돌로 오인하지 않는다
-  fs.writeFileSync(`${dir}drafts/${id}.json`, JSON.stringify({ ...draft, base_version: base }, null, 2));
+  fs.writeFileSync(path.join(draftsDir(), `${id}.json`), JSON.stringify({ ...draft, base_version: base }, null, 2));
   send({ type: 'suite_draft', suite: draft, base_version: base, tag_doc: doc });
   log('sys', `테스트 초안 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개 — 사용할 것을 골라 반영하세요`);
   return { ok: true, result: { id, scenarios: args.scenarios.length, cases: args.cases.length } };
@@ -684,7 +730,7 @@ function saveAdded(args) {
   const tagged = (c) => { const { tags: suggested = [], ...rest } = c; return { ...rest, tags: tags.assign(doc, rest, suggested), added: true, use: true }; };
   const add = { scenarios: args.scenarios.map((c) => tagged(withRole(c))), cases: args.cases.map(tagged), flow: args.flow || [] };
   // 초안 사본에도 덧붙여 둔다(패널 저장소가 비었을 때 복원용)
-  const f = `${dir}drafts/${addTarget.id}.json`;
+  const f = path.join(draftsDir(), `${addTarget.id}.json`);
   if (fs.existsSync(f)) {
     const d = JSON.parse(fs.readFileSync(f, 'utf8'));
     d.scenarios.push(...add.scenarios); d.cases.push(...add.cases); d.flow = [...(d.flow || []), ...add.flow];
@@ -1100,7 +1146,22 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null 
     endJob(false, 'Claude Code를 쓸 수 없습니다');
     return;
   }
+  // 새 수행 기록이면 프로필의 시작 URL에서 출발한다(생성 코드도 거기서 시작한다)
+  const startUrl = profile?.target?.start_url;
+  if (steps.length === 0 && startUrl) {
+    if (domain !== 'default' && hostOf(startUrl) !== domain) log('err', `시작 URL(${startUrl})이 프로필 도메인(${domain})과 달라 쓰지 않습니다`);
+    else { log('sys', `시작 URL로 이동합니다: ${startUrl}`); await relay('goto', { url: startUrl }); }
+  }
   const start = await relay('snapshot', {});
+  // 대상 탭이 프로필 도메인이 아니면 실행하지 않는다(다른 사이트를 조작하거나 다른 도메인의 기록에 섞이지 않게)
+  if (start.ok && domain !== 'default' && hostOf(start.result.url) && hostOf(start.result.url) !== domain) {
+    const go = startUrl && hostOf(startUrl) === domain ? startUrl : profile?.target?.base_url;
+    log('err', `대상 탭(${hostOf(start.result.url)})이 프로필 도메인(${domain})이 아니라 실행하지 않았습니다`);
+    send({ type: 'domain_mismatch', expected: domain, actual: hostOf(start.result.url), go });
+    endJob(false, '대상 탭이 프로필 도메인이 아닙니다');
+    send({ type: 'busy', busy: false });
+    return;
+  }
   if (start.ok) {
     curScreen = await enterScreen(start.result.url);
     segment = [];
@@ -1239,16 +1300,30 @@ function retryWarm(reason) {
 }
 
 // ---------- 저장된 상태 불러오기 ----------
+// 예전(도메인 구분 전) 데이터는 기록된 첫 주소의 도메인으로 옮긴다
+function migrateLegacy() {
+  if (fs.existsSync(path.join(dir, '.koa', 'domains'))) return;
+  let st = null;
+  try { st = JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return; }
+  if (!st || !('sessionId' in st || 'steps' in st)) return;
+  const first = (st.steps || []).find((x) => x.action === 'goto')?.url;
+  const d = hostOf(first) || 'default';
+  const b = bucket(d);
+  fs.mkdirSync(b, { recursive: true });
+  fs.writeFileSync(path.join(b, 'state.json'), JSON.stringify({ ...st, domain: d, aliasSeq: undefined }, null, 2));
+  for (const name of ['recording.json', 'recordings', 'drafts']) {
+    const from = path.join(dir, name);
+    if (fs.existsSync(from)) fs.renameSync(from, path.join(b, name));
+  }
+  fs.writeFileSync(STATE, JSON.stringify({ domain: d, aliasSeq: st.aliasSeq || 0, savedAt: new Date().toISOString() }, null, 2));
+  console.log(`[state] 예전 작업 데이터를 도메인 ${d}로 옮겼습니다`);
+}
+try { migrateLegacy(); } catch (e) { console.log('[state] 예전 데이터 옮기기 실패:', e.message); }
 try {
-  const st = JSON.parse(fs.readFileSync(STATE, 'utf8'));
-  sessionId = st.sessionId || null;
-  sessionAlias = st.sessionAlias || null;
-  aliasSeq = st.aliasSeq || 0;
-  steps = Array.isArray(st.steps) ? st.steps : [];
-  curScreen = st.curScreen || null;
-  lastStamp = st.lastStamp || null;
-  actor = st.actor || null;
-  console.log(`[state] 이어서 시작 · 대화 ${sessionId ? sessionId.slice(0, 8) : '없음'} · 기록 ${steps.length}단계 (${st.savedAt})`);
+  const g = JSON.parse(fs.readFileSync(STATE, 'utf8'));
+  aliasSeq = g.aliasSeq || 0;
+  const st = loadDomain(g.domain || 'default');
+  console.log(`[state] 이어서 시작 · 도메인 ${domain} · 대화 ${sessionId ? sessionId.slice(0, 8) : '없음'} · 기록 ${steps.length}단계 (${st.savedAt || '-'})`);
 } catch { /* 처음 실행 */ }
 
 // ── 접속 제한: 이 호스트는 사이드패널(확장)과 같은 PC의 koala 프로세스만 쓴다 ──
@@ -1298,10 +1373,10 @@ const server = http.createServer(async (req, res) => {
   // 가장 최근 테스트 초안(패널 저장소가 비었을 때 복원용)
   if (req.method === 'GET' && req.url === '/drafts/latest') {
     res.setHeader('content-type', 'application/json');
-    const d = `${dir}drafts`;
+    const d = draftsDir(); // 지금 도메인의 초안만
     const files = fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.json'))
-      .map((f) => ({ f, t: fs.statSync(`${d}/${f}`).mtimeMs })).sort((a, b) => b.t - a.t) : [];
-    return res.end(files.length ? fs.readFileSync(`${d}/${files[0].f}`, 'utf8') : 'null');
+      .map((f) => ({ f, t: fs.statSync(path.join(d, f)).mtimeMs })).sort((a, b) => b.t - a.t) : [];
+    return res.end(files.length ? fs.readFileSync(path.join(d, files[0].f), 'utf8') : 'null');
   }
   // 사이드패널의 계획 목록: 활성 프로필의 계획 문서들
   if (req.method === 'GET' && req.url === '/plans') {
@@ -1389,6 +1464,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'run_code') runCode(m.suite, m.ids);
     if (m.type === 'add_tests') addTests(m.request, m.suite);
     if (m.type === 'profile') {
+      if (!switchDomain(m.domain || domainOf(m.profile))) return;
       profile = m.profile;
       profileSeen = true;
       scheduleWarm(); // 패널을 열었거나 프로필이 바뀌었다. 같은 대화가 떠 있으면 그대로 둔다
@@ -1396,7 +1472,10 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       if (profile) console.log(`[profile] ${profile.id} v${profile.version} · 계정 ${(profile.accounts || []).map((a) => `${a.key}${a.role ? `·${a.role}` : ''}(${secretValue(`${a.key}_USER`) && secretValue(`${a.key}_PASS`) ? '값 있음' : '값 없음'})`).join(', ')}`);
     }
     if (m.type === 'instruct') {
-      if (m.profile) { profile = m.profile; profileSeen = true; }
+      if (m.profile) {
+        if (!switchDomain(m.domain || domainOf(m.profile))) return;
+        profile = m.profile; profileSeen = true;
+      }
       if (m.mode) mode = m.mode === 'plan' ? 'plan' : 'write';
       instruct(m.text, { roles: m.roles });
     }

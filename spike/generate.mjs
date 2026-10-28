@@ -1,10 +1,12 @@
 // 스파이크(버림용): recording.json → tests/<name>.spec.ts
-//   node generate.mjs <테스트 이름>
+//   node generate.mjs <테스트 이름> [기록 파일]
 import fs from 'node:fs';
+import nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const name = process.argv[2] || 'recorded';
-// 두 번째 인자로 기록 파일을 줄 수 있다(기본: 사이드패널의 현재 기록)
-const src = process.argv[3] ? new URL(process.argv[3], `file://${process.cwd()}/`) : new URL('./recording.json', import.meta.url);
+// 두 번째 인자로 기록 파일을 준다(호스트는 지금 도메인의 기록을 준다). 없으면 예전 위치
+const src = process.argv[3] ? nodePath.resolve(process.argv[3]) : fileURLToPath(new URL('./recording.json', import.meta.url));
 const steps = JSON.parse(fs.readFileSync(src));
 
 const q = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;

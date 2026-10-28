@@ -11,9 +11,44 @@ let roleScope = {};  // 프로필 id → 이번에 수행할 역할 key 목록
 let remoteVer = {};  // id → 저장소 최신 버전
 let syncError = '';
 
-// 호스트는 자동 실행(/instruct)에도 같은 프로필을 쓰도록 바뀔 때마다 받아 둔다
+// ── 도메인: 작업 데이터(수행 기록·세션·타임라인·테스트 목록)는 프로필 대상 주소의 호스트 이름별로 따로 둔다 ──
+// viewDomain 은 지금 불러온 도메인. 대상 주소를 고치는 도중에는 바뀌지 않고, 입력을 마치거나 프로필을 바꿀 때 바뀐다
+let viewDomain = null;
+const domainOf = (p) => { try { return new URL(p?.target?.base_url).hostname || 'default'; } catch { return 'default'; } };
+const activeDomain = () => domainOf(profiles[activeId]?.data);
+
+// 호스트는 자동 실행(/instruct)에도 같은 프로필을 쓰도록 바뀔 때마다 받아 둔다. 도메인을 정하기 전에는 보내지 않는다
 function sendProfileToHost() {
-  if (typeof ws !== 'undefined' && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'profile', profile: activeProfilePayload() }));
+  if (viewDomain && typeof ws !== 'undefined' && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'profile', profile: activeProfilePayload(), domain: viewDomain }));
+}
+
+// 지금 도메인의 타임라인과 테스트 목록을 불러온다
+async function restoreDomainData() {
+  viewDomain ??= activeDomain();
+  // 뒤에 오는 스크립트(suite.js)가 모두 실행된 뒤에 부른다
+  if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r, { once: true }));
+  await restoreTimeline(viewDomain);
+  await restoreSuite(viewDomain);
+  renderDomain();
+}
+// 프로필(대상 주소)이 다른 도메인이면 지금 화면을 저장하고 그 도메인의 데이터로 바꾼다
+async function changeDomainIfNeeded() {
+  const d = activeDomain();
+  if (viewDomain === null || d === viewDomain) return;
+  const from = viewDomain;
+  saveTimelineNow(from);
+  clearTimelineView();
+  resetSuiteView();
+  viewDomain = d;
+  sendProfileToHost(); // 호스트도 그 도메인의 수행 기록·세션으로 바꾼다
+  await restoreTimeline(d);
+  await restoreSuite(d);
+  renderDomain();
+  msg('sys', `대상 도메인 ${d}의 작업 데이터를 불러왔습니다 (${from}에서 바꿈)`);
+}
+function renderDomain() {
+  const el = document.querySelector('.url-row');
+  if (el) el.dataset.tip = `AI가 조작하고 지켜보는 탭(대상 탭)의 지금 주소입니다.\n작업 데이터 도메인: ${viewDomain || '-'} (프로필 대상 주소 기준). 대상 탭이 이 도메인이 아니면 실행하지 않습니다.`;
 }
 const saveProfiles = () => {
   sendProfileToHost();
@@ -114,6 +149,7 @@ async function syncProfiles() {
   renderProfileChip();
   renderRoleScope();
   if (sheetMode === 'profile') renderSheet();
+  if (!aiBusy) await changeDomainIfNeeded(); // 받은 새 버전의 대상 주소가 바뀌었거나 활성 프로필이 바뀌었을 수 있다
 }
 
 async function pullProfile(id, { quiet } = {}) {
@@ -212,8 +248,11 @@ function renderProfileSheet(body) {
       <button type="button" class="btn sm" data-pf="take-remote">저장소 버전 받기 (내 수정 버림)</button></div>` : ''}
     ${syncError ? `<div class="pf-alert">${syncError}</div>` : ''}
 
-    <label class="pf-label">대상 주소</label>
+    <label class="pf-label">대상 주소 <span class="pf-hint">작업 데이터는 이 주소의 도메인(${esc(domainOf(d))})별로 저장됩니다</span></label>
     <input class="pf-input mono" data-field="target.base_url" value="${esc(d.target?.base_url ?? '')}">
+    <label class="pf-label">시작 URL <span class="pf-hint">새 수행 기록은 이 주소에서 출발하고, 생성 코드도 여기서 시작합니다. 비우면 지금 탭 주소</span></label>
+    <input class="pf-input mono" data-field="target.start_url" placeholder="${esc((d.target?.base_url || 'http://example.com').replace(/\/$/, '') + (d.target?.login_path || '/'))}" value="${esc(d.target?.start_url ?? '')}">
+    ${startUrlWarning(d)}
 
     <label class="pf-label">역할과 계정 <span class="pf-hint">${rs.doc_id ? `서버 역할 문서 ${esc(rs.doc_id)} v${rs.version ?? '?'}` : ''} · 바꾼 계정은 이 확장에만 저장됩니다</span></label>
     ${rs.roles.length ? '' : '<div class="pf-hint">역할 정보가 없습니다. 동기화하세요</div>'}
@@ -235,6 +274,15 @@ function renderProfileSheet(body) {
     <textarea class="pf-input pf-prompt mono" data-field="prompt" rows="12">${esc(d.prompt ?? '')}</textarea>
     <div class="pf-hint">저장소 v${remoteVer[activeId] ?? '?'} · 받은 시각 ${p.syncedAt ? new Date(p.syncedAt).toLocaleString() : '-'} · 보관된 이전 버전 ${p.history?.length || 0}개</div>
   </div>`;
+}
+
+// 시작 URL은 대상 주소와 같은 도메인이어야 한다(다른 도메인이면 쓰지 않는다)
+function startUrlWarning(d) {
+  const u = d.target?.start_url;
+  if (!u) return '';
+  let h = '';
+  try { h = new URL(u).hostname; } catch { return '<div class="pf-alert">시작 URL 형식이 올바르지 않습니다(http:// 또는 https://로 시작)</div>'; }
+  return h === domainOf(d) ? '' : `<div class="pf-alert">시작 URL의 도메인(${esc(h)})이 대상 주소 도메인(${esc(domainOf(d))})과 달라 쓰지 않습니다</div>`;
 }
 
 // 시트 안의 입력·버튼 처리
@@ -269,9 +317,21 @@ document.getElementById('sheet-body').addEventListener('input', (e) => {
 });
 document.getElementById('sheet-body').addEventListener('change', (e) => {
   if (sheetMode === 'profile' && e.target.dataset.pf === 'select') {
+    // 작업 중에 다른 도메인으로 바꾸면 기록이 섞이므로 막는다
+    if (aiBusy && domainOf(profiles[e.target.value]?.data) !== viewDomain) {
+      e.target.value = activeId;
+      return msg('err', 'AI 작업 중에는 다른 도메인의 프로필로 바꿀 수 없습니다. 끝난 뒤 바꾸세요');
+    }
     activeId = e.target.value;
     saveProfiles();
     renderProfileChip();
+    renderSheet();
+    changeDomainIfNeeded();
+  }
+  // 대상 주소·시작 URL 입력을 마치면(포커스가 빠지면) 도메인을 다시 보고 경고를 갱신한다
+  if (sheetMode === 'profile' && /^target\.(base_url|start_url)$/.test(e.target.dataset.field || '')) {
+    if (aiBusy && activeDomain() !== viewDomain) msg('err', 'AI 작업이 끝나면 새 대상 주소의 도메인으로 바뀝니다. 끝난 뒤 다시 입력을 마치세요');
+    else changeDomainIfNeeded();
     renderSheet();
   }
 });
@@ -289,7 +349,9 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (act === 'acc-reset') { delete localAcc[activeId]?.[e.target.closest('[data-acc-key]').dataset.accKey]; await saveProfiles(); }
   renderProfileChip();
   renderSheet();
+  if (!aiBusy) changeDomainIfNeeded(); // 동기화·이전 버전·저장소 버전 받기로 대상 주소가 바뀌었을 수 있다
 });
 document.getElementById('profile-chip').onclick = () => openSheet('profile');
 
-loadProfiles().then(syncProfiles);
+// 처음: 프로필 → 그 도메인의 타임라인·테스트 목록 → 호스트 연결(연결되면 동기화)
+loadProfiles().then(restoreDomainData).finally(connect);

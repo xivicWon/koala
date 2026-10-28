@@ -13,6 +13,7 @@ claude:
 target:
   base_url: http://localhost:3000
   login_path: /login
+  start_url: http://localhost:3000/login   # 테스트 시작 URL. 새 수행 기록은 여기서 출발한다(대상 주소와 같은 도메인만)
   env: local
 roles: example-roles       # 서버가 내려주는 역할 문서(역할·기본 계정)
 prompt: |

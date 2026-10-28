@@ -73,6 +73,7 @@ function connect() {
     if (m.type === 'claude_run') renderClaudeRun(m.model, m.effort);
     if (m.type === 'claude_conn') { claudeConn = m; updateAiDot(); }
     if (m.type === 'claude_usage') onClaudeUsage(m);
+    if (m.type === 'domain_mismatch') onDomainMismatch(m);
     if (m.type === 'session') renderSession(m.alias);
     if (m.type === 'actor') renderActor(m.actor);
     if (m.type === 'suite_draft') onSuiteDraft(m.suite, m.base_version, m.tag_doc);
@@ -107,7 +108,7 @@ $('f').onsubmit = (e) => {
   msg('me', text);
   const roles = profileRoles().length > 1 ? scopeRoles() : undefined;
   if (roles?.length > 1) msg('sys', `역할 ${roles.map(roleLabel).join(' · ')}(으)로 차례로 수행합니다`);
-  ws.send(JSON.stringify({ type: 'instruct', text, roles, profile: activeProfilePayload() }));
+  ws.send(JSON.stringify({ type: 'instruct', text, roles, profile: activeProfilePayload(), domain: viewDomain }));
   $('q').value = '';
 };
 $('q').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('f').requestSubmit(); };
@@ -118,19 +119,34 @@ $('timeline').addEventListener('click', (e) => {
   if (e.target.closest('.open-suite')) return openSheet('suite');
   if (e.target.closest('.step .h')) step.classList.toggle('open');
 });
+// 타임라인은 도메인별로 저장한다(timeline@<도메인>). 도메인은 profile.js 의 viewDomain
+const timelineKey = (d) => `timeline@${d}`;
 let saveTimer;
-function saveTimeline() {
+let restoringTimeline = false; // 도메인을 바꾸며 화면을 비우고 채우는 동안에는 저장하지 않는다
+function saveTimelineNow(d = viewDomain) {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const reqs = [...requests.values()].slice(-300).map((r) => ({ ...r, body: r.body?.slice(0, 20000) }));
-    chrome.storage.local.set({ timelineState: { html: $('timeline').innerHTML, stepNo, reqs, consoles: consoles.slice(-200), netErr, conErr } }).catch(() => {});
-  }, 800);
+  if (!d || restoringTimeline) return;
+  const reqs = [...requests.values()].slice(-300).map((r) => ({ ...r, body: r.body?.slice(0, 20000) }));
+  chrome.storage.local.set({ [timelineKey(d)]: { html: $('timeline').innerHTML, stepNo, reqs, consoles: consoles.slice(-200), netErr, conErr } }).catch(() => {});
+}
+function saveTimeline() {
+  if (restoringTimeline) return;
+  clearTimeout(saveTimer);
+  const d = viewDomain; // 0.8초 뒤 도메인이 바뀌어 있어도 지금 도메인에 저장한다
+  saveTimer = setTimeout(() => saveTimelineNow(d), 800);
 }
 new MutationObserver(saveTimeline).observe($('timeline'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-async function restoreTimeline() {
-  const { timelineState: st } = await chrome.storage.local.get('timelineState').catch(() => ({}));
+async function restoreTimeline(d) {
+  const key = timelineKey(d);
+  let { [key]: st, timelineState: legacy } = await chrome.storage.local.get([key, 'timelineState']).catch(() => ({}));
+  // 도메인 구분 전의 타임라인은 처음 불러오는 도메인으로 옮긴다
+  if (!st && legacy) { st = legacy; await chrome.storage.local.set({ [key]: st }).catch(() => {}); }
+  if (legacy) chrome.storage.local.remove('timelineState').catch(() => {});
   if (!st?.html) return;
+  restoringTimeline = true;
+  const empty = $('empty');
   $('timeline').innerHTML = st.html;
+  if (!$('empty')) $('timeline').prepend(empty); // 저장본에 빈 화면 안내가 없어도 다시 둔다
   $('empty').hidden = !!$('timeline').querySelector('.step, .me, .ai');
   stepNo = st.stepNo || 0;
   for (const el of $('timeline').querySelectorAll('.step[data-n]')) {
@@ -142,14 +158,22 @@ async function restoreTimeline() {
   consoles.push(...(st.consoles || []));
   netErr = st.netErr || 0; conErr = st.conErr || 0;
   renderCounts();
-  msg('sys', '이전 기록을 불러왔습니다. 이어서 지시하면 같은 대화로 진행합니다');
+  await new Promise((r) => setTimeout(r)); // 위 변경으로 생긴 저장 예약을 건너뛴다
+  restoringTimeline = false;
+  msg('sys', `이전 기록을 불러왔습니다(${d}). 이어서 지시하면 같은 대화로 진행합니다`);
 }
 
-function clearView() {
+// 화면만 비운다(저장된 타임라인은 그대로). 도메인을 바꿀 때 쓴다
+function clearTimelineView() {
+  restoringTimeline = true;
   [...$('timeline').children].forEach((c) => c.id !== 'empty' && c.remove());
   $('empty').hidden = false;
   requests.clear(); consoles.length = 0; stepEls.clear(); netErr = 0; conErr = 0; stepNo = 0; queue = []; renderCounts();
-  chrome.storage.local.remove('timelineState').catch(() => {});
+  setTimeout(() => { restoringTimeline = false; });
+}
+function clearView() {
+  clearTimelineView();
+  if (viewDomain) chrome.storage.local.remove(timelineKey(viewDomain)).catch(() => {});
 }
 function resetScenario() { clearView(); closeSheet(); ws.send(JSON.stringify({ type: 'reset' })); }
 $('pause').onclick = () => {
@@ -1310,7 +1334,21 @@ async function waitTabComplete(max = 15000) {
 }
 
 $('ver').textContent = `v${chrome.runtime.getManifest().version}`;
-restoreTimeline().finally(connect);
+// 타임라인 복원과 호스트 연결은 프로필을 불러온 뒤 profile.js 가 한다(도메인을 알아야 하므로)
+
+// 대상 탭이 프로필 도메인이 아니어서 실행하지 않았을 때: 프로필 주소로 이동하는 버튼을 보여 준다
+function onDomainMismatch(m) {
+  const d = document.createElement('div');
+  d.className = 'err';
+  d.textContent = `대상 탭이 ${m.actual} 입니다. 이 프로필의 도메인(${m.expected})에서만 실행합니다. `;
+  if (m.go) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn sm'; b.textContent = `${m.go} 로 이동`;
+    b.onclick = async () => { b.disabled = true; try { await chrome.tabs.update(tabId ?? (await activeTab()).id, { url: m.go }); } catch (e) { msg('err', `이동하지 못했습니다: ${e.message}`); } };
+    d.appendChild(b);
+  }
+  append(d);
+}
 
 // koa가 마지막으로 로그인한 역할(헤더 밴드). 테스트 기록과 시나리오의 역할이 이것으로 정해진다
 function renderActor(a) {
