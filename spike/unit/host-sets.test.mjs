@@ -36,11 +36,11 @@ const putYaml = (root, rel, doc) => {
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 
 const hosts = [];
-async function startHost(data) {
+async function startHost(data, extraEnv = {}) {
   const port = await freePort();
   assert.notEqual(port, 8765);
   const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE,
-    KOALA_PG: 'postgres://koala:koala@127.0.0.1:9/koala' }; // 그래프 DB는 없는 것으로(사용자 DB에 쓰지 않게)
+    KOALA_PG: 'postgres://koala:koala@127.0.0.1:9/koala', ...extraEnv }; // 그래프 DB는 없는 것으로(사용자 DB에 쓰지 않게)
   delete env.CLAUDECODE;
   const p = spawn(process.execPath, ['host.mjs'], { cwd: spike, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
@@ -51,6 +51,19 @@ async function startHost(data) {
   assert.equal(p.exitCode, null, out);
   return { p, port, out: () => out, token: fs.readFileSync(path.join(data, 'host-token'), 'utf8').trim() };
 }
+
+async function stopHost(p) {
+  if (p.exitCode !== null) return;
+  p.kill('SIGTERM');
+  await until(() => p.exitCode !== null, '호스트 종료', 5000).catch(() => p.kill('SIGKILL'));
+}
+const stateOf = (root, id) => readJson(path.join(root, 'sets', id, 'work', 'state.json'));
+const logsOf = (root, id) => {
+  const d = path.join(root, 'sets', id, 'work', 'logs');
+  return fs.existsSync(d) ? fs.readdirSync(d).map((f) => fs.readFileSync(path.join(d, f), 'utf8')).join('') : '';
+};
+// 가짜 Claude 의 세션 id 는 fake-<세트>-… 다
+const notFromSet = (sid, id) => !sid || !sid.startsWith(`fake-${id}-`);
 
 // 가짜 패널: 받은 메시지를 모으고, 도구 호출에는 지금 탭 주소(url)로 답한다
 async function connectPanel(h) {
@@ -81,14 +94,15 @@ before(async () => {
   data = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-sets-'));
   putYaml(data, 'store/sets/a.yaml', siteSet('a'));
   putYaml(data, 'store/sets/b.yaml', siteSet('b'));
-  host = await startHost(data);
+  // 보강·생성 지시에는 가짜 Claude 가 답을 끝내지 않는다(작업이 진행 중인 채로 save_tests 를 부를 수 있게)
+  host = await startHost(data, { FAKE_CLAUDE_HOLD: '\\[예외·오류 보강\\]|\\[테스트 생성\\]' });
   pn = await connectPanel(host);
   await pn.waitFor((m) => m.type === 'sets', 0, '연결 시 sets');
 });
 
 after(async () => {
   pn?.ws.close();
-  for (const p of hosts) if (p.exitCode === null) { p.kill('SIGTERM'); await until(() => p.exitCode !== null, '호스트 종료', 5000).catch(() => p.kill('SIGKILL')); }
+  for (const p of hosts) await stopHost(p);
   if (data) fs.rmSync(data, { recursive: true, force: true });
 });
 
@@ -134,15 +148,14 @@ test('세트 a 에서 지시하면 세션·작업 로그가 a 에만 남는다',
   pn.send({ type: 'instruct', text: '로그인 화면 확인-통합시험', roles: [], set: 'a' });
   await pn.waitFor((m) => m.type === 'session' && m.alias, at, '세션 이름');
   pn.send({ type: 'stop' });
-  const a = await until(() => readJson(path.join(data, 'sets', 'a', 'work', 'state.json'))?.sessionAlias, 'a 의 sessionAlias');
+  const a = await until(() => stateOf(data, 'a')?.sessionAlias, 'a 의 sessionAlias');
   assert.match(a, /^kaa-\d+$/);
-  assert.ok(!readJson(path.join(data, 'sets', 'b', 'work', 'state.json'))?.sessionAlias);
-  const logs = (id) => {
-    const d = path.join(data, 'sets', id, 'work', 'logs');
-    return fs.existsSync(d) ? fs.readdirSync(d).map((f) => fs.readFileSync(path.join(d, f), 'utf8')).join('') : '';
-  };
-  await until(() => logs('a').includes('로그인 화면 확인-통합시험'), 'a 의 작업 로그');
-  assert.ok(!logs('b').includes('로그인 화면 확인-통합시험'));
+  const aSid = stateOf(data, 'a').sessionId;
+  assert.ok(aSid.startsWith('fake-a-'));
+  const bSid = stateOf(data, 'b')?.sessionId;
+  assert.ok(bSid !== aSid && notFromSet(bSid, 'a'));
+  await until(() => logsOf(data, 'a').includes('로그인 화면 확인-통합시험'), 'a 의 작업 로그');
+  assert.ok(!logsOf(data, 'b').includes('로그인 화면 확인-통합시험'));
   assert.ok(!fs.existsSync(path.join(data, 'domains')));
 });
 
@@ -154,6 +167,53 @@ test('탭이 다른 도메인이면 domain_mismatch(can_force)', async () => {
   assert.equal(m.can_force, true);
   assert.equal(m.expected, 'site-a.test');
   assert.equal(m.actual, 'other.test');
+});
+
+const callTool = (name, args) => fetch(`http://127.0.0.1:${host.port}/tool`, {
+  method: 'POST', headers: { 'content-type': 'application/json', 'x-koala-token': host.token }, body: JSON.stringify({ name, args }),
+}).then((r) => r.json());
+const sc = (id, title, extra = {}) => ({ id, title, given: ['g'], when: ['w'], then: ['t'], ...extra });
+const testsOf = (id) => readJson(path.join(data, 'sets', id, 'tests', 'tests.json'));
+async function holdJob(kind, msg) {
+  const at = pn.mark();
+  pn.send(msg);
+  await pn.waitFor((m) => m.type === 'job' && m.kind === kind && !m.done, at, `${kind} 작업 시작`);
+}
+async function stopJob() {
+  const at = pn.mark();
+  pn.send({ type: 'stop' });
+  await pn.waitFor((m) => m.type === 'job' && m.done, at, '작업 끝');
+}
+
+test('예외·오류 보강의 save_tests 는 같은 id를 고쳐 쓰고(채택·태그·이슈 유지), 생성은 새 번호로 더한다', async () => {
+  pn.url = 'http://site-a.test/';
+  pn.send({ type: 'tests_save', set: 'a', suite: { id: 'a', name: 'a',
+    scenarios: [sc('SC-1', '옛 제목', { use: false, tags: ['@mine'], issue: 'ISSUE-1' })],
+    cases: [{ id: 'TC-1', scenario: 'SC-1', title: '옛 케이스', use: false, tags: ['@mine'] }] } });
+
+  await holdJob('reinforce', { type: 'reinforce', summary: '요약' });
+  const r = await callTool('save_tests', { title: '보강', scope: '', flow: [], coverage: [],
+    scenarios: [sc('SC-1', '새 제목', { tags: ['@other'] }), sc('SC-2', '새 예외')], cases: [] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  await stopJob();
+  let t = testsOf('a');
+  assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1', 'SC-2']);
+  const s1 = t.scenarios[0];
+  assert.equal(s1.title, '새 제목');
+  assert.equal(s1.use, false);
+  assert.deepEqual(s1.tags, ['@mine']);
+  assert.equal(s1.issue, 'ISSUE-1');
+  assert.equal(t.scenarios[1].title, '새 예외');
+  assert.deepEqual(t.cases.map((c) => c.id), ['TC-1']);
+
+  await holdJob('derive', { type: 'derive' });
+  const d = await callTool('save_tests', { title: '생성', scope: '', flow: [], coverage: [], scenarios: [sc('SC-1', '다시 만든 것')], cases: [] });
+  assert.equal(d.ok, true, JSON.stringify(d));
+  await stopJob();
+  t = testsOf('a');
+  assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1', 'SC-2', 'SC-3']);
+  assert.equal(t.scenarios[0].title, '새 제목');
+  assert.equal(t.scenarios[2].title, '다시 만든 것');
 });
 
 test('저장소의 세트 버전이 오르면 GET /sets 에 바뀐 것이 보인다', async () => {
@@ -181,9 +241,39 @@ test('옮기지 않은 예전 데이터가 있으면 migration_needed 를 보내
       await sleep(200);
       assert.ok(!fs.existsSync(path.join(old, 'sets', 'a', 'set.json')));
       assert.ok(!p2.msgs.slice(at).some((m) => m.type === 'tests' || m.type === 'set_active'));
-    } finally { p2.ws.close(); h.p.kill('SIGTERM'); }
+    } finally { p2.ws.close(); await stopHost(h.p); }
   } finally {
-    await sleep(300);
     fs.rmSync(old, { recursive: true, force: true });
+  }
+});
+
+test('미리 연결 중에 세트를 바꾸면 끝낸 Claude 의 늦은 출력이 새 세트에 섞이지 않는다', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-switch-'));
+  try {
+    putYaml(root, 'store/sets/a.yaml', siteSet('a'));
+    putYaml(root, 'store/sets/b.yaml', siteSet('b'));
+    // a 의 가짜 Claude 만 답을 1.5초 늦게 내고 그동안 SIGTERM 을 무시한다. b 는 바로 답한다(0.6초 뒤 미리 연결):
+    // b 가 제 세션을 받은 뒤에 끝낸 a 의 init 이 도착한다
+    const h = await startHost(root, { FAKE_CLAUDE_INIT_DELAY_MS: '1500', FAKE_CLAUDE_DELAY_SET: 'a' });
+    const p3 = await connectPanel(h);
+    try {
+      let at = p3.mark();
+      p3.send({ type: 'set_receive', id: 'a' });
+      p3.send({ type: 'set_receive', id: 'b' });
+      await p3.waitFor((m) => m.type === 'sets' && receivedIds(m).includes('b'), at, '받기');
+      at = p3.mark();
+      p3.send({ type: 'set', id: 'a', prefs: {} });
+      await p3.waitFor((m) => m.type === 'claude_conn' && m.state === 'connecting', at, 'a 미리 연결 시작');
+      await sleep(400); // a 의 가짜 Claude 가 떠서 SIGTERM 을 무시하기 시작할 때까지
+      p3.send({ type: 'set', id: 'b', prefs: {} });
+      await until(() => stateOf(root, 'b')?.sessionId, 'b 의 세션');
+      await sleep(1500); // a 의 늦은 출력(1.5초)이 지나가게
+      const b = stateOf(root, 'b');
+      assert.ok(b.sessionId.startsWith('fake-b-'), `b 의 세션 id 가 a 의 것: ${b.sessionId}`);
+      assert.ok(!logsOf(root, 'b').includes('fake-a-') && !logsOf(root, 'b').includes('준비됨(a)'));
+      assert.ok(!stateOf(root, 'a')?.sessionId, 'a 는 연결 확인 전에 끝냈다');
+    } finally { p3.ws.close(); await stopHost(h.p); }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

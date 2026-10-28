@@ -482,17 +482,20 @@ function spawnClaude(extra, ws) {
   children.add(p);
   p.on('close', () => children.delete(p));
   let buf = '';
+  // 끝낸 프로세스(세트 전환·중지)가 늦게 내는 출력은 버린다. 받으면 다른 세트의 세션·로그에 섞인다
   p.stdout.on('data', (d) => {
+    if (p.stopped) return;
     buf += d;
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, i); buf = buf.slice(i + 1);
       if (!line.trim()) continue;
       let ev; try { ev = JSON.parse(line); } catch { continue; }
+      if (p.stopped) return;
       handleEvent(ev);
     }
   });
-  p.stderr.on('data', (d) => { p.lastErr = String(d); log('err', String(d).trim()); });
+  p.stderr.on('data', (d) => { if (p.stopped) return; p.lastErr = String(d); log('err', String(d).trim()); });
   p.on('exit', (code) => {
     if (proc === p) proc = null;
     if (!PERSIST) send({ type: 'busy', busy: false });
@@ -727,7 +730,22 @@ const withRole = (c) => {
 // 세트 작업이 가능한지: 옮기기 전이거나 세트를 고르지 않았으면 이유를 돌려준다
 const setBlocked = () => (needsMigration() ? MIGRATION_MSG : !activeSet ? '세트를 먼저 고르세요' : null);
 
-// 초안 저장(save_tests): 세트의 테스트 목록에 더한다. 새 id는 세트 안 최대 번호 다음부터 다시 매긴다(testlist.addTests)
+// 예외·오류 보강의 다시 저장: 세트에 이미 있는 id는 내용만 바꾸고 사용자가 정한 채택·태그·이슈는 그대로 둔다.
+// 없는 id는 세트 끝에 더한다(새 번호). 흐름·점검표는 보강한 초안 전체로 바꾼다
+function mergeById(cur, { scenarios, cases, flow, coverage }) {
+  const keep = (old, neu) => ({ ...neu, id: old.id, use: old.use, tags: old.tags ?? neu.tags, ...(old.issue !== undefined ? { issue: old.issue } : {}) });
+  const replace = (list, items) => list.map((c) => { const n = items.find((x) => x.id === c.id); return n ? keep(c, n) : c; });
+  const has = (list) => new Set(list.map((c) => c.id));
+  const sc = has(cur.scenarios || []), tc = has(cur.cases || []);
+  const base = {
+    ...cur, scenarios: replace(cur.scenarios || [], scenarios), cases: replace(cur.cases || [], cases),
+    flow: flow?.length ? flow : cur.flow, coverage: coverage?.length ? coverage : cur.coverage,
+  };
+  return testlist.addTests(base, { scenarios: scenarios.filter((c) => !sc.has(c.id)), cases: cases.filter((c) => !tc.has(c.id)) });
+}
+
+// 초안 저장(save_tests): 세트의 테스트 목록에 더한다. 새 id는 세트 안 최대 번호 다음부터 다시 매긴다(testlist.addTests).
+// 예외·오류 보강 중이면 같은 id는 고쳐 쓴다(mergeById)
 function saveTests(args) {
   stepJob('save', `BDD ${args.scenarios.length} · TDD ${args.cases.length}`);
   const why = setBlocked();
@@ -742,20 +760,22 @@ function saveTests(args) {
   const tagged = (c) => { const { tags: suggested = [], ...rest } = c; return { ...rest, tags: tags.assign(doc, rest, suggested) }; };
   let cur;
   try { cur = testlist.loadTests(activeSet); } catch (e) { log('err', e.message); return { ok: false, error: e.message }; }
-  const { suite, renamed } = testlist.addTests(cur, {
+  const draft = {
     scenarios: args.scenarios.map((c) => tagged(withRole(c))),
     cases: args.cases.map(tagged),
     flow: args.flow || [], coverage: args.coverage || [],
-  });
+  };
+  const reinforce = job?.kind === 'reinforce';
+  const { suite, renamed } = reinforce ? mergeById(cur, draft) : testlist.addTests(cur, draft);
   const next = {
     ...suite, id: activeSet, name: cur.scenarios.length || cur.cases.length ? suite.name : profile?.name || suite.name,
     profile: profile?.id, scope: suite.scope || args.scope,
     tag_source: doc ? `${doc.id}@v${doc.version}` : suite.tag_source,
     spec, source: { steps: steps.length, created_at: new Date().toISOString() },
   };
-  testlist.saveTests(activeSet, next);
+  try { testlist.saveTests(activeSet, next); } catch (e) { log('err', `테스트 목록을 저장하지 못했습니다: ${e.message}`); return { ok: false, error: e.message }; }
   send({ type: 'tests', set: activeSet, suite: next, added: Object.values(renamed), tag_doc: doc });
-  log('sys', `테스트 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개를 세트 ${activeSet}의 목록에 더했습니다 — 사용할 것을 골라 반영하세요`);
+  log('sys', `테스트 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개를 세트 ${activeSet}의 목록에 ${reinforce ? '반영했습니다(같은 id는 고쳐 씀)' : '더했습니다'} — 사용할 것을 골라 반영하세요`);
   return { ok: true, result: { set: activeSet, scenarios: args.scenarios.length, cases: args.cases.length, renamed } };
 }
 
@@ -805,18 +825,18 @@ const REINFORCE_PROMPT = `[예외·오류 보강] 아래 테스트 초안에서 
 - 서버 오류·응답 지연·네트워크 끊김: fault로 해당 요청에 오류를 주입하고 조작한다. 화면의 오류 안내, 버튼 재활성화, 목록 미반영을 검증한다. 끝나면 fault_clear.
 - 세션 만료·권한 없음: 실제로 만들 수 있으면 수행하고(예: fault로 401/403 주입), 불가능하면 이유를 적는다.
 - 각 결과는 expect_* 검증으로 남긴다.
-수행이 끝나면 save_tests로 초안 전체를 다시 저장한다. 기존 시나리오 id는 유지하고, 수행한 예외는 '[미수행]'을 떼고 근거를 채우며, coverage를 갱신한다.`;
+수행이 끝나면 save_tests로 초안 전체를 다시 저장한다. 기존 시나리오·케이스 id는 그대로 써야 그 항목이 고쳐진다(채택·태그·이슈는 사용자가 정한 대로 남는다). 새로 만든 것만 새 id로 적고, 수행한 예외는 '[미수행]'을 떼고 근거를 채우며, coverage를 갱신한다.`;
 
 function reinforceTests(summary) {
   instruct(`${REINFORCE_PROMPT}\n\n[현재 초안]\n${summary || '(요약 없음)'}`, { job: 'reinforce' });
 }
 
-// 세트가 받은 태그 문서(received/tags/). 이 PC 전용 세트처럼 받은 사본이 없으면 저장소에서 읽는다.
+// 세트가 받은 태그 문서(received/tags/)만 쓴다. 받는 것이 없는 이 PC 전용 세트만 저장소에서 읽는다.
 // 여럿이면 묶음(groups)을 이어 붙인 한 문서로 본다
 function tagDoc() {
   if (!activeSet) return null;
   const dirT = `${setPaths(activeSet).received}/tags`;
-  const docs = arr(profile?.tags).map((id) => readJsonFile(`${dirT}/${safeId(id)}.json`) || tags.load(id)).filter(Boolean);
+  const docs = arr(profile?.tags).map((id) => readJsonFile(`${dirT}/${safeId(id)}.json`) || (profile?.local ? tags.load(id) : null)).filter(Boolean);
   if (!docs.length) return null;
   const doc = docs.length === 1 ? docs[0]
     : { ...docs[0], id: docs.map((d) => d.id).join('+'), version: docs.map((d) => d.version).join('+'), groups: docs.flatMap((d) => d.groups || []) };
@@ -887,7 +907,7 @@ function saveAdded(args) {
   let cur;
   try { cur = testlist.loadTests(activeSet); } catch (e) { log('err', e.message); return { ok: false, error: e.message }; }
   const { suite, renamed } = testlist.addTests(cur, { scenarios: args.scenarios.map((c) => tagged(withRole(c))), cases: args.cases.map(tagged), flow: args.flow || [] });
-  testlist.saveTests(activeSet, suite);
+  try { testlist.saveTests(activeSet, suite); } catch (e) { log('err', `테스트 목록을 저장하지 못했습니다: ${e.message}`); return { ok: false, error: e.message }; }
   const added = Object.values(renamed);
   for (const id of added) addTarget.ids.add(id);
   send({ type: 'tests', set: activeSet, suite, added });
