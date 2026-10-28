@@ -105,6 +105,7 @@ let suiteSent = null;       // { seq, edits } 보냈지만 아직 받았다는 �
 let suiteSeq = 0;
 const hostWorking = () => (typeof jobNow !== 'undefined' && !!jobNow && !jobNow.done) || !!suite?.code?.running;
 function markEdit(id, ...fields) {
+  suiteSaveFailed = false; // 사용자가 다시 바꿨다: 다음 저장을 보낸다
   if (!suiteEdits.has(id)) suiteEdits.set(id, new Set());
   for (const f of fields) suiteEdits.get(id).add(f);
 }
@@ -123,7 +124,7 @@ function saveSuite() {
   suiteEdits = new Map();
   ws.send(JSON.stringify({ type: 'tests_save', set: viewSet, seq: suiteSent.seq, suite: payload }));
 }
-const flushSuite = () => { if (!hostWorking()) saveSuite(); };
+const flushSuite = () => { if (!hostWorking() && !suiteSaveFailed) saveSuite(); };
 function onTestsSaved(m) {
   if (m.set !== viewSet || suiteSent?.seq !== m.seq) return;
   suiteSent = null;
@@ -131,7 +132,7 @@ function onTestsSaved(m) {
 }
 // 세트를 바꿀 때 지금 테스트 목록을 화면에서 내린다(호스트가 새 세트 것을 보낸다)
 function resetSuiteView() {
-  suite = null; suiteBase = 0; suiteApplied = false; suiteConflict = null; suiteEdits = new Map(); suiteSent = null;
+  suite = null; suiteBase = 0; suiteApplied = false; suiteConflict = null; suiteEdits = new Map(); suiteSent = null; suiteSaveFailed = false;
   runPick.clear(); runConfirm = null; publishWip = false; addOpen = false;
   if (sheetMode === 'suite') renderSheet();
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
@@ -139,13 +140,21 @@ function resetSuiteView() {
 const hasTests = () => !!(suite && (suite.scenarios.length || suite.cases.length));
 
 // 호스트가 보낸 세트의 테스트 목록: 세트를 고를 때, AI가 테스트를 만들거나 더했을 때(added)
+let suiteSaveFailed = false; // 호스트가 저장 오류로 거절했다. 사용자가 다시 바꿀 때까지 저절로 다시 보내지 않는다
 function onTests(m) {
-  if (m.set !== viewSet || !m.suite) return;
+  if (m.set !== viewSet) return;
+  // 거절: 보낸 것을 다시 모아 둔다. 여기서는 다시 보내지 않는다(작업 중이면 job 끝·실행 끝·다시 연결 때, 오류면 사용자가 다시 바꿀 때)
+  if (m.refused) {
+    requeueSent();
+    if (m.refused !== 'busy' && !suiteSaveFailed) {
+      suiteSaveFailed = true;
+      msg('err', `테스트 목록 변경을 호스트에 저장하지 못했습니다${m.error ? ` (${m.error})` : ''}. 바꾼 것은 이 화면에 남겨 두었고, 다시 바꾸면 다시 보냅니다`);
+    }
+  }
+  if (!m.suite) { if (sheetMode === 'suite') renderSheet(); return; }
   const old = suite?.id === m.set ? suite : null;
   const { applied, base_version, ...next } = m.suite;
   for (const c of [...next.scenarios, ...next.cases]) if (c.use === undefined) c.use = c.adopted !== false;
-  // 호스트가 거절했으면 보낸 것을 다시 모아 둔다(작업이 끝나면 다시 보낸다)
-  if (m.refused) requeueSent();
   // 아직 호스트에 들어가지 않은, 내가 바꾼 필드만 새 목록에 다시 얹는다(다른 항목·필드는 호스트 것)
   const mineEdits = mergeEdits(new Map([...suiteEdits].map(([k, v]) => [k, new Set(v)])), suiteSent?.edits || new Map());
   if (old && mineEdits.size) {
@@ -180,7 +189,7 @@ function onTests(m) {
     append(card);
     openSheet('suite');
   } else if (sheetMode === 'suite') renderSheet();
-  flushSuite();
+  if (!m.refused) flushSuite();
 }
 
 const PRIO = { high: '높음', medium: '중간', low: '낮음' };

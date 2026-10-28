@@ -54,6 +54,8 @@ function connect() {
   ws.onopen = () => {
     hostUp = true; nativeState = null; renderEnvAlert();
     setSentOnOpen = false; // 호스트가 보내는 세트 목록(sets)을 받으면 지금 세트를 알린다
+    // 끊기기 전의 진행 중 작업은 끝난 것으로 본다. 호스트가 아직 하고 있으면 연결하자마자 job 을 다시 보낸다
+    if (jobNow && !jobNow.done) { jobNow = null; renderJob(); }
     clearStaleRun?.();
     renderSetChip();
   };

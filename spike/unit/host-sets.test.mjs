@@ -251,9 +251,27 @@ test('패널 tests_save: 보낸 필드만 받고 호스트의 기준 버전·코
   pn.send({ type: 'tests_save', set: 'a', seq: 2, suite: { applied: false, scenarios: [{ id: 'SC-1', use: true }], cases: [] } });
   await pn.waitFor((m) => m.type === 'log' && m.kind === 'err' && /작업.*테스트 목록/.test(m.text), at, '작업 중 거절 안내');
   const back = await pn.waitFor((m) => m.type === 'tests' && m.set === 'a' && m.refused, at, '거절 뒤 tests{refused}');
+  assert.equal(back.refused, 'busy');
   assert.equal(back.suite.scenarios[0].use, false);
   assert.ok(!pn.msgs.slice(at).some((m) => m.type === 'tests_saved'));
+
+  // 작업 중에 새로 연결한 패널은 진행 중인 작업 상태를 받는다
+  const p2 = await connectPanel(host);
+  const j = await p2.waitFor((m) => m.type === 'job', 0, '새 연결에 작업 상태');
+  assert.equal(j.kind, 'reinforce');
+  assert.ok(!j.done);
+  p2.ws.close();
+  await until(() => p2.ws.readyState === WebSocket.CLOSED, '두 번째 패널 닫힘');
+  await sleep(50);
   await stopJob();
+
+  // 받지 않은 세트에 저장하면 언제나 답한다(refused:'error')
+  at = pn.mark();
+  pn.send({ type: 'tests_save', set: 'no-such-set', seq: 3, suite: { scenarios: [{ id: 'SC-1', use: true }] } });
+  const err = await pn.waitFor((m) => m.type === 'tests' && m.set === 'no-such-set', at, '받지 않은 세트 저장의 답');
+  assert.equal(err.refused, 'error');
+  assert.match(err.error, /받지 않아/);
+  assert.equal(err.suite, undefined);
   t = testsOf('a');
   assert.equal(t.applied, true);
   assert.equal(t.scenarios[0].use, false);

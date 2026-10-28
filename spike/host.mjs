@@ -1678,6 +1678,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
   sendUsage(ws);
   sendActor();
   sendUpdate(ws);
+  sendJob(); // 진행 중인 작업이 있으면 새로 연결한 패널도 알게 한다(작업 중 저장·세트 바꾸기를 미루도록)
   checkUpdate(true); // 패널을 열 때마다 새로 확인한다
   if (needsMigration()) ws.send(JSON.stringify({ type: 'migration_needed' }));
   sendSets(ws);
@@ -1724,14 +1725,20 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'tests_save') {
       // 패널에서는 채택·태그·이슈·반영만 받는다. 기준 버전·코드·실행 결과·항목 내용은 호스트 것(applyPanelEdits)
       const sid = m.set || activeSet;
-      // 거절하면 지금 목록을 refused 로 다시 보낸다(패널은 바꾼 것을 남겨 두었다가 작업이 끝나면 다시 보낸다). 저장하면 tests_saved 로 알린다
-      if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 테스트 목록 변경을 저장하지 않습니다. 끝난 뒤 다시 저장합니다'); sendTests(sid, { refused: true }); }
-      else if (!readSet(sid)) log('err', `세트 ${sid}를 아직 받지 않아 테스트 목록을 저장하지 않았습니다`);
+      // 언제나 답한다: 저장하면 tests_saved, 아니면 tests{refused}. 작업 중이면 refused:'busy'(패널은 작업이 끝나면 다시 보낸다),
+      // 그 밖의 실패는 refused:'error'(패널은 바꾼 것을 남기고 다시 보내지 않는다). 목록을 읽을 수 있으면 함께 싣는다
+      const refuse = (kind, error) => {
+        let suite;
+        try { suite = readSet(sid) ? testlist.loadTests(sid) : undefined; } catch { /* 읽지 못하면 목록 없이 답한다 */ }
+        send({ type: 'tests', set: sid, refused: kind, error, ...(suite ? { suite, tag_doc: sid === activeSet ? tagDoc() : null } : {}) });
+      };
+      if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 테스트 목록 변경을 저장하지 않습니다. 끝난 뒤 다시 저장합니다'); refuse('busy'); }
+      else if (!readSet(sid)) { const error = `세트 ${sid}를 아직 받지 않아 테스트 목록을 저장하지 않았습니다`; log('err', error); refuse('error', error); }
       else {
         try {
           testlist.saveTests(sid, { ...testlist.applyPanelEdits(testlist.loadTests(sid), m.suite), id: safeId(sid) });
           send({ type: 'tests_saved', set: sid, seq: m.seq });
-        } catch (e) { log('err', `테스트 목록을 저장하지 못했습니다: ${e.message}`); sendTests(sid, { refused: true }); }
+        } catch (e) { const error = `테스트 목록을 저장하지 못했습니다: ${e.message}`; log('err', error); refuse('error', error); }
       }
     }
     if (m.type === 'set_receive') receive(m.id);
