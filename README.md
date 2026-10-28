@@ -131,3 +131,10 @@ curl -fsSL https://raw.githubusercontent.com/xivicWon/koala/main/install.sh | sh
 - 새 릴리즈가 나오면 사이드패널 위쪽에 **새 버전 vX.Y.Z**가 뜹니다. **변경 내용**을 보고 **업데이트**를 누르면 호스트가 새 버전으로 바뀌고 다시 켜집니다. 이어서 **확장 새로고침**을 누릅니다.
 - 직접 설치(개발용)는 자동 업데이트 대상이 아닙니다. `git pull` 뒤 확장을 새로고침하고 호스트를 다시 켭니다.
 - 릴리즈를 만드는 방법은 [RELEASING.md](RELEASING.md)에 있습니다.
+
+## 라이선스
+
+[MIT](LICENSE). 단, 저장소에 든 다음 자료는 각자의 라이선스를 따릅니다.
+
+- Pretendard 글꼴(`spike/extension/fonts/`): SIL Open Font License 1.1 — [Pretendard-LICENSE.txt](spike/extension/fonts/Pretendard-LICENSE.txt)
+- 코알라 아이콘(`spike/extension/icons/`): 원본 사진 CC BY 2.0 — [CREDITS.md](spike/extension/icons/CREDITS.md)
