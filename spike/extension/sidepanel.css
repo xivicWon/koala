@@ -545,6 +545,7 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .upd-pill:hover:not(:disabled) { background: color-mix(in srgb, var(--run) 18%, var(--bg)); }
 .upd-pill:disabled { opacity: .7; cursor: default; }
 .upd-pill[data-act="fresh"] { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); color: var(--warn); }
+.upd-pill[data-act="mismatch"] { border-color: color-mix(in srgb, var(--fail) 40%, transparent); background: var(--fail-soft); color: var(--fail); }
 
 /* 진행 단계 카드 */
 .job-card { margin: 0 12px 6px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-soft); font-size: 12px; }
