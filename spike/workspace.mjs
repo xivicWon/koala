@@ -1,5 +1,5 @@
-// 스파이크(버림용): 프로필이 쓰는 지식 문서로 Claude 작업 폴더(사본)를 만든다.
-//   workspaces/<프로필 id>/
+// 스파이크(버림용): 세트가 쓰는 지식 문서로 Claude 작업 폴더(사본)를 만든다.
+//   .koa/sets/<세트 id>/work/claude/   (세션은 이 경로에 묶인다)
 //     CLAUDE.md              ← Claude가 자동으로 읽음. 지식 파일을 @로 불러온다
 //     knowledge/<지식 id>/…  ← 지식 문서의 파일들
 //     .claude/settings.json  ← 이 작업 폴더용 Claude 설정
@@ -10,17 +10,22 @@ import path from 'node:path';
 import * as sync from './sync.mjs';
 import { fileURLToPath } from 'node:url';
 import { DATA, PORT } from './paths.mjs';
+import { setPaths } from './sets.mjs';
 
-const root = fileURLToPath(new URL('./workspaces/', import.meta.url));
 const dir = fileURLToPath(new URL('.', import.meta.url));
 const safe = (s) => String(s).replace(/[^\w.-]/g, '_');
 
-// 지금은 같은 호스트의 임시 저장소에서 읽는다. 백엔드가 생기면 여기만 바꾼다
-const fetchKnowledge = (id) => sync.get('knowledge', id);
+// 세트가 받은 지식 사본(received/knowledge/)을 쓴다. 이 PC 전용 세트처럼 받은 사본이 없으면 임시 저장소에서 읽는다
+function fetchKnowledge(setId, id) {
+  try { return JSON.parse(fs.readFileSync(path.join(setPaths(setId).received, 'knowledge', `${safe(id)}.json`), 'utf8')); } catch {
+    return sync.get('knowledge', id);
+  }
+}
 
+// profile.id 는 세트 id 다(host.mjs profileOf)
 export function prepare(profile) {
-  const ws = path.join(root, safe(profile?.id || 'default'));
-  const docs = (profile?.knowledge || []).map((id) => fetchKnowledge(id)).filter(Boolean);
+  const ws = setPaths(profile?.id || 'default').claude;
+  const docs = (profile?.knowledge || []).map((id) => fetchKnowledge(profile?.id, id)).filter(Boolean);
   const versions = { profile: profile ? `${profile.id}@v${profile.version}` : null, knowledge: docs.map((d) => `${d.id}@v${d.version}`) };
   // 포트·데이터 폴더가 바뀌면 mcp.json 의 env 도 다시 써야 하므로 stamp 에 넣는다
   const stamp = JSON.stringify({ ...versions, port: PORT, data: DATA });
