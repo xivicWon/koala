@@ -28,19 +28,35 @@ const newer = (a, b) => {
   return false;
 };
 
-// GitHub 최신 릴리즈. 공개 저장소라 토큰 없이 읽는다(토큰 없이는 IP당 시간당 60회까지)
+// GitHub 최신 릴리즈. 1분마다 보므로 API 한도(토큰 없이 IP당 시간당 60회, 304 응답도 센다)를 쓰지 않는다:
+//   1) 웹 주소 /releases/latest 가 돌려보내는 주소(…/releases/tag/<태그>)로 최신 태그를 안다. API 한도에 세지 않는다
+//   2) 태그가 바뀌었을 때만 API로 릴리즈 노트를 한 번 받는다
+let cached = null; // 마지막으로 받은 릴리즈 { tag, name, notes, released_at, url }
 export async function latest() {
   const repo = process.env.KOALA_GITHUB_REPO || pkg().koala?.github; // owner/name. 시험용으로 바꿔 끼울 수 있다
+  const web = process.env.KOALA_GITHUB_WEB || 'https://github.com';
   const api = process.env.KOALA_GITHUB_API || 'https://api.github.com';
   if (!repo) throw new Error('package.json 에 koala.github(owner/name)가 없습니다');
-  const r = await fetch(`${api}/repos/${repo}/releases/latest`, {
-    headers: { accept: 'application/vnd.github+json', 'user-agent': 'koala-updater' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (r.status === 404) return null; // 아직 릴리즈가 없다
-  if (!r.ok) throw new Error(`릴리즈 정보를 받지 못했습니다(HTTP ${r.status})`);
-  const d = await r.json();
-  return { tag: d.tag_name, name: d.name, notes: d.body || '', released_at: d.published_at, url: d.html_url };
+  const r = await fetch(`${web}/${repo}/releases/latest`, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(8000) });
+  const loc = r.headers.get('location') || '';
+  if (r.status === 404 || (r.status >= 300 && r.status < 400 && !/\/releases\/tag\//.test(loc))) return null; // 아직 릴리즈가 없다
+  if (r.status < 300 || r.status >= 400) throw new Error(`릴리즈 정보를 받지 못했습니다(HTTP ${r.status})`);
+  const tag = decodeURIComponent(loc.split('/releases/tag/')[1]);
+  if (cached?.tag === tag) return cached;
+  const rel = { tag, name: tag, notes: '', released_at: null, url: loc };
+  try {
+    const d = await fetch(`${api}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'koala-updater' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (d.ok) {
+      const j = await d.json();
+      Object.assign(rel, { name: j.name || tag, notes: j.body || '', released_at: j.published_at, url: j.html_url || loc });
+    }
+  } catch { /* 노트는 없어도 업데이트는 알린다 */ }
+  // 노트를 못 받았으면(한도 초과 등) 다음 확인 때 다시 받는다
+  if (rel.released_at) cached = rel;
+  return rel;
 }
 
 export async function check() {

@@ -1384,7 +1384,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
 });
 
 // ── 업데이트 ──
-// 1) 설치본: 최신 GitHub 릴리즈를 켜질 때·패널이 연결될 때·5분마다 본다
+// 1) 설치본: 최신 GitHub 릴리즈를 켜질 때·패널이 연결될 때·1분마다 본다
 // 2) 디스크의 코드가 바뀌었는데(개발 폴더에 새 커밋, 업데이트 적용) 이 호스트는 옛 코드로 돌고 있으면 stale 로 알린다.
 //    package.json 을 몇 초마다 지켜보다가 바뀌면 바로 사이드패널에 알린다
 const RUNNING_VERSION = update.version();
@@ -1431,5 +1431,5 @@ server.on('error', (e) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`koala host: http://127.0.0.1:${PORT} · v${update.version()}`);
   checkUpdate();
-  setInterval(checkUpdate, 5 * 60 * 1000).unref();
+  setInterval(checkUpdate, 60 * 1000).unref(); // 1분마다. 웹 주소로 보므로 GitHub API 한도를 쓰지 않는다(update.mjs)
 });
