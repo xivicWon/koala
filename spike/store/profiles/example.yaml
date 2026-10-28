@@ -15,6 +15,8 @@ target:
   login_path: /login
   start_url: http://localhost:3000/login   # 테스트 시작 URL. 새 수행 기록은 여기서 출발한다(대상 주소와 같은 도메인만)
   env: local
+deploy:
+  url: ""                  # 배포 서버: '서버 전송'이 테스트 묶음을 보내는 곳. 비우면 서버 전송을 쓸 수 없다(이 PC의 임시 서버: http://127.0.0.1:8765)
 roles: example-roles       # 서버가 내려주는 역할 문서(역할·기본 계정)
 prompt: |
   - 이 서비스에 대해 AI가 알아야 할 것을 적는다. 예: 로그인 화면의 입력란을 찾는 방법, 메뉴 구조, 느린 화면, 실행마다 바뀌는 testid.

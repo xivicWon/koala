@@ -193,7 +193,7 @@ function activeProfilePayload() {
   const p = profiles[activeId]?.data;
   if (!p) return null;
   return {
-    id: p.id, version: p.version, name: p.name, target: p.target, prompt: p.prompt, knowledge: p.knowledge, claude: p.claude,
+    id: p.id, version: p.version, name: p.name, target: p.target, deploy: p.deploy, prompt: p.prompt, knowledge: p.knowledge, claude: p.claude,
     tags: p.tags, ...(() => {
       const rs = roleSet(p);
       return {
@@ -329,6 +329,9 @@ function renderProfileSheet(body) {
     <label class="pf-label">시작 URL <span class="pf-hint">새 수행 기록은 이 주소에서 출발하고, 생성 코드도 여기서 시작합니다. 비우면 지금 탭 주소</span></label>
     <input class="pf-input mono" data-field="target.start_url" placeholder="${esc((d.target?.base_url || 'http://example.com').replace(/\/$/, '') + (d.target?.login_path || '/'))}" value="${esc(d.target?.start_url ?? '')}">
     ${startUrlWarning(d)}
+    <label class="pf-label">배포 서버 <span class="pf-hint">테스트 목록의 <b>서버 전송</b>이 테스트 묶음을 보내는 곳. 비우면 서버 전송을 쓸 수 없습니다</span></label>
+    <input class="pf-input mono" data-field="deploy.url" placeholder="https://qa-server.example.com  (이 PC의 임시 서버: http://127.0.0.1:8765)" value="${esc(d.deploy?.url ?? '')}">
+    ${deployWarning(d)}
 
     <label class="pf-label">역할과 계정 <span class="pf-hint">${rs.doc_id ? `서버 역할 문서 ${esc(rs.doc_id)} v${rs.version ?? '?'}` : ''} · 바꾼 계정은 이 확장에만 저장됩니다</span></label>
     ${rs.roles.length ? '' : '<div class="pf-hint">역할 정보가 없습니다. 동기화하세요</div>'}
@@ -350,6 +353,18 @@ function renderProfileSheet(body) {
     <textarea class="pf-input pf-prompt mono" data-field="prompt" rows="12">${esc(d.prompt ?? '')}</textarea>
     <div class="pf-hint">저장소 v${remoteVer[activeId] ?? '?'} · 받은 시각 ${p.syncedAt ? new Date(p.syncedAt).toLocaleString() : '-'} · 보관된 이전 버전 ${p.history?.length || 0}개</div>
   </div>`;
+}
+
+// 배포 서버 주소 형식 확인
+function deployWarning(d) {
+  const u = d.deploy?.url;
+  if (!u) return '';
+  try { if (!/^https?:$/.test(new URL(u).protocol)) throw 0; return ''; } catch { return '<div class="pf-alert">배포 서버 주소는 http:// 또는 https://로 시작해야 합니다</div>'; }
+}
+// 서버 전송에 쓸 배포 서버(형식이 맞을 때만)
+function deployServer() {
+  const u = profiles[activeId]?.data?.deploy?.url?.trim();
+  try { return u && /^https?:$/.test(new URL(u).protocol) ? u : null; } catch { return null; }
 }
 
 // 시작 URL은 대상 주소와 같은 도메인이어야 한다(다른 도메인이면 쓰지 않는다)
@@ -406,6 +421,7 @@ document.getElementById('sheet-body').addEventListener('change', (e) => {
     changeDomainIfNeeded();
   }
   // 대상 주소·시작 URL 입력을 마치면(포커스가 빠지면) 도메인을 다시 보고 경고를 갱신한다
+  if (sheetMode === 'profile' && e.target.dataset.field === 'deploy.url') renderSheet();
   if (sheetMode === 'profile' && /^target\.(base_url|start_url)$/.test(e.target.dataset.field || '')) {
     if (aiBusy && activeDomain() !== viewDomain) msg('err', 'AI 작업이 끝나면 새 대상 주소의 도메인으로 바뀝니다. 끝난 뒤 다시 입력을 마치세요');
     else changeDomainIfNeeded();

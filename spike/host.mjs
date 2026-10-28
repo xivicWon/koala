@@ -1098,7 +1098,28 @@ function compactSession() {
 }
 
 // 반영된 테스트 묶음을 서버(동기화 저장소)로 보낸다
-function publishSuite(suite, baseVersion) {
+// 서버 전송은 프로필의 배포 서버(deploy.url)로 보낸다. 없으면 보내지 않는다.
+// 배포 서버는 임시 동기화 저장소와 같은 모양의 API를 쓴다: PUT <서버>/sync/suites/<id> { base_version, data } → 문서 | 409 { current }
+// 주소가 이 호스트(127.0.0.1:8765)면 이 PC의 임시 저장소(.koa/store)에 바로 쓴다
+const isThisHost = (u) => { try { return [`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(new URL(u).host); } catch { return false; } };
+async function putToServer(server, kind, id, baseVersion, data) {
+  if (isThisHost(server)) return sync.put(kind, id, baseVersion, data);
+  const res = await fetch(`${server.replace(/\/+$/, '')}/sync/${kind}s/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ base_version: baseVersion, data }), signal: AbortSignal.timeout(20000),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 409) return { conflict: true, current: body.current || {} };
+  if (!res.ok) throw new Error(`HTTP ${res.status}${body.error ? ` · ${body.error}` : ''}`);
+  return { doc: body };
+}
+
+async function publishSuite(suite, baseVersion) {
+  const server = profile?.deploy?.url;
+  if (!server) {
+    send({ type: 'suite_published', ok: false, error: '프로필에 배포 서버가 없습니다. 프로필 → 배포 서버에 주소를 넣으세요' });
+    return;
+  }
   // 코드가 불러오는 정리 도우미도 함께 보낸다(서버가 그대로 돌릴 수 있게)
   if (suite.code?.source) {
     suite.code.support = {};
@@ -1107,13 +1128,18 @@ function publishSuite(suite, baseVersion) {
       if (fs.existsSync(p)) suite.code.support[`support/${f}.ts`] = fs.readFileSync(p, 'utf8');
     }
   }
-  const r = sync.put('suite', suite.id, baseVersion, suite);
-  if (r.conflict) {
-    send({ type: 'suite_published', ok: false, error: `서버에 더 새 버전(v${r.current.version})이 있습니다`, current: r.current });
+  const where = isThisHost(server) ? '이 PC의 임시 서버' : new URL(server).host;
+  let r;
+  try { r = await putToServer(server, 'suite', suite.id, baseVersion, suite); } catch (e) {
+    send({ type: 'suite_published', ok: false, error: `배포 서버(${where})에 보내지 못했습니다: ${e.message}` });
     return;
   }
-  send({ type: 'suite_published', ok: true, id: suite.id, version: r.doc.version });
-  log('sys', `테스트 묶음 "${suite.name}" v${r.doc.version}을 서버로 보냈습니다 · BDD ${suite.scenarios.length}개 · TDD ${suite.cases.length}개`);
+  if (r.conflict) {
+    send({ type: 'suite_published', ok: false, error: `배포 서버(${where})에 더 새 버전(v${r.current.version ?? '?'})이 있습니다`, current: r.current });
+    return;
+  }
+  send({ type: 'suite_published', ok: true, id: suite.id, version: r.doc.version, server: where });
+  log('sys', `테스트 묶음 "${suite.name}" v${r.doc.version}을 배포 서버(${where})로 보냈습니다 · BDD ${suite.scenarios.length}개 · TDD ${suite.cases.length}개`);
 }
 
 // 이번 지시를 수행할 역할(사이드패널 역할 칩). 여럿이면 차례로 수행하며 역할마다 메뉴 권한을 직접 찾는다

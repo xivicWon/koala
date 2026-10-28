@@ -290,7 +290,7 @@ function onSuitePublished(m) {
   suiteConflict = null;
   suiteBase = m.version;
   saveSuite();
-  msg('sys', `테스트 묶음을 서버로 보냈습니다 (v${m.version})`);
+  msg('sys', `테스트 묶음을 ${m.server ? `배포 서버(${m.server})` : '서버'}로 보냈습니다 (v${m.version})`);
   if (sheetMode === 'suite') renderSheet();
 }
 
@@ -339,7 +339,7 @@ function renderSuiteSheet(body) {
           : needRun() ? `<b class="next-step">실행 결과가 없는 테스트 ${notRun().length}개 · 실행해야 서버로 보낼 수 있습니다</b>`
           : tagsOnly() ? '<b class="next-step">태그·이슈만 바뀌었습니다 · 태그만 코드에 반영하세요(실행 없음)</b>'
           : !codeFresh() ? `<b class="next-step">${suite.code?.source ? '채택이 바뀌었습니다 · 코드를 다시 생성하세요' : '반영됨 · 코드를 생성하세요'}</b>`
-          : `로컬 실행 통과 ${suite.code.summary?.passed ?? 0}/${suite.code.results?.length ?? 0}${suite.code.summary?.failed ? ` · 실패 ${suite.code.summary.failed}` : ''}${suiteBase ? ` · 서버 v${suiteBase}` : ''}`}</span>
+          : `로컬 실행 통과 ${suite.code.summary?.passed ?? 0}/${suite.code.results?.length ?? 0}${suite.code.summary?.failed ? ` · 실패 ${suite.code.summary.failed}` : ''}${suiteBase ? ` · 서버 v${suiteBase}` : ''}${deployServer() ? '' : ' · <b class="next-step">배포 서버가 없습니다 · 프로필에서 설정하면 서버 전송을 쓸 수 있습니다</b>'}`}</span>
       <span class="grow"></span>
       <button type="button" class="btn" data-suite="reinforce" ${todo ? '' : 'disabled'} title="미수행 예외·오류를 실제로 수행하고(필요하면 오류 주입) 초안을 갱신합니다">예외·오류 보강 수행</button>
       <button type="button" class="btn" data-suite="apply" ${suiteApplied ? 'disabled' : ''}>반영</button>
@@ -348,7 +348,7 @@ function renderSuiteSheet(body) {
       ${canAppend() ? `<button type="button" class="primary" data-suite="append" ${suiteApplied && !aiBusy && !allTagProblems().length ? '' : 'disabled'} title="코드가 없는 새 항목만 AI가 써서 기존 파일 끝에 덧붙이고, 새 테스트만 실행합니다">새 테스트 코드 추가 (${missingCode().length})</button>` : ''}
       ${needRun() ? `<button type="button" class="primary" data-suite="run" ${aiBusy ? 'disabled' : ''} title="코드는 그대로 두고, 실행 결과가 없는 테스트만 실행합니다(AI 없음)">테스트 실행 (${notRun().length})</button>` : ''}
       <button type="button" class="${suiteApplied && !codeFresh() && !tagsOnly() && !needRun() && !canAppend() ? 'primary' : 'btn'}" data-suite="code" ${suiteApplied && !suite.code?.running && !allTagProblems().length ? '' : 'disabled'} title="채택한 테스트로 Playwright 코드를 만들고 로컬에서 실행해 확인합니다">${suite.code?.source ? '코드 다시 생성' : '코드 생성'}</button>
-      <button type="button" class="${codeFresh() ? 'primary' : 'btn'}" data-suite="publish" ${suiteApplied && codeFresh() ? '' : 'disabled'} title="${codeFresh() ? '코드와 실행에 필요한 환경변수 목록을 함께 보냅니다' : '먼저 코드를 생성하세요'}">서버 전송</button>
+      <button type="button" class="${codeFresh() && deployServer() ? 'primary' : 'btn'}" data-suite="publish" ${suiteApplied && codeFresh() && deployServer() ? '' : 'disabled'} title="${!deployServer() ? '프로필에 배포 서버가 없습니다. 프로필 → 배포 서버에 주소를 넣으세요' : codeFresh() ? `코드와 실행에 필요한 환경변수 목록을 함께 ${deployServer()}로 보냅니다` : '먼저 코드를 생성하세요'}">서버 전송</button>
     </div>
   </div>`;
 }
@@ -676,6 +676,7 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     suiteConflict = null;
     saveSuite();
   }
+  if ((act === 'publish' || act === 'overwrite') && !deployServer()) { msg('err', '프로필에 배포 서버가 없어 보낼 수 없습니다. 프로필 → 배포 서버에 주소를 넣으세요'); return; }
   if ((act === 'publish' || act === 'overwrite') && suiteApplied && codeFresh() && !allTagProblems().length && ws?.readyState === 1) {
     const { flow, scenarios, cases, spec, code, tag_doc, ...rest } = suite;
     // 미채택도 함께 보낸다(adopted=false). 서버는 code를 받아 env 값만 자기 환경에 맞게 넣고 돌린다
