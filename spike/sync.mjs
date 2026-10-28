@@ -16,7 +16,7 @@ import { DATA } from './paths.mjs';
 const shared = fileURLToPath(new URL('./store/', import.meta.url));
 const local = `${DATA}/store/`;
 const ROOTS = [local, shared];
-const KINDS = ['profile', 'knowledge', 'plan', 'suite', 'test', 'tag', 'role'];
+const KINDS = ['profile', 'knowledge', 'plan', 'suite', 'test', 'tag', 'role', 'set'];
 
 const hashOf = (doc) => {
   const { version, updated_at, hash, ...content } = doc;
