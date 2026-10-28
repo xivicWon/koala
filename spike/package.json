@@ -1,6 +1,6 @@
 {
   "name": "koala",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "브라우저 확장으로 AI가 QA하고 Playwright 테스트로 남기는 도구(koa)",
   "scripts": {
     "start": "node host.mjs",
