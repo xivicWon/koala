@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadTests, saveTests, addTests, recordResults } from '../testlist.mjs';
+import { loadTests, saveTests, addTests, recordResults, applyPanelEdits } from '../testlist.mjs';
 import { setPaths } from '../sets.mjs';
 
 let root;
@@ -96,4 +96,41 @@ test('addTests: 명시한 use:false는 유지, 없으면 true', () => {
   const { suite } = addTests(existing(), { scenarios: [{ id: 'SC-1', use: false }], cases: [{ id: 'TC-1', scenario: 'SC-1', use: null }] });
   assert.equal(suite.scenarios.at(-1).use, false);
   assert.equal(suite.cases.at(-1).use, true);
+});
+
+test('applyPanelEdits: 패널에서는 채택·태그·이슈·새로 표시·반영·이름·범위만 받는다', () => {
+  const cur = { ...existing(), base_version: 3, code: { source: 'S', results: [{ title: 'SC-2', status: 'passed' }], key: 'k0' } };
+  cur.scenarios[0].issue = 'I-1';
+  cur.scenarios[1].added = true;
+  const panel = {
+    ...existing(), name: '새 이름', scope: '새 범위', applied: true, base_version: 0,
+    code: { source: '패널 코드', results: [], key: 'k1' },
+    scenarios: [
+      { id: 'SC-1', title: '패널이 바꾼 제목', use: true, tags: ['@t'] }, // issue 없음 → 지움
+      { id: 'SC-2', title: '조회', use: false, tags: [] },               // added 없음 → 지움
+      { id: 'SC-9', title: '패널에만 있는 항목', use: true },
+    ],
+  };
+  const next = applyPanelEdits(cur, panel);
+  assert.deepEqual(next.scenarios.map((c) => c.id), ['SC-1', 'SC-2']);
+  assert.equal(next.scenarios[0].title, '로그인');
+  assert.equal(next.scenarios[0].extra, 1);
+  assert.equal(next.scenarios[0].use, true);
+  assert.deepEqual(next.scenarios[0].tags, ['@t']);
+  assert.equal('issue' in next.scenarios[0], false);
+  assert.equal(next.scenarios[1].use, false);
+  assert.equal('added' in next.scenarios[1], false);
+  assert.equal(next.cases.length, 3);
+  assert.equal(next.base_version, 3);
+  assert.equal(next.code.source, 'S');
+  assert.deepEqual(next.code.results, [{ title: 'SC-2', status: 'passed' }]);
+  assert.equal(next.code.key, 'k1');
+  assert.equal(next.applied, true);
+  assert.equal(next.name, '새 이름');
+  assert.equal(next.scope, '새 범위');
+});
+
+test('applyPanelEdits: 코드가 없으면 패널 코드로 만들지 않는다', () => {
+  const next = applyPanelEdits(existing(), { ...existing(), code: { source: 'x', key: 'k' } });
+  assert.equal(next.code, null);
 });

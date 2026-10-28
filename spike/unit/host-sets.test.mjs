@@ -34,6 +34,12 @@ const putYaml = (root, rel, doc) => {
   fs.writeFileSync(f, YAML.stringify(doc));
 };
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+let data;
+const writeTests = (id, suite) => {
+  const f = path.join(data, 'sets', id, 'tests', 'tests.json');
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, JSON.stringify(suite));
+};
 
 const hosts = [];
 async function startHost(data, extraEnv = {}) {
@@ -86,7 +92,7 @@ async function connectPanel(h) {
   return pn;
 }
 
-let data, host, pn;
+let host, pn;
 const siteSet = (id, version = 1) => ({ id, kind: 'set', name: `세트 ${id}`, version,
   profile: { target: { base_url: 'http://site-a.test', start_url: 'http://site-a.test/' } } });
 
@@ -130,7 +136,8 @@ test('테스트 목록은 세트마다 따로: a 에 저장한 것이 b 에 보�
   assert.equal(first.suite.id, 'a');
   assert.ok(pn.msgs.slice(at).some((m) => m.type === 'set_active' && m.id === 'a' && m.domain === 'site-a.test'));
 
-  pn.send({ type: 'tests_save', set: 'a', suite: { ...first.suite, scenarios: [{ id: 'SC-1', title: '로그인', use: true }] } });
+  // 항목은 AI 저장으로만 생긴다(패널 tests_save 는 항목을 더하지 않는다). 여기서는 파일로 넣는다
+  writeTests('a', { ...first.suite, scenarios: [{ id: 'SC-1', title: '로그인', use: true }] });
   at = pn.mark();
   pn.send({ type: 'set', id: 'b', prefs: { accounts: [] } });
   const b = await pn.waitFor((m) => m.type === 'tests' && m.set === 'b', at, 'b 의 tests');
@@ -187,9 +194,9 @@ async function stopJob() {
 
 test('예외·오류 보강의 save_tests 는 같은 id를 고쳐 쓰고(채택·태그·이슈 유지), 생성은 새 번호로 더한다', async () => {
   pn.url = 'http://site-a.test/';
-  pn.send({ type: 'tests_save', set: 'a', suite: { id: 'a', name: 'a',
+  writeTests('a', { id: 'a', name: 'a',
     scenarios: [sc('SC-1', '옛 제목', { use: false, tags: ['@mine'], issue: 'ISSUE-1' })],
-    cases: [{ id: 'TC-1', scenario: 'SC-1', title: '옛 케이스', use: false, tags: ['@mine'] }] } });
+    cases: [{ id: 'TC-1', scenario: 'SC-1', title: '옛 케이스', use: false, tags: ['@mine'] }] });
 
   await holdJob('reinforce', { type: 'reinforce', summary: '요약' });
   const r = await callTool('save_tests', { title: '보강', scope: '', flow: [], coverage: [],
@@ -214,6 +221,36 @@ test('예외·오류 보강의 save_tests 는 같은 id를 고쳐 쓰고(채택�
   assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1', 'SC-2', 'SC-3']);
   assert.equal(t.scenarios[0].title, '새 제목');
   assert.equal(t.scenarios[2].title, '다시 만든 것');
+});
+
+test('패널 tests_save: 채택·태그·반영만 받고 호스트의 기준 버전·코드·항목 내용은 그대로, 작업 중에는 거절', async () => {
+  pn.url = 'http://site-a.test/';
+  writeTests('a', { id: 'a', name: 'a', applied: false, base_version: 5,
+    code: { source: '호스트 코드', results: [{ title: 'SC-1 x', status: 'passed' }], key: 'k0' },
+    scenarios: [sc('SC-1', '호스트 제목', { use: true, tags: [] })], cases: [] });
+  pn.send({ type: 'tests_save', set: 'a', suite: { id: 'a', name: '패널 이름', applied: true, base_version: 0,
+    code: { source: '패널 코드', key: 'k1' },
+    scenarios: [sc('SC-1', '패널 제목', { use: false, tags: ['@t'] }), sc('SC-7', '패널에만')], cases: [] } });
+  await until(() => testsOf('a')?.applied === true, 'tests_save 반영');
+  let t = testsOf('a');
+  assert.equal(t.base_version, 5);
+  assert.equal(t.code.source, '호스트 코드');
+  assert.equal(t.code.results.length, 1);
+  assert.equal(t.code.key, 'k1');
+  assert.equal(t.name, '패널 이름');
+  assert.deepEqual(t.scenarios.map((c) => c.id), ['SC-1']);
+  assert.equal(t.scenarios[0].title, '호스트 제목');
+  assert.equal(t.scenarios[0].use, false);
+  assert.deepEqual(t.scenarios[0].tags, ['@t']);
+
+  await holdJob('reinforce', { type: 'reinforce', summary: '요약' });
+  const at = pn.mark();
+  pn.send({ type: 'tests_save', set: 'a', suite: { ...t, applied: false, scenarios: [{ ...t.scenarios[0], use: true }] } });
+  await pn.waitFor((m) => m.type === 'log' && m.kind === 'err' && /작업.*테스트 목록/.test(m.text), at, '작업 중 거절 안내');
+  await stopJob();
+  t = testsOf('a');
+  assert.equal(t.applied, true);
+  assert.equal(t.scenarios[0].use, false);
 });
 
 test('저장소의 세트 버전이 오르면 GET /sets 에 바뀐 것이 보인다', async () => {

@@ -164,15 +164,45 @@ export function createLocalSet(def, root = DATA) {
   return record;
 }
 
+// 이 PC 전용 세트만 고친다. id·출처·만든 시각은 그대로
+export function updateLocalSet(id, def, root = DATA) {
+  const rec = readSet(id, root);
+  if (!rec || rec.source !== 'local') throw new Error('이 PC 전용 세트만 고칠 수 있습니다');
+  const { name, ...rest } = def || {};
+  const next = { ...rec, name: name || rec.name, def: rest, updated_at: new Date().toISOString() };
+  writeJson(setPaths(id, root).setFile, next);
+  return next;
+}
+
 export function deleteSet(id, root = DATA) {
   const rec = readSet(id, root);
   if (!rec || rec.source !== 'local') throw new Error('이 PC 전용 세트만 지울 수 있습니다');
   fs.rmSync(setPaths(id, root).dir, { recursive: true, force: true });
 }
 
-const summary = (rec, received, update) => ({
+const readJsonOr = (f, v) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return v; } };
+// 패널이 세트 상세를 그리는 데 쓰는 것. 기본 계정은 있는지만 싣고 아이디·비밀번호 값은 싣지 않는다
+function details(rec, root) {
+  const p = setPaths(rec.id, root);
+  const def = rec.def || {};
+  const roleDoc = typeof def.roles === 'string' ? readJsonOr(`${p.received}/roles.json`, null)
+    : { roles: Array.isArray(def.roles) ? def.roles : [], default_role: def.default_role };
+  const secrets = readJsonOr(`${p.secrets}/accounts.json`, {}) || {};
+  const roles = (roleDoc?.roles || []).map((r) => ({ key: r.key, label: r.label || r.key, desc: r.desc || '', has_default: !!secrets[r.key]?.user }));
+  const t = readJsonOr(p.testsFile, null);
+  return {
+    start_url: def.profile?.target?.start_url || '', login_path: def.profile?.target?.login_path || '',
+    deploy_url: def.profile?.deploy?.url || '', prompt: def.profile?.prompt || '',
+    refs: rec.refs || {}, knowledge: arr(def.knowledge), tags: arr(def.tags),
+    roles, default_role: roleDoc?.default_role || roles[0]?.key || null,
+    tests: { scenarios: t?.scenarios?.length || 0, cases: t?.cases?.length || 0 },
+    received_at: rec.received_at,
+  };
+}
+const summary = (rec, received, update, root) => ({
   id: rec.id, name: rec.name, version: rec.version, source: rec.source,
   base_url: rec.def?.profile?.target?.base_url || '', domain: domainOfSet(rec), received, update,
+  ...(received ? details(rec, root) : {}),
 });
 
 export function listSets(root = DATA) {
@@ -185,7 +215,7 @@ export function listSets(root = DATA) {
       try { rec = JSON.parse(fs.readFileSync(`${dir}/${d}/set.json`, 'utf8')); } catch { /* 받다 만 폴더 */ }
       if (!rec) continue;
       seen.add(safeId(rec.id));
-      out.push(summary(rec, true, checkUpdate(rec.id, root)));
+      out.push(summary(rec, true, checkUpdate(rec.id, root), root));
     }
   }
   for (const r of [path.join(root, 'store'), shared]) {

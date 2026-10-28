@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
-import { safeId, setPaths, readSet, listSets, receiveSet, checkUpdate, createLocalSet, deleteSet, domainOfSet } from '../sets.mjs';
+import { safeId, setPaths, readSet, listSets, receiveSet, checkUpdate, createLocalSet, updateLocalSet, deleteSet, domainOfSet } from '../sets.mjs';
 
 let root;
 const put = (rel, doc) => {
@@ -106,4 +106,36 @@ test('목록: 저장소에만 있는 세트는 받지 않음, 로컬 세트 만�
 
 test('예시 세트는 공용 저장소의 참조를 모두 찾는다', () => {
   assert.equal(receiveSet('example-set', root).ok, true);
+});
+
+test('목록 상세: 받은 세트의 배포 서버·참조 판·역할(기본 계정 유무만)·테스트 수, 비밀번호는 싣지 않음', () => {
+  put('store/sets/a.yaml', { ...baseSet, profile: { target: { base_url: 'https://svc-a.example/x', start_url: 'https://svc-a.example/login' }, deploy: { url: 'http://127.0.0.1:8765' }, prompt: '지식' }, knowledge: [] });
+  put('store/roles/r.yaml', { id: 'r', kind: 'role', version: 1, default_role: 'ADMIN', roles: [{ key: 'ADMIN', label: '관리자', desc: '모두' }, { key: 'MEMBER', label: '회원' }] });
+  receiveSet('a', root);
+  const p = setPaths('a', root);
+  fs.mkdirSync(p.tests, { recursive: true });
+  fs.writeFileSync(p.testsFile, JSON.stringify({ scenarios: [{ id: 'SC-1' }, { id: 'SC-2' }], cases: [{ id: 'TC-1' }] }));
+  const l = listSets(root).find((s) => s.id === 'a');
+  assert.equal(l.start_url, 'https://svc-a.example/login');
+  assert.equal(l.deploy_url, 'http://127.0.0.1:8765');
+  assert.equal(l.prompt, '지식');
+  assert.deepEqual(l.refs, { roles: 'r@v1', tags: ['t@v1'] });
+  assert.equal(l.default_role, 'ADMIN');
+  assert.deepEqual(l.roles, [{ key: 'ADMIN', label: '관리자', desc: '모두', has_default: true }, { key: 'MEMBER', label: '회원', desc: '', has_default: false }]);
+  assert.deepEqual(l.tests, { scenarios: 2, cases: 1 });
+  assert.ok(l.received_at);
+  assert.ok(!JSON.stringify(listSets(root)).includes('"p"'));
+});
+
+test('이 PC 전용 세트 고치기: 이름·정의를 바꾸고 서버 세트는 거절', () => {
+  const a = createLocalSet({ name: '내 세트', profile: { target: { base_url: 'http://localhost:3000' } } }, root);
+  const r = updateLocalSet(a.id, { name: '바꾼 이름', profile: { target: { base_url: 'http://localhost:4000' } }, roles: [{ key: 'ADMIN', label: '관리자' }] }, root);
+  assert.equal(r.name, '바꾼 이름');
+  assert.equal(readSet(a.id, root).def.profile.target.base_url, 'http://localhost:4000');
+  assert.equal(readSet(a.id, root).id, a.id);
+  const l = listSets(root).find((s) => s.id === a.id);
+  assert.equal(l.base_url, 'http://localhost:4000');
+  assert.deepEqual(l.roles, [{ key: 'ADMIN', label: '관리자', desc: '', has_default: false }]);
+  receiveSet('a', root);
+  assert.throws(() => updateLocalSet('a', { name: 'x' }, root));
 });

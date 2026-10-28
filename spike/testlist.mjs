@@ -66,6 +66,32 @@ export function addTests(suite, { scenarios = [], cases = [], flow = [], coverag
   };
 }
 
+// 패널이 보낸 목록에서 사람이 정하는 것만 받는다: 항목의 채택·태그·이슈·새로 표시, 반영 여부, 이름·범위.
+// 항목 내용, 코드·실행 결과, 서버 기준 버전(base_version)은 호스트 것을 그대로 둔다(보낸 뒤 올린 버전을 패널이 되돌리지 않게).
+// 패널에만 있는 항목은 더하지 않는다(항목은 AI 저장으로만 생긴다). code.key(코드를 만들 때의 채택 목록 표시)만 패널 값을 쓴다
+const PANEL_ITEM = ['use', 'tags', 'issue', 'added'];
+export function applyPanelEdits(cur, panel = {}) {
+  const pick = (list, from) => {
+    const mine = new Map((from || []).map((c) => [c?.id, c]));
+    return (list || []).map((c) => {
+      const p = mine.get(c.id);
+      if (!p) return c;
+      const out = { ...c };
+      for (const k of PANEL_ITEM) { if (p[k] === undefined) delete out[k]; else out[k] = p[k]; }
+      return out;
+    });
+  };
+  return {
+    ...cur,
+    scenarios: pick(cur.scenarios, panel.scenarios),
+    cases: pick(cur.cases, panel.cases),
+    applied: !!panel.applied,
+    name: panel.name ?? cur.name,
+    scope: panel.scope ?? cur.scope,
+    code: cur.code ? { ...cur.code, key: panel.code?.key ?? cur.code.key } : cur.code,
+  };
+}
+
 // results: [{ title, status, … }]. last.json은 제목별 마지막 결과, runs/<ranAt>.json은 이번 실행.
 export function recordResults(setId, results, ranAt, root) {
   const dir = setPaths(setId, root).results;
