@@ -146,16 +146,13 @@ const lis = (xs) => (xs || []).map((x) => `<li>${esc(x)}</li>`).join('');
 function recordedSteps() {
   return [...stepEls.values()].filter((el) => el.classList.contains('ok') && !el.classList.contains('read')).length;
 }
+// 입력창 위 안내: 테스트 초안은 버튼이 아니라 대화로 만든다(AI가 make_tests 로 호스트에 요청)
 function updateDeriveBtn() {
   const n = recordedSteps();
-  $('derive-btn').disabled = aiBusy || !n || !$('env-alert').hidden;
-  $('suite-hint').textContent = n ? `이번 수행 ${n}단계 · 이 이력으로 TDD·BDD 테스트를 만들 수 있습니다` : '테스트를 수행한 뒤, 그 이력으로 TDD·BDD 테스트를 만들 수 있습니다';
+  $('suite-hint').textContent = n
+    ? `이번 수행 ${n}단계 · 다 됐으면 "지금까지 한 걸로 테스트 만들어줘"라고 하세요`
+    : '테스트를 수행한 뒤 "지금까지 한 걸로 테스트 만들어줘"라고 하면 초안을 만듭니다';
 }
-$('derive-btn').onclick = () => {
-  if (ws?.readyState !== 1) return;
-  msg('me', '이 수행 이력으로 TDD·BDD 테스트를 만들어줘');
-  ws.send(JSON.stringify({ type: 'derive' }));
-};
 $('plan-btn').onclick = () => { requestCodeList(); openSheet('suite'); };
 
 function onSuiteTags(m) {
@@ -297,7 +294,7 @@ function onSuitePublished(m) {
 function renderSuiteSheet(body) {
   $('sheet-title').textContent = '테스트 목록';
   if (!suite) {
-    body.innerHTML = `<div class="none">아직 만든 테스트가 없습니다.<br>테스트를 수행한 뒤 <b>이 수행으로 테스트 생성</b>을 누르세요.</div>`;
+    body.innerHTML = `<div class="none">아직 만든 테스트가 없습니다.<br>테스트를 수행한 뒤 입력창에 <b>"지금까지 한 걸로 테스트 만들어줘"</b>라고 하세요.</div>`;
     return;
   }
   const useS = suite.scenarios.filter((c) => c.use).length;

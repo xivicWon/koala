@@ -64,7 +64,7 @@ checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order']);
 const TOOLS = ['run', 'snapshot', 'screenshot', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
-  'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code'];
+  'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'];
 // 계획 모드: 로그인·검색 입력과 확인은 할 수 있지만, 데이터를 바꾸는 버튼 클릭과 Enter 제출은 확장이 차단한다.
 // 테스트 기록에는 남기지 않는다. 결과는 save_plan
 const PLAN_TOOLS = TOOLS;
@@ -84,6 +84,8 @@ const PLAN_SYSTEM = `
 마지막에 save_plan으로 저장하고, 시나리오·케이스 수, 우선순위 분포, 확인하지 못한 부분을 한국어로 짧게 요약한다.`;
 
 const SYSTEM = `너는 웹 QA 담당자다. koala 도구로만 브라우저를 조작한다.
+- 사용자가 지금까지 수행한 것으로 테스트(TDD·BDD·시나리오·케이스·테스트 초안)를 만들어 달라고 하면 make_tests 를 부르고 한 줄로 알린 뒤 응답을 끝낸다.
+  "○○ 테스트해줘"처럼 수행을 요청하면 그것은 브라우저로 수행하라는 뜻이다. 만들어 달라는 뜻이 분명하지 않으면 먼저 묻는다.
 - 먼저 snapshot으로 화면을 읽고, locator는 testid > text > css 순으로 고른다.
 - 단계마다 도구를 따로 부르지 말고, 화면을 읽은 뒤 할 일을 **run으로 묶어 한 번에** 보낸다.
   (조작과 검증을 섞어 화면 전환 단위로 5~15단계씩. 다음 화면 구성을 모르면 거기까지만 묶는다)
@@ -155,6 +157,7 @@ let stopRequested = false;
 // 사용자가 중지: Claude 프로세스를 끝내고, 진행 중인 큐와 대기 중인 도구 호출을 정리한다
 function stopRun() {
   stopRequested = true;
+  pendingDerive = null;
   stopClaude();
   endJob(false, '사용자가 중지했습니다');
   // 로컬 테스트 실행도 함께 끝낸다
@@ -303,7 +306,7 @@ async function runPlan(steps) {
       return { ok: false, error: '사용자가 중지했습니다' };
     }
     const { tool, args = {} } = plan[i];
-    const r = toolsFor().includes(tool) && !['run', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code'].includes(tool) ? await relay(tool, args)
+    const r = toolsFor().includes(tool) && !['run', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'].includes(tool) ? await relay(tool, args)
       : { ok: false, error: mode === 'plan' && TOOLS.includes(tool) ? `계획 모드에서는 ${tool}을 쓸 수 없습니다(둘러보기만 가능)` : `알 수 없는 도구: ${tool}` };
     if (!r.ok) {
       send({ type: 'plan_end', skipped: plan.length - i - 1 });
@@ -512,6 +515,7 @@ function handleEvent(ev) {
   }
   if (ev.type === 'result') {
     flushSegment(null);
+    if (pendingDerive) setTimeout(runPendingDerive); // 이 응답에서 make_tests 를 불렀으면 이어서 테스트 초안을 만든다
     endJob(!ev.is_error, ev.is_error ? 'AI 작업이 오류로 끝났습니다' : '');
     if (timing) {
       const total = now - timing.t0;
@@ -642,12 +646,28 @@ const DERIVE_PROMPT = `[테스트 생성] 방금 이 대화에서 실제로 수�
   역할 사이 권한 차이 자체를 검증하는 TDD 케이스(기법: 권한)를 더한다.
 마지막에 save_tests로 저장하고 한국어로 짧게 요약한다.`;
 
-function deriveTests() {
+// 대화에서 "테스트 만들어줘"라고 하면 AI가 make_tests 를 부른다. 그 응답이 끝난 뒤 테스트 초안 만들기를 시작한다
+let pendingDerive = null; // { note }
+function queueDerive(args) {
+  if (!steps.length) return { ok: false, error: '아직 수행 기록이 없다. 먼저 테스트를 수행해야 한다고 사용자에게 알린다' };
+  pendingDerive = { note: String(args?.note || '').trim() };
+  return { ok: true, result: { queued: true, steps: steps.length, message: '이 응답이 끝나면 테스트 초안 만들기를 시작한다. 한 줄로 알리고 응답을 끝낸다' } };
+}
+function runPendingDerive() {
+  if (!pendingDerive) return;
+  const { note } = pendingDerive;
+  pendingDerive = null;
+  if (stopRequested) return;
+  log('sys', `수행 기록 ${steps.length}단계로 테스트 초안을 만듭니다${note ? ` · 요청: ${note}` : ''}`);
+  setTimeout(() => deriveTests(note), 300);
+}
+
+function deriveTests(note = '') {
   if (!steps.length) { log('err', '테스트를 만들 수행 이력이 없습니다. 먼저 테스트를 수행하세요'); return; }
   const t = tags.prompt(tagDoc());
   let lastRole = null;
   const recap = steps.slice(0, 120).map((s, i) => `${s.role && s.role !== lastRole ? `[역할 ${(lastRole = s.role)} ${roleName(s.role)}]\n` : ''}${i + 1}. ${s.action} ${s.locator ? JSON.stringify(s.locator) : s.url || s.pattern || s.key || ''}${s.value ? ` = ${s.value}` : ''}${s.text ? ` "${s.text}"` : ''}`).join('\n');
-  instruct(`${DERIVE_PROMPT}${t ? `\n\n[태그] 서버가 내려준 목록이다. 시나리오·케이스마다 tags에 '붙이는 경우'에 맞는 것만 고른다(자동 태그는 호스트가 붙이니 적지 않아도 된다).\n${t}` : ''}\n\n[이번 수행 기록 ${steps.length}단계]\n${recap}`, { derive: true, job: 'derive' });
+  instruct(`${DERIVE_PROMPT}${note ? `\n\n[사용자 요청] ${note} — 이 범위·요청에 맞춰 만든다` : ''}${t ? `\n\n[태그] 서버가 내려준 목록이다. 시나리오·케이스마다 tags에 '붙이는 경우'에 맞는 것만 고른다(자동 태그는 호스트가 붙이니 적지 않아도 된다).\n${t}` : ''}\n\n[이번 수행 기록 ${steps.length}단계]\n${recap}`, { derive: true, job: 'derive' });
 }
 
 // 예외·오류 보강: 초안의 미수행 항목을 실제로 수행하고(필요하면 오류 주입) 초안을 다시 만든다
@@ -1434,6 +1454,7 @@ const server = http.createServer(async (req, res) => {
       : name === 'save_tags' ? saveTags(args)
       : name === 'add_tests' ? saveAdded(args)
       : name === 'append_code' ? await appendCode(args)
+      : name === 'make_tests' ? queueDerive(args)
       : await relay(name, args);
     if (timing) timing.tool += Date.now() - t;
     res.end(JSON.stringify(out));
