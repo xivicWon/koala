@@ -21,6 +21,7 @@ import * as testlist from './testlist.mjs';
 import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { playwrightArgs } from './pw-args.mjs';
+import * as sdk from './claude-sdk.mjs';
 
 // 브라우저(Native Messaging)가 켠 호스트는 PATH가 짧아 npx·npm·node 를 못 찾는다. 지금 도는 node 의 폴더를 앞에 붙인다
 {
@@ -47,6 +48,8 @@ function findClaude() {
 }
 let CLAUDE = null;
 let claudeEnv = { ok: false, reason: 'unchecked' };
+// 요금제: sub = Claude Code 구독(claude 로그인), api = Console API 키(Agent SDK 로 실행, API 크레딧에서 차감). 패널에서 고른다
+let billing = 'sub';
 // CLAUDE_BIN 이 .mjs/.js 면(시험용 가짜 Claude) 이 node 로 돌린다
 const claudeCmd = (args) => (/\.m?js$/.test(CLAUDE) ? [process.execPath, [CLAUDE, ...args]] : [CLAUDE, args]);
 function claudeExec(args) {
@@ -65,15 +68,20 @@ function checkClaude() {
   }
   try {
     const version = claudeExec(['--version']).trim();
-    const st = JSON.parse(claudeExec(['auth', 'status']));
-    // 이메일 같은 계정 정보는 패널로 보내지 않는다
-    claudeEnv = st.loggedIn
-      ? { ok: true, version, method: st.authMethod }
-      : { ok: false, reason: 'not_logged_in', version };
+    // 이메일 같은 계정 정보는 패널로 보내지 않는다. API 요금제는 claude 로그인 대신 저장된 API 키가 있어야 한다
+    if (billing === 'api') {
+      const k = sdk.keyStatus();
+      claudeEnv = k.saved ? { ok: true, version, method: 'api_key' } : { ok: false, reason: k.invalid ? 'bad_api_key' : 'no_api_key', version };
+    } else {
+      const st = JSON.parse(claudeExec(['auth', 'status']));
+      claudeEnv = st.loggedIn
+        ? { ok: true, version, method: st.authMethod }
+        : { ok: false, reason: 'not_logged_in', version };
+    }
   } catch (e) {
     claudeEnv = { ok: false, reason: 'check_failed', detail: String(e.message).slice(0, 200) };
   }
-  const line = `[claude] ${claudeEnv.ok ? `사용 가능 · ${claudeEnv.version}` : `문제: ${claudeEnv.reason}`} · ${CLAUDE ?? '경로 없음'}`;
+  const line = `[claude] ${billing === 'api' ? 'API 요금제' : '구독'} · ${claudeEnv.ok ? `사용 가능 · ${claudeEnv.version}` : `문제: ${claudeEnv.reason}`} · ${CLAUDE ?? '경로 없음'}`;
   if (line !== lastClaudeLine) console.log(line);
   lastClaudeLine = line;
   return claudeEnv;
@@ -539,25 +547,36 @@ function spawnClaude(extra, ws) {
   args.push('--effort', effortFor());
   const env = { ...process.env };
   delete env.CLAUDECODE; // 바깥 Claude Code 세션 안에서 띄울 때 중첩 방지 검사를 피한다
-  const [cmd, argv] = claudeCmd(args);
-  const p = spawn(cmd, argv, { cwd: ws.dir, env, stdio: [PERSIST ? 'pipe' : 'ignore', 'pipe', 'pipe'], shell: WIN && CLAUDE.endsWith('.cmd') });
-  children.add(p);
-  p.on('close', () => children.delete(p));
-  let buf = '';
   // 끝낸 프로세스(세트 전환·중지)가 늦게 내는 출력은 버린다. 받으면 다른 세트의 세션·로그에 섞인다
-  p.stdout.on('data', (d) => {
-    if (p.stopped) return;
-    buf += d;
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i); buf = buf.slice(i + 1);
-      if (!line.trim()) continue;
-      let ev; try { ev = JSON.parse(line); } catch { continue; }
+  // API 요금제에서는 'claude.ai connectors are disabled' 안내가 매번 나온다. 오류 원인으로 보이지 않게 거른다
+  const onErr = (d) => { if (p.stopped || /claude\.ai connectors are disabled/.test(d)) return; p.lastErr = String(d); console.log(`[claude stderr] ${String(d).trim()}`); };
+  let p;
+  if (billing === 'api') {
+    // API 요금제: 같은 인자로 Agent SDK 를 돌린다. 메시지는 CLI 출력과 같은 모양이다
+    p = sdk.runSdk(args, { cwd: ws.dir, env, claudeBin: CLAUDE, key: sdk.readKey() });
+    p.on('event', (ev) => { if (!p.stopped) handleEvent(ev); });
+    p.on('stderr', onErr);
+    p.on('exit', () => children.delete(p));
+  } else {
+    const [cmd, argv] = claudeCmd(args);
+    p = spawn(cmd, argv, { cwd: ws.dir, env, stdio: [PERSIST ? 'pipe' : 'ignore', 'pipe', 'pipe'], shell: WIN && CLAUDE.endsWith('.cmd') });
+    p.on('close', () => children.delete(p));
+    let buf = '';
+    p.stdout.on('data', (d) => {
       if (p.stopped) return;
-      handleEvent(ev);
-    }
-  });
-  p.stderr.on('data', (d) => { if (p.stopped) return; p.lastErr = String(d); console.log(`[claude stderr] ${String(d).trim()}`); });
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        if (p.stopped) return;
+        handleEvent(ev);
+      }
+    });
+    p.stderr.on('data', onErr);
+  }
+  children.add(p);
   p.on('exit', (code) => {
     if (proc === p) proc = null;
     if (!PERSIST) send({ type: 'busy', busy: false });
@@ -645,15 +664,22 @@ function onStream(e) {
 }
 
 // 사용량: Claude Code가 요청마다 알려 주는 구독 한도(5시간·7일 창의 사용률·초기화 시각)와, 이 세션에서 쓴 토큰
-function sendUsage(to) { const m = JSON.stringify({ type: 'claude_usage', ...usage }); (to || panel)?.readyState === 1 && (to || panel).send(m); }
+function sendUsage(to) { const m = JSON.stringify({ type: 'claude_usage', ...usage, billing }); (to || panel)?.readyState === 1 && (to || panel).send(m); }
 function noteLimits(info) {
   const w = info?.unifiedWindows || {};
   const win = (x) => x && { used: x.utilization, resets_at: x.resetsAt ? x.resetsAt * 1000 : null, status: x.status };
   usage.limits = { status: info.status, five_hour: win(w.five_hour), seven_day: win(w.seven_day), at: Date.now() };
   sendUsage();
 }
-function noteTurn(u) {
+function noteTurn(ev) {
+  const u = ev.usage;
   if (!u) return;
+  // API 요금제: total_cost_usd 는 이 대화의 누적 추정 비용이다(이어받기도 이어서 센다). 지시 1건 비용은 직전 값과의 차이
+  if (billing === 'api' && typeof ev.total_cost_usd === 'number') {
+    const prev = usage.session.cost || 0;
+    usage.session.lastCost = ev.total_cost_usd >= prev ? ev.total_cost_usd - prev : ev.total_cost_usd;
+    usage.session.cost = ev.total_cost_usd;
+  }
   usage.session.input += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
   usage.session.output += u.output_tokens || 0;
   usage.session.turns += 1;
@@ -663,10 +689,11 @@ function noteTurn(u) {
 function handleEvent(ev) {
   if (ev.type === 'stream_event') return onStream(ev.event);
   if (ev.type === 'rate_limit_event') return noteLimits(ev.rate_limit_info);
-  if (ev.type === 'result') noteTurn(ev.usage);
+  if (ev.type === 'result') noteTurn(ev);
   // 미리 연결의 확인 응답은 대화창에 보이지 않는다. 그 사이 들어온 지시는 그다음 차례로 처리된다
   if (warming && ev.type === 'assistant') return;
-  if (warming && ev.type === 'result') return ev.is_error ? warmFailed('확인 응답이 오류로 끝났습니다') : warmDone();
+  // 오류 응답의 본문(예: Invalid API key, Credit balance is too low)을 함께 알려 원인을 바로 알 수 있게 한다
+  if (warming && ev.type === 'result') return ev.is_error ? warmFailed(`확인 응답이 오류로 끝났습니다${ev.result ? ` · ${String(ev.result).slice(0, 120)}` : ''}`) : warmDone();
   if (ev.type === 'result' && !ev.is_error && claudeConn !== 'ready') sendConn('ready');
   const now = Date.now();
   if (ev.type === 'system' && ev.subtype === 'init' && ev.model) {
@@ -712,7 +739,7 @@ function handleEvent(ev) {
       const sec = (ms) => (ms / 1000).toFixed(1);
       log('sys', `완료 · 전체 ${sec(total)}초 = 기동 ${sec(boot)} + 모델 ${sec(model)} + 브라우저 ${sec(timing.tool)} · `
         + `출력 ${ev.usage?.output_tokens ?? '?'}토큰 · 입력 ${(ev.usage?.input_tokens ?? 0) + (ev.usage?.cache_read_input_tokens ?? 0) + (ev.usage?.cache_creation_input_tokens ?? 0)}토큰 · 생각 ${timing.thinking || 0}자 · `
-        + `AI 응답 ${ev.num_turns}회 · ${PERSIST ? (timing.warm ? '상주(재사용)' : '상주(첫 기동)') : '매번 기동'} · 기록 ${steps.length}단계`);
+        + `AI 응답 ${ev.num_turns}회 · ${billing === 'api' && usage.session.lastCost != null ? `비용 $${usage.session.lastCost.toFixed(4)} · ` : ''}${PERSIST ? (timing.warm ? '상주(재사용)' : '상주(첫 기동)') : '매번 기동'} · 기록 ${steps.length}단계`);
       timing = null;
     }
     if (PERSIST) send({ type: 'busy', busy: false });
@@ -1706,6 +1733,7 @@ const server = http.createServer(async (req, res) => {
         system: SYSTEM,
         profileContext: profileContext().trim(),
         claude: claudeEnv,
+        billing: { mode: billing, key: sdk.keyStatus() }, // 키 값은 보내지 않는다(있음·없음과 파일 위치만)
         recorded: steps.length, // '기록까지 비우기' 확인 창에 보여 줄 수행 기록 수
       }));
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
@@ -1853,19 +1881,34 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     // 모델·effort 바꾸기: 대화는 그대로 두고(이어받기) Claude 만 새 설정으로 다시 띄운다. 작업 중에는 바꾸지 않는다
     if (m.type === 'claude_prefs') {
       const next = { model: String(m.model || '').trim().slice(0, 80), effort: EFFORTS.includes(m.effort) ? m.effort : '' };
+      const nextBilling = m.billing === 'api' ? 'api' : 'sub';
       if (next.model && !/^[\w.\-[\]]+$/.test(next.model)) log('err', `모델 이름이 올바르지 않습니다: ${next.model}`);
-      else if (next.model !== userClaude.model || next.effort !== userClaude.effort) {
-        if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 모델·effort 를 바꿀 수 없습니다. 끝난 뒤 다시 고르세요');
+      else if (next.model !== userClaude.model || next.effort !== userClaude.effort || nextBilling !== billing) {
+        if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 모델·effort·요금제를 바꿀 수 없습니다. 끝난 뒤 다시 고르세요');
         else {
+          const billingChanged = nextBilling !== billing;
           userClaude = next;
+          billing = nextBilling;
+          if (billingChanged) { send({ type: 'env', claude: checkClaude() }); sendUsage(); }
           // 이미 떠 있거나 띄우는 중이면 새 설정으로 다시 띄운다(패널이 연결될 때 저장된 값이 늦게 와도 맞춰진다)
           if (proc || warming) {
-            log('sys', `Claude 를 ${modelFor() || 'Claude Code 기본 모델'} · effort ${effortFor()} 로 바꿉니다(대화는 이어서)`);
+            log('sys', `Claude 를 ${billingChanged ? `${billing === 'api' ? 'API 요금제(Agent SDK)' : 'Claude Code 구독'} · ` : ''}${modelFor() || 'Claude Code 기본 모델'} · effort ${effortFor()} 로 바꿉니다(대화는 이어서)`);
             stopClaude();
-            scheduleWarm(300);
           }
+          if (billingChanged && claudeConn !== 'off') sendConn('off');
+          scheduleWarm(300);
         }
       }
+    }
+    // API 키 저장·삭제: 이 PC 의 ~/.koala/anthropic-api-key(0600)에만 둔다. 값은 기록·로그·응답 어디에도 남기지 않는다
+    if (m.type === 'api_key') {
+      try {
+        if (m.action === 'delete') { sdk.deleteKey(); log('sys', 'API 키를 지웠습니다'); } else { sdk.saveKey(m.key); log('sys', `API 키를 저장했습니다(${sdk.keyFile()})`); }
+        send({ type: 'env', claude: checkClaude() });
+        // API 요금제로 쓰는 중이면 새 키로 다시 연결한다
+        if (billing === 'api' && !job && !codeRunning) { if (proc || warming) stopClaude(); scheduleWarm(300); }
+      } catch (e) { log('err', e.message); }
+      send({ type: 'api_key_status', key: sdk.keyStatus() });
     }
     if (m.type === 'tests_clear') {
       const sid = m.set || activeSet;

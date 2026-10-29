@@ -46,10 +46,12 @@ const hosts = [];
 const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-spike-'));
 // 가짜 Claude 가 받은 지시를 남기는 파일(관리 탭 목록이 지시에 붙는지 본다)
 const dump = path.join(legacyDir, 'claude-input.txt');
+// API 키 파일도 임시 폴더로(사용자의 ~/.koala/anthropic-api-key 를 덮어쓰지 않게)
+const keyFile = path.join(legacyDir, 'anthropic-api-key');
 async function startHost(data, extraEnv = {}) {
   const port = await freePort();
   assert.notEqual(port, 8765);
-  const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_SPIKE_DIR: legacyDir, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_DUMP: dump,
+  const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_SPIKE_DIR: legacyDir, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_DUMP: dump, KOALA_API_KEY_FILE: keyFile,
     KOALA_PG: 'postgres://koala:koala@127.0.0.1:9/koala', ...extraEnv }; // 그래프 DB는 없는 것으로(사용자 DB에 쓰지 않게)
   delete env.CLAUDECODE;
   const p = spawn(process.execPath, ['host.mjs'], { cwd: spike, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -194,6 +196,36 @@ test('claude_prefs: 모델·effort 를 바꾸면 그 값으로 Claude 를 다시
   pn.send({ type: 'claude_prefs', model: 'bad name;rm', effort: 'high' });
   await until(() => logsOf(data, 'a').includes('모델 이름이 올바르지 않습니다'), '잘못된 모델 이름 거절');
   pn.send({ type: 'claude_prefs', model: '', effort: '' }); // 다음 시험을 위해 기본으로
+});
+
+test('요금제·API 키: 키가 없으면 API 요금제는 쓸 수 없다고 알리고, 저장한 키는 0600 파일에만 남는다', async () => {
+  const KEY = `sk-ant-api03-${'k'.repeat(40)}`;
+  let at = pn.mark();
+  pn.send({ type: 'claude_prefs', model: '', effort: '', billing: 'api' });
+  let env = await pn.waitFor((m) => m.type === 'env', at, 'API 요금제 env');
+  assert.equal(env.claude.ok, false);
+  assert.equal(env.claude.reason, 'no_api_key');
+  at = pn.mark();
+  pn.send({ type: 'claude_prefs', model: '', effort: '', billing: 'sub' }); // 키 저장 뒤 SDK 를 띄우지 않게 구독으로 돌려 둔다
+  env = await pn.waitFor((m) => m.type === 'env', at, '구독 env');
+  assert.equal(env.claude.ok, true);
+  at = pn.mark();
+  pn.send({ type: 'api_key', action: 'save', key: 'nope' });
+  assert.equal((await pn.waitFor((m) => m.type === 'api_key_status', at, '형식 오류')).key.saved, false);
+  at = pn.mark();
+  pn.send({ type: 'api_key', action: 'save', key: KEY });
+  assert.equal((await pn.waitFor((m) => m.type === 'api_key_status', at, '저장')).key.saved, true);
+  assert.equal(fs.readFileSync(keyFile, 'utf8').trim(), KEY);
+  assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+  // 키 값은 데이터 폴더(작업 기록·로그·상태) 어디에도 남지 않는다
+  const leaks = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else if (fs.readFileSync(f, 'utf8').includes(KEY)) leaks.push(f); } };
+  walk(data);
+  assert.deepEqual(leaks, []);
+  at = pn.mark();
+  pn.send({ type: 'api_key', action: 'delete' });
+  assert.equal((await pn.waitFor((m) => m.type === 'api_key_status', at, '삭제')).key.saved, false);
+  assert.equal(fs.existsSync(keyFile), false);
 });
 
 test('탭이 다른 도메인이면 domain_mismatch(can_force)', async () => {

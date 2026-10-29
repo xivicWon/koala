@@ -78,6 +78,7 @@ function connect() {
     if (m.type === 'claude_run') renderClaudeRun(m.model, m.effort);
     if (m.type === 'claude_conn') { claudeConn = m; updateAiDot(); }
     if (m.type === 'claude_usage') onClaudeUsage(m);
+    if (m.type === 'api_key_status') onApiKeyStatus(m);
     if (m.type === 'domain_mismatch') onDomainMismatch(m);
     if (m.type === 'session') renderSession(m.alias);
     if (m.type === 'actor') renderActor(m.actor);
@@ -314,7 +315,9 @@ function renderEnvAlert() {
   } else if (claudeEnv && !claudeEnv.ok) {
     html = {
       not_installed: `<b>이 PC에서 Claude Code를 찾을 수 없습니다.</b> Claude Code를 설치한 뒤(<code>claude.com/claude-code</code>) 호스트를 다시 실행하세요. 다른 위치에 설치했다면 <code>CLAUDE_BIN</code> 환경변수로 경로를 알려 주세요.`,
-      not_logged_in: `<b>Claude Code에 로그인되어 있지 않습니다.</b> 터미널에서 <code>claude auth login</code>을 실행해 로그인하세요.`,
+      not_logged_in: `<b>Claude Code에 로그인되어 있지 않습니다.</b> 터미널에서 <code>claude auth login</code>을 실행해 로그인하세요. API 키로 쓰려면 Claude 설정에서 요금제를 <b>API 키</b>로 바꾸세요.`,
+      no_api_key: `<b>API 요금제에 쓸 키가 없습니다.</b> 헤더의 Claude 버튼 › 요금제에서 Console API 키를 저장하세요.`,
+      bad_api_key: `<b>저장된 API 키가 올바르지 않습니다.</b> 헤더의 Claude 버튼 › 요금제에서 키를 다시 저장하세요.`,
     }[claudeEnv.reason] || `<b>Claude Code 상태를 확인하지 못했습니다.</b> ${esc(claudeEnv.detail || '')}`;
   }
   if (hostUp) hostSeen = true;

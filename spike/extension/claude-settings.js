@@ -2,7 +2,9 @@
 let claudeView = null;
 let claudeTab = 'prompt';
 // 내가 고른 모델·effort(이 확장에 저장, 세트 설정보다 우선). 빈 값은 '기본'(세트 → Claude Code 설정)
-let claudePrefs = { model: '', effort: '' };
+// billing: sub = Claude Code 구독, api = Console API 키(Agent SDK, API 크레딧에서 차감)
+let claudePrefs = { model: '', effort: '', billing: 'sub' };
+const BILLING = [['sub', 'Claude Code 구독'], ['api', 'API 키 (크레딧)']];
 const MODELS = [['', '기본(세트·Claude Code)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['fable', 'Fable']];
 const EFFORT_OPTS = [['', '기본'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
 const claudePrefsReady = chrome.storage.local.get('claudePrefs').then((r) => { if (r?.claudePrefs) claudePrefs = { ...claudePrefs, ...r.claudePrefs }; }).catch(() => {});
@@ -33,6 +35,7 @@ function renderClaudeSheet(body) {
        <div class="cs-sec"><b>③ 프로필 (대상 서비스·계정·사이트 지식)</b> <span class="pf-hint">지시마다 덧붙임</span><pre class="cs-pre mono">${esc(v.profileContext || '(활성 프로필 없음)')}</pre></div>`;
   const busy = aiBusy;
   body.innerHTML = `<div class="cs">
+    ${billingHtml(v, busy)}
     <div class="cs-pick">
       <label><span class="pf-hint">모델</span><select data-cp="model" ${busy ? 'disabled' : ''}>${MODELS.map(([v, t]) => `<option value="${v}" ${claudePrefs.model === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label><span class="pf-hint">effort</span><select data-cp="effort" ${busy ? 'disabled' : ''}>${EFFORT_OPTS.map(([v, t]) => `<option value="${v}" ${claudePrefs.effort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -52,7 +55,8 @@ function renderClaudeSheet(body) {
     <div class="cs-meta">
       <span>지식 <b>${esc(v.versions.knowledge.join(' · ') || '없음')}</b></span>
       <span>프로필 <b>${esc(v.versions.profile || '-')}</b></span>
-      <span>Claude Code <b>${esc(v.claude?.ok ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가')}</b></span>
+      <span>Claude Code <b>${esc(v.claude?.version ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가')}</b></span>
+      <span>실행 <b>${claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</b></span>
     </div>
     <details class="cs-more" ${claudeMore ? 'open' : ''}>
       <summary>자세히: 작업 폴더 · 실행 옵션 · AI에게 전달되는 내용</summary>
@@ -67,6 +71,41 @@ function renderClaudeSheet(body) {
     </details>
   </div>`;
   body.querySelector('.cs-more').addEventListener('toggle', (e) => { claudeMore = e.target.open; });
+}
+
+// ---------- 요금제: 구독(claude 로그인) / API 키. 키는 호스트가 이 PC 파일에만 저장하고 패널로는 있음·없음만 돌려준다 ----------
+function billingHtml(v, busy) {
+  if (!v.billing) return ''; // 옛 호스트
+  const api = claudePrefs.billing === 'api';
+  const k = v.billing.key || {};
+  const keyLine = k.saved
+    ? `<span class="cs-key ok">● 키 저장됨</span> <span class="pf-hint mono" title="${esc(k.file)}">${esc(String(k.file).replace(/^(\/(Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~'))}</span>
+       <span class="grow"></span><button type="button" class="btn sm" data-cs="key-edit">바꾸기</button><button type="button" class="btn sm ghost danger-text" data-cs="key-del" title="Console 키는 만들 때 한 번만 보입니다. 지우면 새로 만들어야 할 수 있습니다">${keyDelArm ? '한 번 더 누르면 지웁니다' : '지우기'}</button>`
+    : `<span class="cs-key ${k.invalid ? 'bad' : 'missing'}">● ${k.invalid ? '저장된 키가 올바르지 않습니다' : '키 없음'}</span>`;
+  const form = !k.saved || keyEditing
+    ? `<div class="cs-key-form">
+         <input type="password" class="pf-input mono" data-cs-key autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-…  (Console › API Keys 에서 만든 키)">
+         <button type="button" class="primary sm" data-cs="key-save">저장</button>
+         ${k.saved ? '<button type="button" class="btn sm ghost" data-cs="key-cancel">취소</button>' : ''}
+       </div>`
+    : '';
+  return `<div class="cs-billing">
+    <div class="cs-bill-h"><span class="pf-hint">요금제</span>
+      <div class="seg" role="radiogroup">${BILLING.map(([b, t]) => `<button type="button" data-cs-bill="${b}" class="${claudePrefs.billing === b ? 'on' : ''}" ${busy ? 'disabled' : ''}>${t}</button>`).join('')}</div>
+    </div>
+    ${api ? `<div class="cs-key-row">${keyLine}</div>${form}
+      <div class="pf-hint">Anthropic Console 의 API 크레딧(프로모션 크레딧 포함)에서 차감됩니다. Agent SDK 로 실행해 요청이 Agent SDK 사용으로 기록됩니다.
+        키는 호스트가 이 PC 파일(본인만 읽기)에만 저장하며 화면·기록·서버로 보내지 않습니다.</div>`
+    : '<div class="pf-hint">이 PC 에 로그인한 Claude Code 구독 한도 안에서 실행합니다.</div>'}
+  </div>`;
+}
+let keyEditing = false;
+let keyDelArm = false; // 지우기는 두 번 눌러야 한다
+function onApiKeyStatus(m) {
+  if (claudeView?.billing) claudeView.billing.key = m.key;
+  if (m.key?.saved) keyEditing = false;
+  keyDelArm = false;
+  if (sheetMode === 'claude') renderSheet();
 }
 
 // ---------- 사용량: 구독 한도(5시간·7일)와 이 세션의 토큰. 호스트가 Claude Code의 rate_limit_event를 넘겨준다 ----------
@@ -98,6 +137,13 @@ function usageRow(label, w) {
 function usageHtml() {
   const l = claudeUsage?.limits;
   const se = claudeUsage?.session;
+  // API 요금제는 구독 한도 대신 이 대화의 비용(추정)을 보여 준다
+  if (claudeUsage?.billing === 'api') {
+    const cost = se?.cost != null
+      ? `<div class="cs-meta"><span>이 대화 비용 <b>$${se.cost.toFixed(4)}</b></span>${se.lastCost != null ? `<span>마지막 지시 <b>$${se.lastCost.toFixed(4)}</b></span>` : ''}<span>응답 <b>${se.turns}회</b></span><span>입력 <b>${fmtTok(se.input)}</b> · 출력 <b>${fmtTok(se.output)}</b> 토큰</span></div>`
+      : '<div class="pf-hint">비용은 AI가 한 번 응답하면 표시됩니다.</div>';
+    return `<div class="cs-usage">${cost}<div class="pf-hint">정가 기준 추정치입니다. 실제 차감액은 Console 의 Usage·Billing 에서 확인하세요.</div></div>`;
+  }
   const limits = l && (l.five_hour || l.seven_day)
     ? `${usageRow('5시간 한도', l.five_hour)}${usageRow('주간 한도', l.seven_day)}
        <div class="pf-hint">Claude Code 구독 한도입니다. AI가 응답할 때마다 갱신됩니다(마지막 ${new Date(l.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}).</div>`
@@ -121,6 +167,34 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (act === 'clear' && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'session_clear' }));
   if (act === 'reset') openSheet('confirm', { alias: sessionAlias, recorded: claudeView?.recorded }); // 옛 호스트는 recorded를 주지 않는다
   if (act === 'reload') { claudeView = null; renderSheet(); loadClaudeView(); }
+  const bill = e.target.closest('[data-cs-bill]')?.dataset.csBill;
+  if (bill && !aiBusy && bill !== claudePrefs.billing) {
+    claudePrefs = { ...claudePrefs, billing: bill };
+    chrome.storage.local.set({ claudePrefs }).catch(() => {});
+    sendClaudePrefs();
+    msg('sys', `Claude 요금제: ${BILLING.find(([b]) => b === bill)[1]}`);
+    renderSheet();
+  }
+  if (act === 'key-edit') { keyEditing = true; renderSheet(); }
+  if (act === 'key-cancel') { keyEditing = false; renderSheet(); }
+  if (act === 'key-del') {
+    if (!keyDelArm) { keyDelArm = true; renderSheet(); setTimeout(() => { if (keyDelArm) { keyDelArm = false; if (sheetMode === 'claude') renderSheet(); } }, 4000); }
+    else if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'api_key', action: 'delete' }));
+  }
+  if (act === 'key-save') saveApiKey();
+});
+// 키는 호스트로 한 번 보내고 입력칸을 바로 비운다(패널에는 남기지 않는다)
+function saveApiKey() {
+  const el = document.querySelector('[data-cs-key]');
+  const key = el?.value.trim();
+  if (!key) return;
+  if (!/^sk-ant-[\w-]{20,}$/.test(key)) { msg('err', 'API 키 형식이 아닙니다(sk-ant- 로 시작하는 Console 키)'); return; }
+  if (ws?.readyState !== 1) { msg('err', '호스트에 연결되지 않아 저장하지 못했습니다'); return; }
+  ws.send(JSON.stringify({ type: 'api_key', action: 'save', key }));
+  el.value = '';
+}
+document.getElementById('sheet-body').addEventListener('keydown', (e) => {
+  if (sheetMode === 'claude' && e.target.matches('[data-cs-key]') && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveApiKey(); }
 });
 document.getElementById('claude-btn').onclick = () => { claudeView = null; openSheet('claude'); loadClaudeView(); };
 
@@ -170,7 +244,8 @@ function updateClaudeTip() {
     `모델  ${claudeRun.model || '아직 실행 전'}`,
     `effort  ${claudeRun.effort || '-'}`,
     `세션  ${sessionAlias || (claudeConn.state === 'connecting' ? '여는 중' : '없음 (곧 새로 엽니다)')}`,
-    ...(claudeUsage?.limits?.five_hour ? [`사용량  5시간 ${pct(claudeUsage.limits.five_hour.used)}% · 주간 ${pct(claudeUsage.limits.seven_day?.used)}%`] : []),
+    ...(claudeUsage?.billing === 'api' ? [`요금제  API 키${claudeUsage.session?.cost != null ? ` · 이 대화 $${claudeUsage.session.cost.toFixed(4)}` : ''}`] : []),
+    ...(claudeUsage?.billing !== 'api' && claudeUsage?.limits?.five_hour ? [`사용량  5시간 ${pct(claudeUsage.limits.five_hour.used)}% · 주간 ${pct(claudeUsage.limits.seven_day?.used)}%`] : []),
     '클릭하면 Claude 설정을 엽니다',
   ].join('\n');
   $('claude-btn').removeAttribute('title');

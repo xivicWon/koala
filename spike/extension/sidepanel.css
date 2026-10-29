@@ -825,6 +825,17 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .steps-all { margin: 6px 0 4px; padding-left: 18px; line-height: 1.6; color: var(--text-2); }
 .danger-bg { background: var(--fail) !important; border-color: var(--fail) !important; color: var(--bg) !important; }
 /* Claude 설정: 모델·effort 고르기 */
+/* 요금제: 구독 / API 키 */
+.cs-billing { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.cs-bill-h { display: flex; align-items: center; gap: 10px; }
+.cs-key-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.cs-key-row .grow { flex: 1; }
+.cs-key-row .mono { overflow-wrap: anywhere; }
+.cs-key { font-weight: 600; }
+.cs-key.ok { color: var(--ok); } .cs-key.bad { color: var(--fail); } .cs-key.missing { color: var(--warn); }
+.cs-billing .pf-hint { margin-left: 0; }
+.cs-key-form { display: flex; gap: 6px; }
+.cs-key-form input { flex: 1; min-width: 0; height: 28px; font-size: 12px; }
 .cs-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
 .cs-pick label { display: inline-flex; align-items: center; gap: 6px; }
 .cs-pick select { height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12px; }
