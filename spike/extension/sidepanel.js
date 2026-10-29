@@ -406,7 +406,16 @@ async function ensureAttached() {
   tabId = tab.id;
   if (attachedTo !== tabId) {
     if (attachedTo) await chrome.debugger.detach({ tabId: attachedTo }).catch(() => {});
-    await chrome.debugger.attach({ tabId }, '1.3');
+    try {
+      await chrome.debugger.attach({ tabId }, '1.3');
+    } catch (e) {
+      if (!/another debugger is already attached/i.test(e.message)) throw e;
+      // 이 확장의 다른 사이드패널(다른 창에서 연 패널, 다시 연 패널)이 잡고 있으면 풀고 다시 붙는다. 디버거 연결은 확장 단위라 여기서 풀 수 있다
+      await chrome.debugger.detach({ tabId }).catch(() => {});
+      try { await chrome.debugger.attach({ tabId }, '1.3'); } catch {
+        throw new Error('다른 디버거(다른 확장 프로그램이나 이 탭의 개발자 도구)가 이 탭을 잡고 있어 조작할 수 없습니다. 그쪽을 닫거나 다른 탭을 작업 탭으로 고르세요');
+      }
+    }
     attachedTo = tabId;
     await cdp('Network.enable');
     await cdp('Runtime.enable');
