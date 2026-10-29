@@ -2,12 +2,12 @@
 # koala 설치·재설치 (macOS / Linux)
 #   curl -fsSL https://raw.githubusercontent.com/xivicWon/koala/main/install.sh | sh
 #   옵션(환경변수): KOALA_HOME=설치 위치(기본 ~/koala)  KOALA_TAG=v0.2.0(기본 최신 릴리즈)  KOALA_GRAPH=1(경로 그래프 DB도 켬)
-#   시험용: KOALA_REPO=받을 저장소  KOALA_GITHUB_API=릴리즈 API 주소  KOALA_NM_DIRS=Native Messaging 등록 폴더(줄바꿈으로 여러 개)  KOALA_LAUNCHER=실행기 경로
+#   시험용: KOALA_REPO=받을 저장소  KOALA_GITHUB_WEB=릴리즈 웹 주소(최신 태그를 /releases/latest 이동 주소로 읽음)  KOALA_NM_DIRS=Native Messaging 등록 폴더(줄바꿈으로 여러 개)  KOALA_LAUNCHER=실행기 경로
 # 하는 일: 최신 GitHub 릴리즈 태그를 받고 → 의존성 설치 → .env 준비 → 사이드패널이 호스트를 자동으로 켜도록 등록
 set -eu
 
 GITHUB_REPO=xivicWon/koala
-GITHUB_API=${KOALA_GITHUB_API:-https://api.github.com}
+GITHUB_WEB=${KOALA_GITHUB_WEB:-https://github.com}
 REPO=${KOALA_REPO:-https://github.com/$GITHUB_REPO.git}
 DEST=${KOALA_HOME:-$HOME/koala}
 NM_NAME=io.github.xivicwon.koala
@@ -33,9 +33,15 @@ fi
 if [ -n "${KOALA_TAG:-}" ]; then
   TAG=$KOALA_TAG
 else
-  TAG=$(curl -fsSL -H 'Accept: application/vnd.github+json' "$GITHUB_API/repos/$GITHUB_REPO/releases/latest" 2>/dev/null \
-    | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).tag_name||"")}catch{}})') || true
-  [ -n "$TAG" ] || die "GitHub에서 릴리즈를 찾지 못했습니다(https://github.com/$GITHUB_REPO/releases). 인터넷 연결을 확인하세요."
+  # 최신 릴리즈는 웹 주소 /releases/latest 가 넘겨 주는 이동 주소(…/releases/tag/vX.Y.Z)에서 읽는다.
+  # GitHub API 는 로그인 없이 IP당 시간당 60번이라 같은 네트워크에서 금방 막힌다. 그래도 못 읽으면 저장소 태그 중 가장 높은 버전을 쓴다
+  TAG=$(curl -fsSI "$GITHUB_WEB/$GITHUB_REPO/releases/latest" 2>/dev/null | tr -d '\r' \
+    | sed -n 's#^[Ll]ocation: .*/releases/tag/\(.*\)$#\1#p' | tail -n 1) || true
+  if [ -z "$TAG" ]; then
+    TAG=$(git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null | sed 's#.*refs/tags/##' \
+      | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const n=(t)=>t.slice(1).split(".").map(Number);const v=d.split(/\s+/).filter((t)=>/^v\d+\.\d+\.\d+$/.test(t)).sort((a,b)=>{const x=n(a),y=n(b);return x[0]-y[0]||x[1]-y[1]||x[2]-y[2]});process.stdout.write(v.pop()||"")})') || true
+  fi
+  [ -n "$TAG" ] || die "GitHub에서 최신 릴리즈를 알아내지 못했습니다(https://github.com/$GITHUB_REPO/releases). 인터넷 연결을 확인하거나, 버전을 지정해 다시 실행하세요: … | KOALA_TAG=v0.5.1 sh"
 fi
 say "koala $TAG 를 $DEST 에 설치합니다"
 

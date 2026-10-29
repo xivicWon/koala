@@ -19,7 +19,7 @@ gh release create v0.2.1 --target main --title v0.2.1 --notes-file <(awk '/^## 0
 - 릴리즈 노트는 사이드패널의 "변경 내용"에 그대로 보인다.
 - 초안(draft)이나 사전 릴리즈(pre-release)는 업데이트 대상이 아니다(GitHub의 latest 릴리즈만 본다).
 - 태그만 push하고 릴리즈를 만들지 않으면 사용자에게 가지 않는다. 설치(`install.sh`)와 업데이트 확인 모두 GitHub의 latest 릴리즈를 본다. 저장소에 릴리즈가 하나도 없으면 `install.sh`는 설치를 멈춘다.
-- 시험: 로컬 bare 저장소와 가짜 API로 돌려 볼 수 있다. `KOALA_REPO=<bare 저장소> KOALA_GITHUB_API=<가짜 API> sh install.sh`, 설치본에서 `KOALA_GITHUB_API=<가짜 API>`로 호스트를 켠다.
+- 시험: 로컬 bare 저장소와 가짜 API로 돌려 볼 수 있다. `KOALA_REPO=<bare 저장소> KOALA_GITHUB_WEB=<가짜 웹 주소> sh install.sh`(최신 태그는 `<웹 주소>/xivicWon/koala/releases/latest`의 이동 주소로, 실패하면 `KOALA_REPO`의 태그 목록으로 정한다), 설치본에서 `KOALA_GITHUB_API=<가짜 API>`로 호스트를 켠다.
 
 ## 3. 사용자 쪽에서 일어나는 일
 
