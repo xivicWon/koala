@@ -99,8 +99,15 @@ export async function apply(tag, log = () => {}) {
   const lockChanged = await depsChanged('HEAD', tag);
   await git('-c', 'advice.detachedHead=false', 'checkout', '--quiet', tag);
   if (lockChanged) {
-    log('의존성을 다시 설치하는 중(npm ci)');
-    await run(nodeTool('npm'), ['ci', '--no-audit', '--no-fund'], { cwd: dir, shell: process.platform === 'win32' });
+    log('이번 릴리즈는 사용하는 패키지가 바뀌어 다시 설치합니다(npm ci)');
+    try {
+      await run(nodeTool('npm'), ['ci', '--no-audit', '--no-fund'], { cwd: dir, shell: process.platform === 'win32' });
+    } catch (e) {
+      // 새 코드가 옛 패키지로 돌지 않게 원래 릴리즈로 되돌린다. 원인은 짧게만 알린다
+      await git('-c', 'advice.detachedHead=false', 'checkout', '--quiet', cur.tag).catch(() => {});
+      const why = e.code === 'ENOENT' ? 'npm 을 찾지 못했습니다' : String(e.stderr || e.message).trim().split('\n').slice(-1)[0];
+      throw new Error(`패키지를 설치하지 못해 ${cur.tag} 그대로 둡니다(${why}). 터미널에서 'cd ${dir} && npm ci' 후 다시 업데이트하세요`);
+    }
   }
   return { from: cur.version, to: version() };
 }

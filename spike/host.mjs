@@ -55,6 +55,7 @@ function claudeExec(args) {
   const [cmd, argv] = claudeCmd(args);
   return execFileSync(cmd, argv, { encoding: 'utf8', env, timeout: 20000, shell: WIN && CLAUDE.endsWith('.cmd') });
 }
+let lastClaudeLine = '';
 function checkClaude() {
   CLAUDE = findClaude();
   if (!CLAUDE) {
@@ -72,7 +73,9 @@ function checkClaude() {
   } catch (e) {
     claudeEnv = { ok: false, reason: 'check_failed', detail: String(e.message).slice(0, 200) };
   }
-  console.log(`[claude] ${claudeEnv.ok ? `사용 가능 · ${claudeEnv.version}` : `문제: ${claudeEnv.reason}`} · ${CLAUDE ?? '경로 없음'}`);
+  const line = `[claude] ${claudeEnv.ok ? `사용 가능 · ${claudeEnv.version}` : `문제: ${claudeEnv.reason}`} · ${CLAUDE ?? '경로 없음'}`;
+  if (line !== lastClaudeLine) console.log(line);
+  lastClaudeLine = line;
   return claudeEnv;
 }
 checkClaude();
@@ -548,12 +551,13 @@ function spawnClaude(extra, ws) {
       handleEvent(ev);
     }
   });
-  p.stderr.on('data', (d) => { if (p.stopped) return; p.lastErr = String(d); log('err', String(d).trim()); });
+  p.stderr.on('data', (d) => { if (p.stopped) return; p.lastErr = String(d); console.log(`[claude stderr] ${String(d).trim()}`); });
   p.on('exit', (code) => {
     if (proc === p) proc = null;
     if (!PERSIST) send({ type: 'busy', busy: false });
     // 새 시나리오로 일부러 끝낸 경우(p.stopped)는 오류가 아니다
-    if (code && !p.stopped) log('err', `claude 종료 코드 ${code}`);
+    // 미리 연결 중의 실패는 warmFailed 가 알린다. 작업 중에 끝났으면 원인(마지막 stderr 한 줄)과 함께 알린다
+    if (code && !p.stopped && warming?.proc !== p) log('err', `Claude가 끝났습니다(종료 코드 ${code})${lastLine(p.lastErr) ? ` · ${lastLine(p.lastErr)}` : ''}`);
     if (!p.stopped) {
       endJob(false, 'AI 프로세스가 끝났습니다');
       if (PERSIST) {
@@ -1596,15 +1600,23 @@ function warmFailed(reason) {
     log('sys', '이전 대화를 이어받을 수 없어 새 세션을 엽니다');
     return warmClaude();
   }
-  retryWarm(reason);
+  retryWarm(lastLine(p?.lastErr) || reason);
 }
-// 실패하면 잠시 뒤 다시 띄운다(5초, 10초). 연달아 3번 실패하면 멈추고 다음 지시 때 다시 시도한다
+// 실패하면 잠시 뒤 다시 띄운다(5초, 10초). 다시 시도하는 동안은 안내만, 연달아 3번 실패하면 오류로 알리고 다음 지시 때 다시 시도한다
+const lastLine = (s) => String(s || '').trim().split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 200) || '';
 function retryWarm(reason) {
   warmFails += 1;
-  sendConn('failed', reason);
   const again = warmFails < 3;
-  log('err', `Claude 연결이 끊겼습니다: ${reason}${again ? ' · 잠시 뒤 다시 연결합니다' : ' · 다음 지시 때 다시 연결합니다'}`);
-  if (again) scheduleWarm(5000 * warmFails);
+  const why = reason;
+  if (again) {
+    sendConn('connecting');
+    log('sys', `Claude 연결을 다시 시도합니다(${warmFails}/3)`);
+    console.log(`[claude] 연결 실패 ${warmFails}/3: ${why}`);
+    scheduleWarm(5000 * warmFails);
+  } else {
+    sendConn('failed', why);
+    log('err', `Claude에 연결하지 못했습니다: ${why} · 다음 지시 때 다시 연결합니다`);
+  }
 }
 
 // ---------- 저장된 상태 불러오기 ----------
@@ -1755,7 +1767,8 @@ const SET_SCOPED = new Set([...SET_PICK, 'instruct', 'tests_save', 'run_code', '
   'add_tests', 'derive', 'reinforce', 'publish', 'reset', 'domain_override', 'open_logs']);
 // 연결이 여럿이어도(패널 다시 열기, 점검용 접속) 가장 최근에 열린 것을 패널로 쓰고, 그것이 끊기면 남은 연결로 돌아간다
 const sockets = new Set();
-new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied(req), false) }).on('connection', (ws) => {
+// 포트 오류는 http 서버의 'error' 처리(아래 listen)가 맡는다. WebSocketServer 도 같은 오류를 다시 내므로 여기서 받아 둔다
+new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied(req), false) }).on('error', () => {}).on('connection', (ws) => {
   sockets.add(ws);
   panel = ws;
   console.log('사이드패널 연결됨');
@@ -1889,11 +1902,13 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
 //    package.json 을 몇 초마다 지켜보다가 바뀌면 바로 사이드패널에 알린다
 const RUNNING_VERSION = update.version();
 let updateInfo = null;
+let loggedRelease = null; // 같은 새 릴리즈를 1분마다 기록하지 않는다
 async function checkUpdate(force = false) {
   // home: 이 호스트의 폴더. 확장이 다른 폴더(다른 설치본)에서 불러온 것이면 사이드패널이 알린다
   updateInfo = { ...(await update.check()), version: RUNNING_VERSION, disk: update.version(), home: path.dirname(path.resolve(dir)), repo: update.repo() };
   updateInfo.stale = updateInfo.disk !== RUNNING_VERSION;
-  if (updateInfo.available) console.log(`[update] 새 릴리즈 ${updateInfo.latest.tag} (지금 v${updateInfo.version})`);
+  if (updateInfo.available && updateInfo.latest.tag !== loggedRelease) console.log(`[update] 새 릴리즈 ${updateInfo.latest.tag} (지금 v${updateInfo.version})`);
+  loggedRelease = updateInfo.available ? updateInfo.latest.tag : null;
   if (force || updateInfo.available || updateInfo.stale) sendUpdate();
 }
 fs.watchFile(path.join(dir, 'package.json'), { interval: 3000 }, () => checkUpdate(true));
@@ -1927,6 +1942,10 @@ function restartSelf() {
 let listenTries = 0;
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE' && process.env.KOALA_WAIT_PORT && listenTries++ < 40) return setTimeout(() => server.listen(PORT, '127.0.0.1'), 250);
+  if (e.code === 'EADDRINUSE') {
+    console.log(`[host] 이미 켜진 호스트가 ${PORT} 포트를 쓰고 있어 이 실행은 끝냅니다`);
+    process.exit(process.env.KOALA_WAIT_PORT ? 1 : 0);
+  }
   throw e;
 });
 server.listen(PORT, '127.0.0.1', () => {
