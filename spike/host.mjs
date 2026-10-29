@@ -22,6 +22,7 @@ import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 import * as sdk from './claude-sdk.mjs';
+import { startTabRelay, tabSpecSource, tabSpecFile } from './tab-relay.mjs';
 
 // 브라우저(Native Messaging)가 켠 호스트는 PATH가 짧아 npx·npm·node 를 못 찾는다. 지금 도는 node 의 폴더를 앞에 붙인다
 {
@@ -1249,14 +1250,66 @@ function flatResults(report) {
 
 // 로컬 실행은 기본으로 브라우저 창을 띄워 사용자가 직접 볼 수 있게 한다(KOALA_HEADED=0 이면 숨김)
 const HEADED = process.env.KOALA_HEADED !== '0';
-function runSpec(file, onProgress, { list = false, grep = null } = {}) {
+// 실행 위치: tab = 사용자가 보고 있는 작업 탭(확장 중계로 조작이 보인다), browser = 새 브라우저 창. 패널에서 고른다
+let runWhere = 'tab';
+let tabRelay = null;     // 작업 탭 실행 중인 중계
+const relayPend = new Map();
+let relaySeq = 0;
+let relayReady = null;   // 패널의 relay_ready 를 기다리는 resolve
+// 작업 탭에 CDP 명령 하나를 보내고 답을 받는다(사이드패널이 chrome.debugger 로 보낸다)
+function relayCall(method, params) {
+  if (panel?.readyState !== 1) return Promise.resolve({ error: { message: '사이드패널이 연결되어 있지 않습니다' } });
+  const id = ++relaySeq;
+  return new Promise((resolve) => { relayPend.set(id, resolve); panel.send(JSON.stringify({ type: 'relay_cmd', id, method, params })); });
+}
+function relayAbort(why) {
+  for (const r of relayPend.values()) r({ error: { message: why } });
+  relayPend.clear();
+  tabRelay?.drop();
+}
+
+function runSpec(file, onProgress, opts = {}) {
+  if (opts.list || runWhere !== 'tab') return spawnPlaywright(file, onProgress, opts);
+  return runInTab(file, onProgress, opts);
+}
+
+// 작업 탭에서 실행: 패널에 작업 탭을 붙여 달라고 하고, 중계를 띄워 Playwright 를 거기에 붙인다.
+// 생성 코드는 import 만 바꾼 사본으로 돌리고(원본은 그대로) 끝나면 지운다
+async function runInTab(file, onProgress, opts) {
+  if (panel?.readyState !== 1) {
+    log('sys', '사이드패널이 연결되어 있지 않아 새 브라우저 창에서 실행합니다');
+    return spawnPlaywright(file, onProgress, opts);
+  }
+  const target = await new Promise((resolve) => {
+    relayReady = resolve;
+    panel.send(JSON.stringify({ type: 'relay_open' }));
+    setTimeout(() => resolve({ error: '사이드패널이 작업 탭을 준비하지 못했습니다(5초)' }), 5000);
+  });
+  relayReady = null;
+  if (target.error) return { results: [], error: `작업 탭에서 실행하지 못했습니다: ${target.error}` };
+  const tmp = tabSpecFile(file);
+  tabRelay = await startTabRelay({ target, toPanel: relayCall });
+  log('sys', `작업 탭${target.label ? ` ${target.label}` : ''}에서 실행합니다 · ${target.url}`);
+  try {
+    fs.writeFileSync(tmp, tabSpecSource(fs.readFileSync(file, 'utf8')));
+    return await spawnPlaywright(tmp, onProgress, { ...opts, env: { KOALA_TAB_RELAY: tabRelay.url }, headed: false });
+  } finally {
+    fs.rmSync(tmp, { force: true });
+    tabRelay.close();
+    tabRelay = null;
+    relayPend.clear();
+    if (panel?.readyState === 1) panel.send(JSON.stringify({ type: 'relay_close' }));
+  }
+}
+
+function spawnPlaywright(file, onProgress, { list = false, grep = null, env: extraEnv = {}, headed = HEADED } = {}) {
   const outFile = path.join(os.tmpdir(), `koa-pw-${Date.now()}.json`);
-  const env = { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: outFile, KOALA_BASE_URL: profile?.target?.base_url || process.env.KOALA_BASE_URL || '' };
+  const env = { ...process.env, ...extraEnv, PLAYWRIGHT_JSON_OUTPUT_NAME: outFile, KOALA_BASE_URL: profile?.target?.base_url || process.env.KOALA_BASE_URL || '' };
   for (const a of profile?.accounts || []) { env[`${a.key}_USER`] = secretValue(`${a.key}_USER`); env[`${a.key}_PASS`] = secretValue(`${a.key}_PASS`); }
   // 역할이 생기기 전 코드(process.env.KOALA_USER)는 기본 역할 계정으로 돈다
   if (!env.KOALA_USER) { env.KOALA_USER = secretValue('KOALA_USER'); env.KOALA_PASS = secretValue('KOALA_PASS'); }
   return new Promise((resolve) => {
-    const p = spawn(update.nodeTool('npx'), playwrightArgs(file, { cwd: dir, list, grep, headed: HEADED, win: WIN }), { cwd: dir, env, shell: WIN });
+    const p = spawn(update.nodeTool('npx'), playwrightArgs(file, { cwd: dir, list, grep, headed, win: WIN }), { cwd: dir, env, shell: WIN });
     let err = '';
     let buf = '';
     p.stderr.on('data', (d) => { err += d; });
@@ -1378,7 +1431,7 @@ async function runAndReport(id, file, code, { grep = null, merge = false } = {})
   const env = [...new Set(['KOALA_BASE_URL', ...[...code.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1])])];
   codeRunning = true;
   log('sys', `테스트를 로컬에서 실행합니다 · ${file}`);
-  stepJob('run', '브라우저를 여는 중');
+  stepJob('run', runWhere === 'tab' && panel ? '작업 탭에 붙는 중' : '브라우저를 여는 중');
   send({ type: 'suite_code', id, code, file, env, running: true, merge });
   const t = Date.now();
   // 테스트가 끝날 때마다 사이드패널·타임라인에 바로 보여 준다
@@ -1820,6 +1873,12 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
   sendSets(ws);
   ws.on('message', (raw) => {
     const m = JSON.parse(raw);
+    // 작업 탭 실행 중계: 양이 많아 작업 기록에는 남기지 않는다
+    if (m.type === 'relay_res') { relayPend.get(m.id)?.(m); relayPend.delete(m.id); return; }
+    if (m.type === 'relay_ev') { tabRelay?.event(m.method, m.params); return; }
+    if (m.type === 'relay_ready') { relayReady?.(m); return; }
+    if (m.type === 'relay_lost') { log('err', `작업 탭을 잃어 실행을 멈춥니다: ${m.reason || '탭이 닫혔거나 디버거가 해제됨'}`); relayAbort('작업 탭을 잃었습니다'); return; }
+    if (m.type === 'run_where') { runWhere = m.where === 'browser' ? 'browser' : 'tab'; return; }
     if (m.type === 'tool_result') { pending.get(m.id)?.(m); pending.delete(m.id); }
     // 사용자가 누른 것은 작업 기록에 남긴다(지시 원문은 instruct 에서)
     else if (!['set', 'instruct', 'list_code', 'update_check'].includes(m.type)) audit('panel', { type: m.type, id: m.suite?.id || m.id, ids: m.ids });
@@ -1991,6 +2050,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
   });
   ws.on('close', () => {
     sockets.delete(ws);
+    if (panel === ws && tabRelay) relayAbort('사이드패널 연결이 끊겼습니다');
     if (panel === ws) panel = [...sockets].filter((x) => x.readyState === 1).at(-1) || null;
   });
 });

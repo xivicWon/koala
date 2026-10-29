@@ -95,6 +95,7 @@ async function connectPanel(h) {
     }
   });
   await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+  pn.send({ type: 'run_where', where: 'browser' }); // 가짜 패널은 작업 탭 중계를 하지 않는다(실제 패널은 연결할 때 고른 위치를 알린다)
   return pn;
 }
 
@@ -719,4 +720,20 @@ test('migrate: 옮긴 세트의 역할·기본 역할이 호스트 프로필과 
   } finally {
     fs.rmSync(old, { recursive: true, force: true });
   }
+});
+
+test('작업 탭 실행: 패널이 작업 탭을 준비하지 못하면 기다리다 오류로 끝낸다(새 브라우저로 몰래 바꾸지 않음)', async () => {
+  pn.send({ type: 'run_where', where: 'tab' });
+  const code = path.join(data, 'sets', 'a', 'tests', 'code', 'a.spec.ts');
+  fs.mkdirSync(path.dirname(code), { recursive: true });
+  fs.writeFileSync(code, "import { test } from '@playwright/test';\ntest('SC-1 x', async () => {});\n");
+  pn.send({ type: 'set', id: 'a', prefs: { accounts: [] } });
+  await sleep(300);
+  const at = pn.mark();
+  pn.send({ type: 'run_code', suite: { scenarios: [{ id: 'SC-1', title: 'x', given: [], when: [], then: [] }], cases: [] }, ids: [] });
+  await pn.waitFor((m) => m.type === 'relay_open', at, 'relay_open 요청');
+  // 답하지 않는다 → 5초 뒤 오류
+  await until(() => pn.msgs.slice(at).some((m) => m.type === 'log' && /작업 탭에서 실행하지 못했습니다/.test(m.text)), '작업 탭 실행 실패 안내', 9000);
+  assert.ok(!fs.readdirSync(path.dirname(code)).some((f) => f.includes('koala-tab')), '사본이 남지 않는다');
+  pn.send({ type: 'run_where', where: 'browser' });
 });

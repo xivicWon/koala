@@ -13,7 +13,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.KOALA_BASE_URL,
     channel: 'chrome',
-    trace: 'on',
+    trace: process.env.KOALA_TAB_RELAY ? 'off' : 'on', // 작업 탭 실행(중계)에서는 끈다: 화면 녹화 프레임이 확장을 거쳐 오가며 느려진다
     screenshot: 'on',
   },
   projects: [

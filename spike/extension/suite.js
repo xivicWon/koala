@@ -104,6 +104,11 @@ const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span
 let suiteEdits = new Map(); // 항목 id → 바꾼 필드 Set. '' 는 목록 전체 필드(applied)
 let suiteSent = null;       // { seq, edits } 보냈지만 아직 받았다는 답이 없는 것
 let suiteSeq = 0;
+// AI 작업·테스트 실행 중이거나, 방금 보낸 요청이 아직 작업으로 잡히지 않았으면(호스트의 busy 가 오기 전) AI 버튼을 잠근다
+let suiteSentAt = 0;
+const suiteLocked = () => aiBusy || !!suite?.code?.running || Date.now() - suiteSentAt < 8000;
+const lockWhy = () => (aiBusy ? 'AI가 작업 중입니다. 끝난 뒤 누르세요' : suite?.code?.running ? '테스트를 실행하는 중입니다. 끝난 뒤 누르세요' : '요청을 보냈습니다. AI가 시작하기를 기다리는 중입니다');
+function markSent() { suiteSentAt = Date.now(); setTimeout(() => { if (sheetMode === 'suite') renderSheet(); }, 8100); }
 const hostWorking = () => (typeof jobNow !== 'undefined' && !!jobNow && !jobNow.done) || !!suite?.code?.running;
 function markEdit(id, ...fields) {
   suiteSaveFailed = false; // 사용자가 다시 바꿨다: 다음 저장을 보낸다
@@ -326,7 +331,7 @@ function renderSuiteSheet(body) {
   ];
   body.innerHTML = `<div class="plan">
     <div class="pf-row"><b>${esc(suite.name)}</b><span class="grow"></span>
-      <button type="button" class="btn sm" data-suite="add-open" ${aiBusy ? 'disabled' : ''} title="생각한 시나리오나 누락된 테스트를 이 묶음에 덧붙입니다(기존 항목은 그대로)">+ 테스트 추가</button>
+      <button type="button" class="btn sm" data-suite="add-open" ${suiteLocked() ? 'disabled' : ''} title="생각한 시나리오나 누락된 테스트를 이 묶음에 덧붙입니다(기존 항목은 그대로)">+ 테스트 추가</button>
       <button type="button" class="btn sm danger-text" data-clear="all" ${clearBlocked() ? 'disabled' : ''} title="${esc(clearBlocked() || 'BDD·TDD·흐름·예외 점검표·테스트 코드·실행 결과를 모두 지우고 처음부터 시작합니다(지우기 전 목록은 세트 폴더에 보관)')}">초기화</button>
       <span class="tag ${suiteApplied ? '' : 'warn'}">${suiteApplied ? '반영됨' : '고르는 중'}</span>
       ${suiteBase ? `<span class="tag">서버 v${suiteBase}</span>` : ''}</div>
@@ -355,12 +360,12 @@ function renderSuiteSheet(body) {
           : !codeFresh() ? `<b class="next-step">${suite.code?.source ? '채택이 바뀌었습니다 · 코드를 다시 생성하세요' : '반영됨 · 코드를 생성하세요'}</b>`
           : `로컬 실행 통과 ${suite.code.summary?.passed ?? 0}/${suite.code.results?.length ?? 0}${suite.code.summary?.failed ? ` · 실패 ${suite.code.summary.failed}` : ''}${suiteBase ? ` · 서버 v${suiteBase}` : ''}${deployServer() ? '' : ' · <b class="next-step">세트에 배포 서버가 없습니다 · 세트 정의에 있어야 서버 전송을 쓸 수 있습니다</b>'}`}</span>
       <span class="grow"></span>
-      <button type="button" class="btn" data-suite="reinforce" ${todo ? '' : 'disabled'} title="미수행 예외·오류를 실제로 수행하고(필요하면 오류 주입) 초안을 갱신합니다">예외·오류 보강 수행</button>
-      <button type="button" class="btn" data-suite="tags" title="서버 태그 목록 기준으로 자동 태그와 AI 판단 태그를 붙입니다(사람이 붙인 태그는 유지)">태그 붙이기</button>
+      <button type="button" class="btn" data-suite="reinforce" ${todo && !suiteLocked() ? '' : 'disabled'} title="${suiteLocked() ? `${lockWhy()} · ` : ''}미수행 예외·오류를 실제로 수행하고(필요하면 오류 주입) 초안을 갱신합니다">예외·오류 보강 수행</button>
+      <button type="button" class="btn" data-suite="tags" ${suiteLocked() ? 'disabled' : ''} title="${suiteLocked() ? `${lockWhy()} · ` : ''}서버 태그 목록 기준으로 자동 태그와 AI 판단 태그를 붙입니다(사람이 붙인 태그는 유지)">태그 붙이기</button>
       ${tagsOnly() ? `<button type="button" class="primary" data-suite="retag" ${suiteApplied && !allTagProblems().length ? '' : 'disabled'} title="태그·이슈만 바뀌었습니다. AI 없이 코드의 태그만 바꾸고 목록 검사만 합니다(테스트 실행 없음, 지난 실행 결과 유지)">태그만 코드에 반영</button>` : ''}
-      ${canAppend() ? `<button type="button" class="primary" data-suite="append" ${suiteApplied && !aiBusy && !allTagProblems().length ? '' : 'disabled'} title="코드가 없는 새 항목만 AI가 써서 기존 파일 끝에 덧붙이고, 새 테스트만 실행합니다">새 테스트 코드 추가 (${missingCode().length})</button>` : ''}
-      ${needRun() ? `<button type="button" class="primary" data-suite="run" ${aiBusy ? 'disabled' : ''} title="코드는 그대로 두고, 실행 결과가 없는 테스트만 실행합니다(AI 없음)">테스트 실행 (${notRun().length})</button>` : ''}
-      <button type="button" class="${suiteApplied && !codeFresh() && !tagsOnly() && !needRun() && !canAppend() ? 'primary' : 'btn'}" data-suite="code" ${suiteApplied && !suite.code?.running && !allTagProblems().length ? '' : 'disabled'} title="채택한 테스트로 Playwright 코드를 만들고 로컬에서 실행해 확인합니다">${suite.code?.source ? '코드 다시 생성' : '코드 생성'}</button>
+      ${canAppend() ? `<button type="button" class="primary" data-suite="append" ${suiteApplied && !suiteLocked() && !allTagProblems().length ? '' : 'disabled'} title="코드가 없는 새 항목만 AI가 써서 기존 파일 끝에 덧붙이고, 새 테스트만 실행합니다">새 테스트 코드 추가 (${missingCode().length})</button>` : ''}
+      ${needRun() ? `<button type="button" class="primary" data-suite="run" ${suiteLocked() ? 'disabled' : ''} title="코드는 그대로 두고, 실행 결과가 없는 테스트만 실행합니다(AI 없음)">테스트 실행 (${notRun().length})</button>` : ''}
+      <button type="button" class="${suiteApplied && !codeFresh() && !tagsOnly() && !needRun() && !canAppend() ? 'primary' : 'btn'}" data-suite="code" ${suiteApplied && !suiteLocked() && !allTagProblems().length ? '' : 'disabled'} title="${suiteLocked() ? `${lockWhy()} · ` : ''}채택한 테스트로 Playwright 코드를 만들고 로컬에서 실행해 확인합니다">${suite.code?.source ? '코드 다시 생성' : '코드 생성'}</button>
       <button type="button" class="${codeFresh() && deployServer() ? 'primary' : 'btn'}" data-suite="publish" ${suiteApplied && codeFresh() && deployServer() ? '' : 'disabled'} title="${!deployServer() ? '세트에 배포 서버가 없습니다. 서버 세트는 서버에서, 이 PC 전용 세트는 세트 → 고치기에서 넣습니다' : codeFresh() ? `코드와 실행에 필요한 환경변수 목록을 함께 ${deployServer()}로 보냅니다` : '먼저 코드를 생성하세요'}">서버 전송</button>
     </div>
   </div>`;
@@ -371,7 +376,7 @@ const STEPS = [
   ['do', '수행', '입력창에 시험할 일을 지시하면 AI가 작업 탭에서 직접 해 봅니다. 예: "로그인해서 휴가 신청서를 작성해줘"'],
   ['make', '테스트 만들기', '수행이 끝나면 입력창에 "지금까지 한 걸로 테스트 만들어줘"라고 합니다. BDD 시나리오·TDD 케이스 초안이 이 목록에 생깁니다. 빠진 것은 위쪽 <b>+ 테스트 추가</b>로 더합니다.'],
   ['pick', '고르고 반영', '<b>BDD</b>·<b>TDD</b> 탭에서 쓸 항목만 체크(채택)하고 탭 맨 위의 <b>반영</b>을 누릅니다. 미채택 항목은 보관되고, 아예 빼려면 카드의 휴지통으로 지웁니다.'],
-  ['code', '코드 생성·실행', '<b>테스트 코드</b> 탭에서 아래 <b>코드 생성</b>을 누르면 채택한 테스트로 Playwright 코드를 만들고, 별도 Chrome 창에서 실행해 결과를 <b>테스트 코드</b> 탭에 보여 줍니다.'],
+  ['code', '코드 생성·실행', '<b>테스트 코드</b> 탭에서 아래 <b>코드 생성</b>을 누르면 채택한 테스트로 Playwright 코드를 만들고, 작업 탭(또는 고른 경우 새 브라우저 창)에서 실행해 결과를 보여 줍니다.'],
   ['send', '서버 전송', '로컬 실행이 끝나면 아래 <b>서버 전송</b>으로 세트의 배포 서버에 보냅니다(아직 임시 형태).'],
 ];
 function suiteStepNow() {
@@ -474,12 +479,21 @@ function codeBadge(item) {
   return `<span class="tag ${st[0]}" title="테스트 코드에 작성됨${r ? ` · 마지막 실행 ${esc(r.status)}` : ' · 아직 실행하지 않음'}">${st[1]}</span>`;
 }
 
+// 실행 위치: 작업 탭(보고 있는 탭에서 커서·입력이 보인다) / 새 브라우저(깨끗한 창, 로그인 상태를 나누지 않음)
+function runWhereBar() {
+  const busy = suiteLocked();
+  return `<div class="run-where"><span class="pf-hint">실행 위치</span>
+    <div class="seg" role="radiogroup">${[['tab', '작업 탭'], ['browser', '새 브라우저']].map(([k, t]) => `<button type="button" data-run-where="${k}" class="${runWhere === k ? 'on' : ''}" ${busy ? 'disabled' : ''}>${t}</button>`).join('')}</div>
+    <span class="pf-hint">${runWhere === 'tab' ? '지금 작업 탭에서 돕니다. 커서·입력이 보이고, 그 사이트의 로그인 상태(쿠키)를 함께 씁니다. 실행 중에는 탭을 닫거나 조작하지 마세요.' : '새 Chrome 창을 띄워 깨끗한 상태로 돕니다(내 브라우저 로그인과 섞이지 않음).'}</span></div>`;
+}
+
 function codeView() {
   const c = suite.code;
   const ref = `<details class="case-d"><summary>녹화 기반 참고 코드(수행 전체)</summary><pre class="cs-pre mono">${esc(suite.spec || '(없음)')}</pre></details>`;
   const pickFirst = suiteApplied ? '' : `<div class="apply-bar"><span><b>아직 반영 전입니다</b> · BDD·TDD 탭에서 쓸 항목을 고르고 <b>반영</b>해야 코드를 만들 수 있습니다</span>
     <span class="grow"></span><button type="button" class="btn sm" data-stab="bdd">← BDD·TDD 고르러 가기</button></div>`;
-  if (!c?.source) return `${pickFirst}<div class="none">아직 코드가 없습니다. ${suiteApplied ? '아래 <b>코드 생성</b>을 누르면' : '반영한 뒤 <b>코드 생성</b>을 누르면'} 채택한 테스트만 코드로 만들고 로컬에서 돌려 봅니다.</div>${ref}`;
+  const where = runWhereBar();
+  if (!c?.source) return `${pickFirst}${where}<div class="none">아직 코드가 없습니다. ${suiteApplied ? '아래 <b>코드 생성</b>을 누르면' : '반영한 뒤 <b>코드 생성</b>을 누르면'} 채택한 테스트만 코드로 만들고 로컬에서 돌려 봅니다.</div>${ref}`;
   const icon = { passed: ['ok', '통과'], failed: ['err', '실패'], skipped: ['', '보류'], notrun: ['', '미실행'] };
   const pickable = !c.running && !aiBusy;
   const row = (r) => `<div class="case run-row">
@@ -498,7 +512,7 @@ function codeView() {
   const mis = c.tag_mismatch?.length ? `<div class="pf-alert">코드의 태그가 목록과 다른 테스트 ${c.tag_mismatch.length}개: ${c.tag_mismatch.map((x) => `${esc(x.id)}(목록 ${esc(x.want)} / 코드 ${esc(x.got)})`).join(', ')}</div>` : '';
   const rows = mis + (pickable ? pickBar() : '') + part('bdd', 'BDD 시나리오') + part('tdd', 'TDD 케이스');
   const why = c.running ? '' : needRun() ? ' · <b class="next-step">실행 결과 없음 · 테스트 실행 필요</b>' : tagsOnly() ? ' · <b class="next-step">태그만 바뀜 · 태그만 코드에 반영</b>' : c.key !== adoptedKey() ? ' · <b class="next-step">채택이 바뀌어 다시 생성해야 합니다</b>' : '';
-  return `<div class="pf-hint" style="margin:0 0 6px">${esc(c.file)}${why}
+  return `${pickFirst}${where}<div class="pf-hint" style="margin:0 0 6px">${esc(c.file)}${why}
       <br>실행 환경이 채울 값: <span class="mono">${(c.env || []).map(esc).join(', ')}</span></div>
     ${c.running ? progressView(c.progress, row) : rows || (c.error ? `<pre class="cs-pre mono run-err">${esc(c.error)}</pre>` : '')}
     <details class="case-d" open><summary>코드</summary><pre class="cs-pre mono">${esc(c.source)}</pre></details>${ref}`;
@@ -706,7 +720,8 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     markEdit(c.id, 'tags', 'issue');
     saveSuite(); return renderSheet();
   }
-  if (act0(e) === 'tags' && ws?.readyState === 1 && !aiBusy) {
+  if (act0(e) === 'tags' && ws?.readyState === 1 && !suiteLocked()) {
+    markSent();
     msg('me', '서버 태그 목록으로 테스트에 태그를 붙여줘');
     ws.send(JSON.stringify({ type: 'suggest_tags', suite: { id: suite.id, scenarios: suite.scenarios.map(({ use, ...c }) => c), cases: suite.cases.map(({ use, ...c }) => c) } }));
     closeSheet();
@@ -730,6 +745,8 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
   }
   const filter = e.target.closest('[data-filter]')?.dataset.filter;
   if (filter) { suiteFilter = filter; return renderSheet(); }
+  const rw = e.target.closest('[data-run-where]')?.dataset.runWhere;
+  if (rw && !suiteLocked()) { setRunWhere(rw); return renderSheet(); }
   const tab = e.target.closest('[data-stab]')?.dataset.stab;
   if (tab) { suiteTab = tab; return renderSheet(); }
   const s = e.target.dataset.useS;
@@ -758,7 +775,8 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
   }
   if (act === 'add-open') { addOpen = true; renderSheet(); return $('add-req')?.focus(); }
   if (act === 'add-cancel') { addOpen = false; return renderSheet(); }
-  if (act === 'add-send' && ws?.readyState === 1 && !aiBusy) {
+  if (act === 'add-send' && ws?.readyState === 1 && !suiteLocked()) {
+    markSent();
     const request = $('add-req').value.trim();
     if (!request) return $('add-req').focus();
     msg('me', `테스트 추가: ${request}`);
@@ -767,7 +785,8 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     closeSheet();
     return;
   }
-  if (act === 'append' && canAppend() && ws?.readyState === 1 && !aiBusy) {
+  if (act === 'append' && canAppend() && ws?.readyState === 1 && !suiteLocked()) {
+    markSent();
     const scenarios = suite.scenarios.filter((c) => c.use).map(({ use, ...c }) => c);
     const cases = suite.cases.filter((c) => c.use).map(({ use, ...c }) => c);
     msg('me', `새 항목 ${missingCode().length}개의 테스트 코드만 추가하고 실행해줘`);
@@ -776,7 +795,7 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     closeSheet();
     return;
   }
-  if (act === 'run' && needRun() && ws?.readyState === 1 && !aiBusy) return requestRun(notRun(), false);
+  if (act === 'run' && needRun() && ws?.readyState === 1 && !suiteLocked()) return requestRun(notRun(), false);
   if (act === 'run-picked' && runPick.size && ws?.readyState === 1 && !aiBusy && !suite.code?.running) return requestRun([...runPick], true);
   if (act === 'run-confirm' && runConfirm) return sendRun(runConfirm.ids, runConfirm.only);
   if (act === 'run-cancel') { runConfirm = null; return renderSheet(); }
@@ -787,7 +806,8 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     msg('sys', '태그만 코드에 반영합니다(테스트 실행 없음)');
     return;
   }
-  if (act === 'code' && suiteApplied && ws?.readyState === 1 && !aiBusy) {
+  if (act === 'code' && suiteApplied && ws?.readyState === 1 && !suiteLocked()) {
+    markSent();
     // 채택된 것만 보낸다. 녹화 기반 코드는 로케이터 참고용
     const scenarios = suite.scenarios.filter((c) => c.use).map(({ use, ...c }) => c);
     const cases = suite.cases.filter((c) => c.use).map(({ use, ...c }) => c);
@@ -797,7 +817,8 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     closeSheet();
     return;
   }
-  if (act === 'reinforce' && ws?.readyState === 1 && !aiBusy) {
+  if (act === 'reinforce' && ws?.readyState === 1 && !suiteLocked()) {
+    markSent();
     // 현재 초안을 짧게 요약해 같은 대화로 보낸다
     const summary = [
       `제목: ${suite.name}`,

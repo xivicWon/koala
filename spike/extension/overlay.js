@@ -51,6 +51,8 @@ if (!window.__koala) {
       root.appendChild(r);
       setTimeout(() => r.remove(), 600);
     },
+    // 테스트가 스크린샷을 찍는 동안 표시물 전체를 숨긴다(작업 탭 실행)
+    veil(on) { host.style.display = on ? 'none' : ''; },
     banner(text) {
       $('banner').style.display = text ? 'block' : 'none';
       $('banner').textContent = text || '';

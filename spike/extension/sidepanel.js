@@ -55,6 +55,7 @@ function connect() {
     if (jobNow && !jobNow.done) { jobNow = null; renderJob(); }
     clearStaleRun?.();
     sendClaudePrefs(); // 내가 고른 모델·effort 를 Claude 를 띄우기 전에 알린다
+    sendRunWhere(); // 테스트 실행 위치(작업 탭 / 새 브라우저)
     maybeMigrate(); // 옮길 예전 데이터가 있으면 세트 작업보다 먼저
     renderSetChip();
   };
@@ -79,6 +80,7 @@ function connect() {
     if (m.type === 'claude_conn') { claudeConn = m; updateAiDot(); }
     if (m.type === 'claude_usage') onClaudeUsage(m);
     if (m.type === 'api_key_status') onApiKeyStatus(m);
+    if (m.type?.startsWith('relay_')) onRelay(m);
     if (m.type === 'domain_mismatch') onDomainMismatch(m);
     if (m.type === 'session') renderSession(m.alias);
     if (m.type === 'actor') renderActor(m.actor);
@@ -353,7 +355,8 @@ function setBusy(b) {
   $('send').disabled = !b && !$('env-alert').hidden;
   if (!b && lastAi) lastAi.classList.add('final'); // 마지막 AI 말은 요약으로 강조
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
-  if (sheetMode === 'set') renderSheet(); // 작업 중에는 세트 바꾸기·받기를 막는다
+  if (!b && typeof suiteSentAt !== 'undefined') suiteSentAt = 0; // 작업이 끝났으면 '보낸 직후' 잠금도 푼다
+  if (sheetMode === 'set' || sheetMode === 'suite') renderSheet(); // 작업 중에는 세트 바꾸기·받기, 코드 생성 같은 AI 버튼을 막는다
 }
 function msg(kind, text) {
   const d = document.createElement('div');
@@ -440,6 +443,7 @@ async function setNetGuard(on) {
 const b64 = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str)));
 chrome.debugger.onEvent.addListener(async (src, method, p) => {
   if (src.tabId !== attachedTo || method !== 'Fetch.requestPaused') return;
+  if (relayOn && !fetchOn) return; // 작업 탭 실행 중 테스트(page.route)가 켠 가로채기는 테스트가 처리한다
   const m = p.request.method.toUpperCase();
   const reqPath = new URL(p.request.url).pathname + new URL(p.request.url).search;
   const f = faults.find((x) => (!x.method || x.method.toUpperCase() === m) && new RegExp(x.path).test(reqPath));

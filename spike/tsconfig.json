@@ -2,8 +2,15 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@support/*": ["tests/support/*"],
-      "*": ["node_modules/*"]
+      "@support/*": [
+        "tests/support/*"
+      ],
+      "@koala/tab": [
+        "pw-tab.ts"
+      ],
+      "*": [
+        "node_modules/*"
+      ]
     }
   }
 }
