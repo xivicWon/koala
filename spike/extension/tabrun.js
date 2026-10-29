@@ -45,6 +45,20 @@ async function onRelay(m) {
 
 async function relayCmd({ id, method, params = {} }) {
   if (!relayOn) return relaySend({ type: 'relay_res', id, error: { message: '작업 탭 실행이 끝났습니다' } });
+  // 테스트 코드가 정한 화면 크기(test.use viewport·isMobile·hasTouch). reset 이면 사용자가 고른 크기로 되돌린다
+  if (method === 'Koala.screen') {
+    try {
+      if (params.reset) await applyViewport();
+      else {
+        const t = await chrome.tabs.get(attachedTo).catch(() => null);
+        await chrome.debugger.sendCommand({ tabId: attachedTo }, 'Emulation.setDeviceMetricsOverride', {
+          width: params.width || viewport?.w || t?.width || 0, height: params.height || viewport?.h || t?.height || 0, deviceScaleFactor: 0, mobile: !!params.mobile });
+        await chrome.debugger.sendCommand({ tabId: attachedTo }, 'Emulation.setTouchEmulationEnabled', { enabled: !!params.touch, maxTouchPoints: params.touch ? 5 : 1 });
+      }
+      relaySend({ type: 'relay_res', id, result: {} });
+    } catch (e) { relaySend({ type: 'relay_res', id, error: { code: -32000, message: String(e.message || e) } }); }
+    return;
+  }
   const pace = sp();
   if (method === 'Input.dispatchMouseEvent') {
     if (params.type === 'mouseMoved') { await overlay('cursor', params.x, params.y, Math.round(pace.move / 2)); await sleep(Math.round(pace.move / 2)); }

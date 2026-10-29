@@ -1063,6 +1063,7 @@ const APPEND_PROMPT = `[테스트 코드 추가] 아래 '새' 테스트만 Playw
 - 조각은 기존 파일 끝에 붙는다. import 문은 쓰지 않고, 아래 기존 도우미 함수와 상수를 그대로 쓴다. 새 도우미가 필요하면 기존과 겹치지 않는 이름으로 조각 안에 둔다.
 - 구조와 태그 규칙은 기존과 같다: test.describe('BDD', …) 안에 시나리오 테스트(Given/When/Then 을 test.step 으로), test.describe('TDD', …) 안에 test.describe('<시나리오 id> …', { tag: 물려줄 태그 }) 와 케이스 테스트. 기존 시나리오에 케이스만 더할 때도 TDD 안에 그 시나리오 describe 를 다시 열어 쓴다.
 - 주소는 상대 경로, [koa] 데이터는 RUN 을 붙이고 정리한다.
+- 화면 크기가 결과에 영향을 주는 새 테스트는 그 describe 안에 test.use({ viewport, isMobile, hasTouch }) 를 두거나 page.setViewportSize 를 쓴다(devices 펼치기·userAgent 기대는 쓰지 않는다). 지시에 [화면 크기]가 있으면 그 크기에서 확인한 것이다.
 - 계정은 시나리오의 역할로 로그인한다. 기존 파일에 역할별 로그인(ACCOUNTS·login(page, 역할))이 있으면 그대로 쓰고, 없는 역할이 필요하면 조각 안에 process.env.<계정>_USER! 를 글자 그대로 적어 둔다.
 - 저장하면 새 테스트만 실행된다. 실패하면 원인을 보고 조각 전체를 고쳐 다시 저장한다. 검증을 빼서 통과시키지 않는다.`;
 let appendBase = null; // { file, code, ids: [새 id] }
@@ -1095,6 +1096,11 @@ const CODE_PROMPT = `[코드 작성] 아래 '채택된' 테스트를 Playwright 
 - 로케이터는 이 대화에서 실제로 조작·확인한 것(testid 우선)을 쓴다. 아래 녹화 기반 참고 코드의 로케이터를 그대로 가져와도 된다. 모르면 브라우저 도구로 화면을 다시 확인한다.
 - [koa] 데이터는 실행 ID를 붙여(const RUN = Date.now().toString(36)) 겹치지 않게 하고, afterEach에서 정리 도우미로 정리한다.
 - 오류 주입은 page.route(fulfill status / abort), 응답 지연은 route 안에서 기다린 뒤 continue, 탭 순서는 keyboard.press('Tab') 뒤 toBeFocused로 검증한다.
+- 화면 크기: 크기에 따라 결과가 달라지는 테스트(반응형 메뉴·모바일 레이아웃·가로 스크롤·잘림 등)는 코드에서 크기를 정한다.
+  · 묶음 전체: test.describe(…) 안 첫 줄에 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }) (데스크톱이면 viewport 만).
+  · 테스트 도중 바꾸기: await page.setViewportSize({ width, height }) 뒤 화면을 다시 확인한다.
+  · devices['iPhone …'] 를 펼쳐 쓰지 않는다(브라우저 종류까지 바꿔 실행이 깨진다). userAgent 에 기대는 검증도 하지 않는다.
+  · 크기와 상관없는 테스트에는 넣지 않는다(실행 환경의 크기를 따른다). 지시에 [화면 크기]가 있으면 사용자가 그 크기에서 확인한 것이므로, 그 크기에서 확인한 시나리오는 같은 크기를 코드에 고정한다. 녹화 기반 참고 코드의 setViewportSize 도 참고한다.
 - 자동화할 수 없는 케이스(실제 동시 로그인, 다른 권한 계정 필요 등)는 test.fixme로 두고 이유를 주석으로 적는다.
 - 실행 결과에 실패가 있으면 원인을 보고 고쳐 다시 save_code 한다. 테스트를 통과시키려고 검증을 빼지 않는다. 앱 결함으로 보이면 그대로 두고 보고한다. 같은 실패가 세 번 이어지면 멈춘다.
 - 끝나면 통과/실패/보류를 한국어로 짧게 요약한다.`;
@@ -1302,7 +1308,7 @@ async function runInTab(file, onProgress, opts) {
   log('sys', `작업 탭${target.label ? ` ${target.label}` : ''}에서 실행합니다 · ${target.url}`);
   try {
     fs.writeFileSync(tmp, tabSpecSource(fs.readFileSync(file, 'utf8')));
-    return await spawnPlaywright(tmp, onProgress, { ...opts, env: { KOALA_TAB_RELAY: tabRelay.url }, headed: false });
+    return await spawnPlaywright(tmp, onProgress, { ...opts, env: { KOALA_TAB_RELAY: tabRelay.url, KOALA_TAB_SCREEN: tabRelay.screenUrl }, headed: false });
   } finally {
     fs.rmSync(tmp, { force: true });
     tabRelay.close();

@@ -13,7 +13,20 @@ export const PAGE_SESSION = 'koala-tab';
 // toPanel(method, params) → Promise<{ result } | { error }> : 작업 탭에 CDP 명령을 보낸다
 export async function startTabRelay({ target, toPanel }) {
   const secret = crypto.randomBytes(16).toString('hex');
-  const server = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
+  // 화면 크기: 테스트 코드의 test.use({ viewport, isMobile, hasTouch }) 는 붙은 탭에 저절로 걸리지 않는다.
+  // pw-tab.ts 가 테스트 시작 때 POST /<비밀>/screen 으로 알리면 작업 탭에 걸고, 끝나면 { reset: true } 로 사용자가 고른 크기로 되돌린다
+  const server = http.createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== `/${secret}/screen`) { res.statusCode = 404; return res.end(); }
+    let body = '';
+    req.on('data', (d) => { body += d; if (body.length > 4096) req.destroy(); });
+    req.on('end', async () => {
+      let r;
+      try { r = await toPanel('Koala.screen', screenParams(JSON.parse(body || '{}'))); } catch (e) { r = { error: { message: e.message } }; }
+      res.setHeader('content-type', 'application/json');
+      res.statusCode = r.error ? 500 : 200;
+      res.end(JSON.stringify(r));
+    });
+  });
   const wss = new WebSocketServer({ server, path: `/${secret}` });
   const clients = new Set();
   const log = [];
@@ -67,6 +80,7 @@ export async function startTabRelay({ target, toPanel }) {
   const { port } = server.address();
   return {
     url: `ws://127.0.0.1:${port}/${secret}`,
+    screenUrl: `http://127.0.0.1:${port}/${secret}/screen`,
     log,
     // 작업 탭에서 온 CDP 이벤트를 붙어 있는 Playwright 에 넘긴다
     event(method, params) {
@@ -77,6 +91,13 @@ export async function startTabRelay({ target, toPanel }) {
     drop() { for (const c of clients) c.terminate(); },
     close() { for (const c of clients) c.terminate(); wss.close(); server.close(); },
   };
+}
+
+// 테스트가 정한 화면 크기 → 패널이 작업 탭에 걸 값. 크기는 200~4000, 모바일이면 터치도 켠다
+export function screenParams(b) {
+  if (b.reset) return { reset: true };
+  const n = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.max(200, Math.min(4000, Math.round(Number(v)))) : null);
+  return { width: n(b.width), height: n(b.height), mobile: !!b.mobile, touch: !!(b.touch || b.mobile) };
 }
 
 // 생성 코드를 작업 탭용 사본으로: '@playwright/test' 대신 '@koala/tab'(작업 탭에 붙는 test·page)을 불러온다.

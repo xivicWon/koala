@@ -6,8 +6,9 @@ import path from 'node:path';
 const dataDir = process.env.KOALA_DATA_DIR ? path.resolve(process.env.KOALA_DATA_DIR) : '.koa';
 // 사이드패널에서 고른 화면 크기(없으면 작업 탭의 지금 크기). 새 브라우저 실행이 작업 탭과 같은 크기로 돈다. 서버·CI 에서는 비어 있어 기본값
 const vp = /^(\d+)x(\d+)$/.exec(process.env.KOALA_VIEWPORT || '');
+// 작업 탭 실행은 탭에 걸린 크기를 그대로 쓴다(viewport: null). 테스트 코드의 test.use({ viewport }) 만 pw-tab.ts 가 탭에 건다
 const screen = {
-  ...(vp ? { viewport: { width: Number(vp[1]), height: Number(vp[2]) } } : {}),
+  ...(process.env.KOALA_TAB_RELAY ? { viewport: null } : vp ? { viewport: { width: Number(vp[1]), height: Number(vp[2]) } } : {}),
   ...(process.env.KOALA_MOBILE === '1' ? { isMobile: true, hasTouch: true } : {}),
 };
 

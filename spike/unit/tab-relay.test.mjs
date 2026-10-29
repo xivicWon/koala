@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import WebSocket from 'ws';
-import { startTabRelay, tabSpecSource, tabSpecFile, PAGE_SESSION } from '../tab-relay.mjs';
+import { startTabRelay, tabSpecSource, tabSpecFile, screenParams, PAGE_SESSION } from '../tab-relay.mjs';
 
 test('tabSpecSource: @playwright/test 만 @koala/tab 으로 바꾸고 나머지는 그대로', () => {
   const src = `import { test, expect, Page } from '@playwright/test';\nimport { clean } from '@support/cleanup';\nconst s = "@playwright/test 문자열";`;
@@ -52,5 +52,19 @@ test('중계: 브라우저 닫기는 아무것도 하지 않고, 새 탭은 거�
     assert.deepEqual(r.calls[2][1], { name: 'b', domain: 'site.test', path: '/x' });
     const got = await r.reply(r.send('Storage.getCookies', {}));
     assert.equal(got.result.cookies.length, 2);
+  } finally { r.done(); }
+});
+
+test('화면 크기: 테스트의 test.use 크기를 POST /screen 으로 받아 패널에 넘긴다 · 범위를 넘으면 자르고 모바일이면 터치도', async () => {
+  assert.deepEqual(screenParams({ width: 390, height: 844, mobile: true }), { width: 390, height: 844, mobile: true, touch: true });
+  assert.deepEqual(screenParams({ width: 99999, height: 10 }), { width: 4000, height: 200, mobile: false, touch: false });
+  assert.deepEqual(screenParams({ reset: true, width: 1 }), { reset: true });
+  const r = await relayWith(() => ({ result: {} }));
+  try {
+    const ok = await fetch(r.relay.screenUrl, { method: 'POST', body: JSON.stringify({ width: 800, height: 600 }) });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(r.calls.at(-1), ['Koala.screen', { width: 800, height: 600, mobile: false, touch: false }]);
+    const bad = await fetch(r.relay.screenUrl.replace(/\/screen$/, '/nope'), { method: 'POST', body: '{}' });
+    assert.equal(bad.status, 404); // 비밀 경로가 아니면 받지 않는다
   } finally { r.done(); }
 });
