@@ -72,6 +72,22 @@ export async function check() {
   }
 }
 
+// 브라우저가 켠 호스트는 PATH가 짧아 npm·npx를 못 찾는다. 지금 도는 node 옆의 것을 쓴다(없으면 PATH에 맡김)
+export function nodeTool(name) {
+  const p = path.join(path.dirname(process.execPath), process.platform === 'win32' ? `${name}.cmd` : name);
+  return fs.existsSync(p) ? p : process.platform === 'win32' ? `${name}.cmd` : name;
+}
+// 의존성이 실제로 바뀌었는가: package-lock.json 에서 버전 번호(릴리즈마다 바뀜)만 다르면 다시 설치하지 않는다
+export function sameDeps(a, b) {
+  const strip = (txt) => { const j = JSON.parse(txt); delete j.version; if (j.packages?.['']) delete j.packages[''].version; return JSON.stringify(j); };
+  try { return strip(a) === strip(b); } catch { return false; }
+}
+async function depsChanged(from, to) {
+  const show = (rev) => git('show', `${rev}:./package-lock.json`).catch(() => '');
+  const [a, b] = await Promise.all([show(from), show(to)]);
+  return !sameDeps(a, b);
+}
+
 // 태그로 바꾼다. 고친 파일이 있으면 멈춘다(사용자 설정은 .env와 확장 저장소에만 있다)
 export async function apply(tag, log = () => {}) {
   const cur = await installed();
@@ -80,11 +96,11 @@ export async function apply(tag, log = () => {}) {
   if (dirty) throw new Error(`고친 파일이 있어 업데이트를 멈췄습니다:\n${dirty}`);
   log(`릴리즈 ${tag} 를 받는 중`);
   await git('fetch', '--quiet', '--tags', 'origin');
-  const lockChanged = await git('diff', '--name-only', 'HEAD', tag, '--', 'package-lock.json').then(Boolean);
+  const lockChanged = await depsChanged('HEAD', tag);
   await git('-c', 'advice.detachedHead=false', 'checkout', '--quiet', tag);
   if (lockChanged) {
     log('의존성을 다시 설치하는 중(npm ci)');
-    await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], { cwd: dir, shell: process.platform === 'win32' });
+    await run(nodeTool('npm'), ['ci', '--no-audit', '--no-fund'], { cwd: dir, shell: process.platform === 'win32' });
   }
   return { from: cur.version, to: version() };
 }

@@ -9,7 +9,7 @@
 |---|---|---|
 | Git for Windows | https://git-scm.com/download/win | `git --version` |
 | Node.js 20 이상 (LTS) | https://nodejs.org | `node -v` |
-| Chrome (또는 Edge) | | |
+| Chrome (또는 Edge, Brave) | | |
 | Claude Code | PowerShell에서 `irm https://claude.ai/install.ps1 \| iex` | `claude --version` |
 
 Claude Code는 **각자 설치하고 각자 계정으로 로그인**합니다. 사용량도 각자 계정에서 나갑니다.
@@ -87,9 +87,10 @@ New-Item -ItemType Directory -Force $dir | Out-Null
   allowed_origins = @("chrome-extension://$extId/")
 } | ConvertTo-Json | Set-Content -Encoding utf8 "$dir\$name.json"
 
-# 3) 레지스트리에 등록(현재 사용자만). Edge도 쓰면 두 번째 줄도 실행
+# 3) 레지스트리에 등록(현재 사용자만). Edge·Brave도 쓰면 해당 줄도 실행
 New-Item -Force "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$name" -Value "$dir\$name.json" | Out-Null
 New-Item -Force "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$name" -Value "$dir\$name.json" | Out-Null
+New-Item -Force "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$name" -Value "$dir\$name.json" | Out-Null
 ```
 
 Chrome을 완전히 껐다 켠 뒤 사이드패널을 열면 호스트가 켜집니다. 호스트 기록은 `%USERPROFILE%\.koala\host.log`에 남습니다.
@@ -99,6 +100,7 @@ Chrome을 완전히 껐다 켠 뒤 사이드패널을 열면 호스트가 켜집
 ```powershell
 Remove-Item "HKCU:\Software\Google\Chrome\NativeMessagingHosts\io.github.xivicwon.koala"
 Remove-Item "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\io.github.xivicwon.koala" -ErrorAction SilentlyContinue
+Remove-Item "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\io.github.xivicwon.koala" -ErrorAction SilentlyContinue
 ```
 
 ## 6. 처음 설정

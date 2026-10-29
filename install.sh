@@ -70,10 +70,12 @@ EOF
 chmod +x "$LAUNCHER"
 case "$(uname -s)" in
   Darwin) NM_DIRS="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts
-$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts" ;;
+$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts
+$HOME/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts" ;;
   *) NM_DIRS="$HOME/.config/google-chrome/NativeMessagingHosts
 $HOME/.config/chromium/NativeMessagingHosts
-$HOME/.config/microsoft-edge/NativeMessagingHosts" ;;
+$HOME/.config/microsoft-edge/NativeMessagingHosts
+$HOME/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts" ;;
 esac
 [ -n "${KOALA_NM_DIRS:-}" ] && NM_DIRS=$KOALA_NM_DIRS
 echo "$NM_DIRS" | while IFS= read -r d; do

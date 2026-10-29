@@ -22,6 +22,13 @@ import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 
+// 브라우저(Native Messaging)가 켠 호스트는 PATH가 짧아 npx·npm·node 를 못 찾는다. 지금 도는 node 의 폴더를 앞에 붙인다
+{
+  const nodeDir = path.dirname(process.execPath);
+  const parts = (process.env.PATH || '').split(path.delimiter);
+  if (!parts.includes(nodeDir)) process.env.PATH = [nodeDir, ...parts].filter(Boolean).join(path.delimiter);
+}
+
 // ---------- 이 PC의 Claude Code 찾기 (각자 PC에 설치·로그인돼 있다는 전제, 없으면 사이드패널에 경고) ----------
 const WIN = process.platform === 'win32';
 function findClaude() {
@@ -1212,7 +1219,7 @@ function runSpec(file, onProgress, { list = false, grep = null } = {}) {
   // 역할이 생기기 전 코드(process.env.KOALA_USER)는 기본 역할 계정으로 돈다
   if (!env.KOALA_USER) { env.KOALA_USER = secretValue('KOALA_USER'); env.KOALA_PASS = secretValue('KOALA_PASS'); }
   return new Promise((resolve) => {
-    const p = spawn(WIN ? 'npx.cmd' : 'npx', playwrightArgs(file, { cwd: dir, list, grep, headed: HEADED, win: WIN }), { cwd: dir, env, shell: WIN });
+    const p = spawn(update.nodeTool('npx'), playwrightArgs(file, { cwd: dir, list, grep, headed: HEADED, win: WIN }), { cwd: dir, env, shell: WIN });
     let err = '';
     let buf = '';
     p.stderr.on('data', (d) => { err += d; });
