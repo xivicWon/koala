@@ -42,7 +42,7 @@ const tool = (name, description, inputSchema) =>
   server.registerTool(name, { description, inputSchema }, (args) => call(name, args));
 
 // 묶음 실행: 할 일을 큐로 보내면 쉬지 않고 차례로 처리하고, 실패하면 거기서 멈춘다
-const ACTIONS = ['snapshot', 'screenshot', 'use_tab', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear', 'clear_login',
+const ACTIONS = ['snapshot', 'screenshot', 'use_tab', 'viewport', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear', 'clear_login',
   'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused'];
 tool('run', `여러 단계를 한 번에 실행한다(권장). 각 단계는 {"tool": 이름, ...그 도구의 인자} 한 겹 객체다.
 예: [{"tool":"type","locator":{"testid":"id-input"},"value":"$KOALA_ADMIN_USER"},{"tool":"click","locator":{"text":"로그인"}},{"tool":"expect_url","pattern":"/dashboard$"}]
@@ -55,6 +55,7 @@ tool('run', `여러 단계를 한 번에 실행한다(권장). 각 단계는 {"t
     count: z.number().int().optional(), pattern: z.string().optional(),
     method: z.string().optional(), path: z.string().optional(), kind: z.enum(['status', 'delay', 'network']).optional(),
     status: z.number().int().optional(), body: z.string().optional(), delay_ms: z.number().int().optional(), times: z.number().int().optional(),
+    preset: z.enum(['mobile', 'tablet', 'laptop', 'desktop', 'window']).optional(), width: z.number().int().optional(), height: z.number().int().optional(), mobile: z.boolean().optional(),
   })).min(1),
 });
 
@@ -164,6 +165,9 @@ tool('snapshot', '현재 화면의 조작 가능한 요소(testid·글자·라�
 tool('tabs', '관리 탭 목록(#1, #2 … 라벨·제목·URL·지금 작업 탭인지). 사용자가 "#2 탭"처럼 말하면 이 라벨이다', {});
 tool('use_tab', '작업 탭을 바꾼다. 이후 조작은 그 탭에서 한다. tab 은 관리 탭 라벨(예: "#2"). 바꾼 뒤 snapshot 으로 화면을 확인한다', { tab: z.string() });
 tool('screenshot', '현재 화면을 이미지로 본다. 레이아웃·시각적 이상을 볼 때', {});
+tool('viewport', '작업 탭의 화면 크기를 바꾼다(반응형 확인). 작업 탭에만 걸리고 창·다른 탭은 그대로다. preset: mobile(390×844, 터치)·tablet(820×1180, 터치)·laptop(1366×768)·desktop(1920×1080)·window(흉내를 끄고 창 크기 그대로). 또는 width·height(·mobile). 지금 크기를 돌려준다', {
+  preset: z.enum(['mobile', 'tablet', 'laptop', 'desktop', 'window']).optional(), width: z.number().int().optional(), height: z.number().int().optional(), mobile: z.boolean().optional(),
+});
 // 이동
 tool('goto', '현재 탭을 URL로 이동', { url: z.string() });
 tool('back', '브라우저 뒤로 가기', {});

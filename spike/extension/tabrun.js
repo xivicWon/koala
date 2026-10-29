@@ -37,6 +37,7 @@ async function onRelay(m) {
     relayOn = false;
     overlay('veil', false).catch(() => {});
     overlay('banner', '').catch(() => {});
+    applyViewport(); // 테스트가 setViewportSize 로 바꾼 크기를 고른 크기로 되돌린다
   }
   // Playwright 는 응답을 기다리지 않고 이어서 보낸다(이동 → 누름 → 뗌). 표시를 그리느라 순서가 바뀌지 않게 받은 순서대로 처리한다
   if (m.type === 'relay_cmd') relayChain = relayChain.then(() => relayCmd(m)).catch(() => {});

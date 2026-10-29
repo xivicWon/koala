@@ -737,3 +737,27 @@ test('작업 탭 실행: 패널이 작업 탭을 준비하지 못하면 기다�
   assert.ok(!fs.readdirSync(path.dirname(code)).some((f) => f.includes('koala-tab')), '사본이 남지 않는다');
   pn.send({ type: 'run_where', where: 'browser' });
 });
+
+test('화면 크기: 새 브라우저 실행은 패널이 고른 크기(KOALA_VIEWPORT·KOALA_MOBILE)로 돈다', async () => {
+  const out = path.join(legacyDir, 'vp-env.txt');
+  const code = path.join(data, 'sets', 'a', 'tests', 'code', 'a.spec.ts');
+  fs.mkdirSync(path.dirname(code), { recursive: true });
+  fs.writeFileSync(code, `import { test } from '@playwright/test';\ntest('SC-1 env', async () => { require('fs').writeFileSync(${JSON.stringify(out)}, String(process.env.KOALA_VIEWPORT) + ' ' + String(process.env.KOALA_MOBILE)); });\n`);
+  pn.send({ type: 'set', id: 'a', prefs: { accounts: [] } });
+  pn.send({ type: 'run_where', where: 'browser' });
+  pn.send({ type: 'viewport', viewport: { w: 390, h: 844, mobile: true }, window: { w: 1000, h: 700 } });
+  await sleep(300);
+  let at = pn.mark();
+  pn.send({ type: 'run_code', suite: { scenarios: [{ id: 'SC-1', title: 'env', given: [], when: [], then: [] }], cases: [] }, ids: [] });
+  await pn.waitFor((m) => m.type === 'log' && /로컬 실행:/.test(m.text), at, '실행 끝', 60000).catch(() => {});
+  await until(() => fs.existsSync(out), '크기 기록', 60000);
+  assert.equal(fs.readFileSync(out, 'utf8'), '390x844 1');
+  // 창 크기 그대로면 작업 탭의 지금 크기로
+  fs.rmSync(out);
+  pn.send({ type: 'viewport', viewport: null, window: { w: 1000, h: 700 } });
+  await sleep(200);
+  at = pn.mark();
+  pn.send({ type: 'run_code', suite: { scenarios: [{ id: 'SC-1', title: 'env', given: [], when: [], then: [] }], cases: [] }, ids: [] });
+  await until(() => fs.existsSync(out), '크기 기록(창)', 60000);
+  assert.equal(fs.readFileSync(out, 'utf8'), '1000x700 undefined');
+});

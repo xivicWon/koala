@@ -90,7 +90,7 @@ function checkClaude() {
 checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order', 'tabs']);
-const TOOLS = ['run', 'snapshot', 'screenshot', 'tabs', 'use_tab', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
+const TOOLS = ['run', 'snapshot', 'screenshot', 'tabs', 'use_tab', 'viewport', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
   'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'];
 // 계획 모드: 로그인·검색 입력과 확인은 할 수 있지만, 데이터를 바꾸는 버튼 클릭과 Enter 제출은 확장이 차단한다.
 // 테스트 기록에는 남기지 않는다. 결과는 save_plan
@@ -114,6 +114,7 @@ const SYSTEM = `너는 웹 QA 담당자다. koala 도구로만 브라우저를 �
 - 사용자가 지금까지 수행한 것으로 테스트(TDD·BDD·시나리오·케이스·테스트 초안)를 만들어 달라고 하면 make_tests 를 부르고 한 줄로 알린 뒤 응답을 끝낸다.
   "○○ 테스트해줘"처럼 수행을 요청하면 그것은 브라우저로 수행하라는 뜻이다. 만들어 달라는 뜻이 분명하지 않으면 먼저 묻는다.
 - 먼저 snapshot으로 화면을 읽고, locator는 testid > text > css 순으로 고른다.
+- 화면 크기: 사용자가 모바일·태블릿·특정 해상도에서 보라고 하면 viewport 로 작업 탭 크기를 바꾼 뒤 snapshot·screenshot 으로 확인한다. 지시에 [화면 크기]가 있으면 그 크기에서 보고 있는 것이다. 사용자가 바꾸라고 하지 않았으면 크기를 바꾸지 않는다.
 - 관리 탭은 #1, #2 처럼 라벨로 부른다. 사용자가 "#2 탭에서 …"라고 하면 use_tab("#2") 후 진행하고, 도구 응답의 tab 으로 어느 탭에서 조작했는지 확인한다. 탭 목록이 필요하면 tabs 를 쓴다.
 - 단계마다 도구를 따로 부르지 말고, 화면을 읽은 뒤 할 일을 **run으로 묶어 한 번에** 보낸다.
   (조작과 검증을 섞어 화면 전환 단위로 5~15단계씩. 다음 화면 구성을 모르면 거기까지만 묶는다)
@@ -464,9 +465,10 @@ async function relay(name, args) {
     // 기록은 generate.mjs 형식에 맞춘다. 비밀값은 $이름 그대로 남긴다.
     const action = name.replace(/_(\w)/g, (_, c) => c.toUpperCase());
     const { url, locator, value, option, key, text, count, pattern, method, path: fpath, kind, status, body, delay_ms, times } = args;
-    steps.push({ action, url, locator, value, option, key, text, count, pattern, method, path: fpath, kind, status, body, delay_ms, times, matched: result.result?.matched, role: actor?.role || undefined, tab: result.result?.tab || args.tab || undefined });
+    const vp = name === 'viewport' ? result.result?.viewport : undefined; // 바꾼 화면 크기(창 크기 그대로면 'window')
+    steps.push({ action, url, locator, value, option, key, text, count, pattern, method, path: fpath, kind, status, body, delay_ms, times, viewport: vp, matched: result.result?.matched, role: actor?.role || undefined, tab: result.result?.tab || args.tab || undefined });
     saveRec();
-    if (name !== 'use_tab') await trackPath(name, args, result.result);
+    if (name !== 'use_tab' && name !== 'viewport') await trackPath(name, args, result.result);
   }
   return result;
 }
@@ -1252,6 +1254,13 @@ function flatResults(report) {
 const HEADED = process.env.KOALA_HEADED !== '0';
 // 실행 위치: tab = 사용자가 보고 있는 작업 탭(확장 중계로 조작이 보인다), browser = 새 브라우저 창. 패널에서 고른다
 let runWhere = 'tab';
+// 패널이 알린 화면 크기 { viewport: {w,h,mobile}|null, window: {w,h}|null }. 새 브라우저 실행도 이 크기로 띄운다
+let panelViewport = { viewport: null, window: null };
+function viewportEnv() {
+  const v = panelViewport.viewport || panelViewport.window; // 창 크기 그대로면 작업 탭의 지금 크기에 맞춘다
+  if (!v?.w || !v?.h) return {};
+  return { KOALA_VIEWPORT: `${v.w}x${v.h}`, ...(panelViewport.viewport?.mobile ? { KOALA_MOBILE: '1' } : {}) };
+}
 let tabRelay = null;     // 작업 탭 실행 중인 중계
 const relayPend = new Map();
 let relaySeq = 0;
@@ -1269,7 +1278,8 @@ function relayAbort(why) {
 }
 
 function runSpec(file, onProgress, opts = {}) {
-  if (opts.list || runWhere !== 'tab') return spawnPlaywright(file, onProgress, opts);
+  if (opts.list) return spawnPlaywright(file, onProgress, opts);
+  if (runWhere !== 'tab') return spawnPlaywright(file, onProgress, { ...opts, env: viewportEnv() });
   return runInTab(file, onProgress, opts);
 }
 
@@ -1278,7 +1288,7 @@ function runSpec(file, onProgress, opts = {}) {
 async function runInTab(file, onProgress, opts) {
   if (panel?.readyState !== 1) {
     log('sys', '사이드패널이 연결되어 있지 않아 새 브라우저 창에서 실행합니다');
-    return spawnPlaywright(file, onProgress, opts);
+    return spawnPlaywright(file, onProgress, { ...opts, env: viewportEnv() });
   }
   const target = await new Promise((resolve) => {
     relayReady = resolve;
@@ -1525,6 +1535,8 @@ function rolePrompt(keys) {
 // 도메인이 달라 막힌 지시. 사용자가 "그래도 진행"을 누르면 그대로 다시 보낸다
 let blocked = null;
 // 관리 탭이 둘 이상이면 지시에 목록을 붙인다(사용자가 "#2 탭"이라고 하면 Claude 가 알아듣게)
+// 사용자가 고른 화면 크기(패널의 화면 크기 버튼). 창 크기 그대로면 붙이지 않는다
+const viewportContext = () => (panelViewport.viewport ? `\n[화면 크기] 작업 탭을 ${panelViewport.viewport.w}×${panelViewport.viewport.h}${panelViewport.viewport.mobile ? ' 모바일(터치)' : ''}로 보고 있다.` : '');
 const tabsContext = (tabs) => (tabs?.length > 1 ? `\n[관리 탭] ${tabs.map((t) => `${t.tab}${t.current ? '(지금 작업 탭)' : ''} ${t.title} ${t.url}`).join(' / ')}\n다른 탭에서 하라는 지시면 use_tab 으로 그 라벨의 탭으로 바꾼 뒤 진행한다.` : '');
 async function instruct(text, { derive = false, job: kind = 'run', roles = null, force = false, tabs = null } = {}) {
   const why = setBlocked();
@@ -1572,7 +1584,7 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
   }
   if (derive) return sendToClaude(text);
   intent = text.slice(0, 120);
-  text += profileContext() + tabsContext(tabs);
+  text += profileContext() + tabsContext(tabs) + viewportContext();
   // 대화를 새로 열지 않게 지식 묶음(stamp)과 따로 붙인다
   if (actor) text += `\n지금 브라우저에 로그인한 역할(koa가 마지막으로 로그인한 계정): ${actor.role || '-'} ${roleName(actor.role)} · $${actor.key}_USER`;
   text += rolePrompt(roles);
@@ -1879,6 +1891,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'relay_ready') { relayReady?.(m); return; }
     if (m.type === 'relay_lost') { log('err', `작업 탭을 잃어 실행을 멈춥니다: ${m.reason || '탭이 닫혔거나 디버거가 해제됨'}`); relayAbort('작업 탭을 잃었습니다'); return; }
     if (m.type === 'run_where') { runWhere = m.where === 'browser' ? 'browser' : 'tab'; return; }
+    if (m.type === 'viewport') { panelViewport = { viewport: m.viewport?.w ? m.viewport : null, window: m.window?.w ? m.window : null }; return; }
     if (m.type === 'tool_result') { pending.get(m.id)?.(m); pending.delete(m.id); }
     // 사용자가 누른 것은 작업 기록에 남긴다(지시 원문은 instruct 에서)
     else if (!['set', 'instruct', 'list_code', 'update_check'].includes(m.type)) audit('panel', { type: m.type, id: m.suite?.id || m.id, ids: m.ids });

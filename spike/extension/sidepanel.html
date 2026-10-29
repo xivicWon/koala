@@ -32,7 +32,9 @@
   <section class="status">
     <div class="band-top">
       <div class="url-row" data-tip="AI가 조작하는 작업 탭의 지금 주소입니다. 처음 지시할 때 보이던 탭이 작업 탭이 되고, 노란 탭 그룹(koala · 세트 이름)으로 묶입니다. 다른 탭을 봐도 AI는 작업 탭에서 계속합니다."><span id="s-url-k" class="url-k">대상 탭</span><span id="s-url" class="url mono">페이지 없음</span>
-        <button type="button" id="work-list-btn" class="work-btn" hidden data-tip="koala가 관리하는 탭(노란 그룹) 목록. 골라서 작업 탭으로 쓰거나 그 탭으로 갑니다">탭 1</button><button type="button" id="work-take" class="work-btn">지금 탭으로</button></div>
+        <button type="button" id="work-list-btn" class="work-btn" hidden data-tip="koala가 관리하는 탭(노란 그룹) 목록. 골라서 작업 탭으로 쓰거나 그 탭으로 갑니다">탭 1</button><button type="button" id="work-take" class="work-btn">지금 탭으로</button>
+        <span class="menu-wrap vp-wrap"><button type="button" id="vp-btn" class="work-btn vp-btn" aria-haspopup="menu" aria-expanded="false" data-tip="작업 탭의 화면 크기. 모바일·태블릿 등으로 바꾸면 작업 탭만 그 크기로 보이고(창·다른 탭은 그대로), AI 조작과 테스트 실행이 그 크기에서 돕니다">창 크기</button>
+          <div id="vp-menu" class="menu vp-menu" role="menu" hidden></div></span></div>
       <span id="s-actor" class="role-tag actor" hidden></span>
       <!-- 조작 재생: 속도·일시정지 -->
       <div class="play">
@@ -99,6 +101,7 @@
   <script src="sets.js"></script>
   <script src="worktab.js"></script>
   <script src="tabrun.js"></script>
+  <script src="viewport.js"></script>
   <script src="migrate.js"></script>
   <script src="claude-settings.js"></script>
   <script src="suite.js"></script>

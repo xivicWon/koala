@@ -871,3 +871,14 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .run-where { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 8px; }
 .run-where .pf-hint { margin-left: 0; }
 .run-where > .pf-hint:last-child { flex-basis: 100%; }
+/* 화면 크기(작업 탭 흉내) */
+.vp-btn.on { background: var(--run-soft); color: var(--run); border-color: color-mix(in srgb, var(--run) 35%, transparent); }
+.vp-menu { min-width: 240px; }
+.vp-menu .vp-chk { width: 12px; color: var(--run); font-weight: 700; }
+.vp-menu .pf-hint { margin-left: auto; }
+.vp-custom { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--line); margin-top: 4px; font-size: 12px; }
+.vp-custom input[type=number] { width: 58px; height: 24px; padding: 0 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--text); font-size: 12px; }
+.vp-custom label { display: inline-flex; align-items: center; gap: 3px; margin: 0 4px; white-space: nowrap; }
+.vp-custom .btn { width: auto; margin-left: auto; }
+.vp-note { padding: 4px 8px 6px; margin-left: 0 !important; }
+.vp-btn.big::after { content: " ⤢"; }

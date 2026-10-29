@@ -56,6 +56,7 @@ function connect() {
     clearStaleRun?.();
     sendClaudePrefs(); // 내가 고른 모델·effort 를 Claude 를 띄우기 전에 알린다
     sendRunWhere(); // 테스트 실행 위치(작업 탭 / 새 브라우저)
+    sendViewport(); // 화면 크기(새 브라우저 실행도 같은 크기로)
     maybeMigrate(); // 옮길 예전 데이터가 있으면 세트 작업보다 먼저
     renderSetChip();
   };
@@ -422,6 +423,8 @@ async function ensureAttached() {
     await cdp('Page.enable');
     // 작업 탭이 뒤로 가도(사용자가 다른 탭을 봐도) 화면 그리기·타이머가 멈추지 않게 포커스를 흉내 낸다
     await cdp('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+    await applyViewport(); // 고른 화면 크기(모바일 등)를 새로 붙은 작업 탭에도 건다
+    sendViewport();
     fetchOn = false;
     await updateFetch();
   }
@@ -1228,6 +1231,7 @@ async function execTool(name, a) {
       await sleep(300); await waitTabComplete(); await waitIdle(navAt);
       return { url: (await curTab()).url };
     }
+    case 'viewport': return viewportFromAi(a);
     case 'tabs': return { tabs: await tabsForAi(), forAi: { tabs: (await tabsForAi()).map((t) => `${t.tab}${t.current ? '(작업 탭)' : ''} ${t.title} ${t.url}`) } };
     case 'use_tab': { const r = await useTabFromAi(a.tab); await ensureAttached(); return { ...r, forAi: { 작업탭: `${r.tab} ${r.title}` } }; }
     case 'snapshot': {
