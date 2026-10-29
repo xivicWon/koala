@@ -188,7 +188,7 @@ test('중간에 실패하면 원본이 남고 .migrated 가 없다 · 고친 뒤
   assert.deepEqual(plan2.setByProfile, plan1.setByProfile);
   const r2 = applyMigration(plan2);
   assert.equal(r2.ok, true, r2.errors.join());
-  assert.deepEqual(fs.readdirSync(path.join(root, 'sets')).sort(), ['.migrated', 'local-로컬_X'.replace(/[^\w.-]/g, '_'), 'pa', 'pb'].sort());
+  assert.deepEqual(fs.readdirSync(path.join(root, 'sets')).sort(), ['.migrated', 'local-X', 'pa', 'pb'].sort());
   assert.equal(json(setPaths('pb', root).state).sessionId, 'sess-1');
   assert.ok(!fs.existsSync(path.join(root, 'domains')));
 });

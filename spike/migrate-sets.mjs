@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { fileURLToPath } from 'node:url';
-import { safeId, setPaths, readSet, receiveSet, createLocalSet } from './sets.mjs';
+import { safeId, setPaths, readSet, receiveSet, createLocalSet, localSlug } from './sets.mjs';
 import { saveTests } from './testlist.mjs';
 
 const META = ['id', 'kind', 'name', 'version', 'updated_at', 'hash'];
@@ -103,7 +103,7 @@ function unwrap(x) {
 
 // 이 PC 전용 세트 id: createLocalSet 과 같은 규칙. 앞선(실패한) 실행이 이 프로필로 만든 세트가 있으면 그것을 다시 쓴다
 function localSetId(name, pid, root, taken) {
-  const base = `local-${safeId(name)}`;
+  const base = `local-${localSlug(name, pid)}`;
   for (let n = 1; ; n++) {
     const id = n === 1 ? base : `${base}-${n}`;
     if (taken.has(id)) continue;
@@ -291,7 +291,7 @@ function makeSet(s, root) {
   }
   if (readSet(s.setId, root)?.from_profile === s.fromProfile) return;
   const { id, version, ...def } = s.def;
-  const rec = createLocalSet(def, root);
+  const rec = createLocalSet(def, root, s.fromProfile);
   if (rec.id !== s.setId) {
     fs.rmSync(setPaths(rec.id, root).dir, { recursive: true, force: true });
     throw new Error(`이 PC 전용 세트 id가 계획과 다릅니다: ${rec.id} (계획 ${s.setId})`);

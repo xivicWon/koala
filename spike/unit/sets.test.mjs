@@ -92,8 +92,11 @@ test('목록: 저장소에만 있는 세트는 받지 않음, 로컬 세트 만�
   assert.equal(l.domain, 'svc-a.example');
   const a = createLocalSet({ name: '내 세트', profile: { target: { base_url: 'http://localhost:3000' } } }, root);
   const b = createLocalSet({ name: '내 세트' }, root);
-  assert.equal(a.id, 'local-____');
-  assert.equal(b.id, 'local-____-2');
+  // 한글 이름은 영문·숫자가 남지 않아 'set' 으로, 겹치면 -2
+  assert.equal(a.id, 'local-set');
+  assert.equal(b.id, 'local-set-2');
+  assert.equal(createLocalSet({ name: 'QA 세트 2.0' }, root).id, 'local-QA_2.0');
+  assert.equal(createLocalSet({ name: '예시 서비스' }, root, 'example').id, 'local-example');
   assert.equal(b.source, 'local');
   assert.equal(domainOfSet(b), 'default');
   assert.equal(checkUpdate(a.id, root), null);

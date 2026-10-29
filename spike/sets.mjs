@@ -163,8 +163,15 @@ export function checkUpdate(id, root = DATA) {
   return changed.length ? { from: rec.version, to: doc.version ?? 1, changed } : null;
 }
 
-export function createLocalSet(def, root = DATA) {
-  const base = `local-${safeId(def?.name)}`;
+// 이 PC 전용 세트 id 의 이름 부분: 이름에서 영문·숫자만 살린다. 한글 이름처럼 남는 게 없으면 fallback(예: 옛 프로필 id), 그것도 없으면 'set'
+export function localSlug(name, fallback = '') {
+  const s = safeId(name).replace(/_+/g, '_').replace(/^[_.-]+|[_.-]+$/g, '');
+  if (/[A-Za-z0-9]/.test(s)) return s;
+  const f = safeId(fallback).replace(/^local-/, '');
+  return fallback && /[A-Za-z0-9]/.test(f) ? f : 'set';
+}
+export function createLocalSet(def, root = DATA, fallback = '') {
+  const base = `local-${localSlug(def?.name, fallback)}`;
   let id = base;
   for (let n = 2; fs.existsSync(setPaths(id, root).dir); n++) id = `${base}-${n}`;
   const { name, ...rest } = def || {};
