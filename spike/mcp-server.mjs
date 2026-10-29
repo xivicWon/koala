@@ -42,7 +42,7 @@ const tool = (name, description, inputSchema) =>
   server.registerTool(name, { description, inputSchema }, (args) => call(name, args));
 
 // 묶음 실행: 할 일을 큐로 보내면 쉬지 않고 차례로 처리하고, 실패하면 거기서 멈춘다
-const ACTIONS = ['snapshot', 'screenshot', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear', 'clear_login',
+const ACTIONS = ['snapshot', 'screenshot', 'use_tab', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear', 'clear_login',
   'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused'];
 tool('run', `여러 단계를 한 번에 실행한다(권장). 각 단계는 {"tool": 이름, ...그 도구의 인자} 한 겹 객체다.
 예: [{"tool":"type","locator":{"testid":"id-input"},"value":"$KOALA_ADMIN_USER"},{"tool":"click","locator":{"text":"로그인"}},{"tool":"expect_url","pattern":"/dashboard$"}]
@@ -161,6 +161,8 @@ tool('append_code', `[테스트 추가] 새 테스트만 담은 코드 조각을
 
 // 읽기
 tool('snapshot', '현재 화면의 조작 가능한 요소(testid·글자·라벨·값)와 표(헤더·행 수·앞쪽 행)', {});
+tool('tabs', '관리 탭 목록(#1, #2 … 라벨·제목·URL·지금 작업 탭인지). 사용자가 "#2 탭"처럼 말하면 이 라벨이다', {});
+tool('use_tab', '작업 탭을 바꾼다. 이후 조작은 그 탭에서 한다. tab 은 관리 탭 라벨(예: "#2"). 바꾼 뒤 snapshot 으로 화면을 확인한다', { tab: z.string() });
 tool('screenshot', '현재 화면을 이미지로 본다. 레이아웃·시각적 이상을 볼 때', {});
 // 이동
 tool('goto', '현재 탭을 URL로 이동', { url: z.string() });

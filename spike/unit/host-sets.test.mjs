@@ -44,10 +44,12 @@ const writeTests = (id, suite) => {
 const hosts = [];
 // 호스트가 예전 테스트 코드(tests/suites/)를 찾는 spike 폴더: 개발 폴더의 것을 옮기거나 게이트에 걸리지 않게 임시 폴더로
 const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-host-spike-'));
+// 가짜 Claude 가 받은 지시를 남기는 파일(관리 탭 목록이 지시에 붙는지 본다)
+const dump = path.join(legacyDir, 'claude-input.txt');
 async function startHost(data, extraEnv = {}) {
   const port = await freePort();
   assert.notEqual(port, 8765);
-  const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_SPIKE_DIR: legacyDir, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE,
+  const env = { ...process.env, KOALA_PORT: String(port), KOALA_DATA_DIR: data, KOALA_SPIKE_DIR: legacyDir, KOALA_HEADED: '0', CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_DUMP: dump,
     KOALA_PG: 'postgres://koala:koala@127.0.0.1:9/koala', ...extraEnv }; // 그래프 DB는 없는 것으로(사용자 DB에 쓰지 않게)
   delete env.CLAUDECODE;
   const p = spawn(process.execPath, ['host.mjs'], { cwd: spike, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -167,6 +169,20 @@ test('세트 a 에서 지시하면 세션·작업 로그가 a 에만 남는다',
   await until(() => logsOf(data, 'a').includes('로그인 화면 확인-통합시험'), 'a 의 작업 로그');
   assert.ok(!logsOf(data, 'b').includes('로그인 화면 확인-통합시험'));
   assert.ok(!fs.existsSync(path.join(data, 'domains')));
+});
+
+test('관리 탭이 둘 이상이면 지시에 #라벨 목록이 붙고 작업 로그에 남는다', async () => {
+  pn.url = 'http://site-a.test/';
+  const at = pn.mark();
+  const tabs = [{ tab: '#1', title: '목록', url: 'http://site-a.test/list', current: true }, { tab: '#2', title: '신청서', url: 'http://site-a.test/form', current: false }];
+  pn.send({ type: 'instruct', text: '#2 탭에서 신청서 확인-탭시험', roles: [], set: 'a', tabs });
+  await until(() => fs.existsSync(dump) && fs.readFileSync(dump, 'utf8').includes('탭시험'), 'Claude 가 받은 지시');
+  pn.send({ type: 'stop' });
+  const got = fs.readFileSync(dump, 'utf8').split('\n').find((l) => l.includes('탭시험'));
+  assert.match(got, /\[관리 탭\] #1\(지금 작업 탭\) 목록 .* \/ #2 신청서/);
+  assert.match(got, /use_tab/);
+  await until(() => logsOf(data, 'a').includes('"tabs":["#1","#2"]'), '작업 로그의 tabs');
+  void at;
 });
 
 test('탭이 다른 도메인이면 domain_mismatch(can_force)', async () => {

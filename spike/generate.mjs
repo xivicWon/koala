@@ -69,6 +69,8 @@ const body = steps.map((s) => {
     case 'faultClear': return `await page.unrouteAll({ behavior: 'ignoreErrors' });`;
     case 'expectFocused': return `await expect(${L}).toBeFocused();`;
     case 'expectUrl': return `await expect(page).toHaveURL(new RegExp(${q(s.pattern)}));`;
+    // 관리 탭 전환: 녹화 기반 코드는 아직 탭 하나만 다룬다(AI 가 쓰는 테스트 코드에서 여러 페이지로 처리)
+    case 'useTab': return `// 관리 탭 ${s.tab} 로 전환(이 참고 코드는 한 탭만 다룬다)`;
     default: return `// 지원하지 않는 단계: ${JSON.stringify(s)}`;
   }
 }).map((line, i) => {

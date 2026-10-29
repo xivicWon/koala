@@ -111,7 +111,7 @@ function connect() {
   };
 }
 
-$('f').onsubmit = (e) => {
+$('f').onsubmit = async (e) => {
   e.preventDefault();
   if (aiBusy) return stopRun();
   const text = $('q').value.trim();
@@ -121,7 +121,8 @@ $('f').onsubmit = (e) => {
   msg('me', text);
   const roles = profileRoles().length > 1 ? scopeRoles() : undefined;
   if (roles?.length > 1) msg('sys', `역할 ${roles.map(roleLabel).join(' · ')}(으)로 차례로 수행합니다`);
-  ws.send(JSON.stringify({ type: 'instruct', text, roles, set: activeSet }));
+  const tabs = await tabsForAi().catch(() => []);
+  ws.send(JSON.stringify({ type: 'instruct', text, roles, tabs, set: activeSet }));
   $('q').value = '';
 };
 $('q').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('f').requestSubmit(); };
@@ -1120,6 +1121,7 @@ function stepContext() {
   if (!currentStep) return undefined;
   const n = currentStep.n;
   return {
+    tab: labelOf(tabId) || undefined, // 어느 관리 탭에서 조작했는지(Claude·기록용)
     requests: [...requests.values()].filter((r) => r.step === n)
       .map((r) => ({ method: r.method, path: r.path, status: r.status ?? 'pending', ms: r.ms })),
     consoleErrors: consoles.filter((c) => c.step === n && c.level === 'error').map((c) => c.text.slice(0, 300)),
@@ -1188,6 +1190,8 @@ async function execTool(name, a) {
       await sleep(300); await waitTabComplete(); await waitIdle(navAt);
       return { url: (await curTab()).url };
     }
+    case 'tabs': return { tabs: await tabsForAi(), forAi: { tabs: (await tabsForAi()).map((t) => `${t.tab}${t.current ? '(작업 탭)' : ''} ${t.title} ${t.url}`) } };
+    case 'use_tab': { const r = await useTabFromAi(a.tab); await ensureAttached(); return { ...r, forAi: { 작업탭: `${r.tab} ${r.title}` } }; }
     case 'snapshot': {
       const snap = await inPage(pageSnapshot);
       return { url: tab.url, title: tab.title, ...snap, forAi: { url: tab.url, elements: snap.elements.length, tables: snap.tables } };

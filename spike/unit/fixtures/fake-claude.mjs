@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 // 시험용 가짜 Claude CLI: 실제 Claude를 부르지 않는다(CLAUDE_BIN 으로 지정).
 //   --version, auth status → checkClaude() 가 사용 가능으로 보게 답한다
 //   -p --input-format stream-json → 받은 줄마다 init(처음 한 번)·짧은 답·result 를 낸다
@@ -47,6 +48,7 @@ if (args.includes('stream-json') && args[args.indexOf('--input-format') + 1] ===
       if (!line.trim()) continue;
       let text = '';
       try { text = JSON.stringify(JSON.parse(line).message?.content ?? ''); } catch {}
+      if (process.env.FAKE_CLAUDE_DUMP) fs.appendFileSync(process.env.FAKE_CLAUDE_DUMP, `${text}\n`); // 시험: Claude 가 받은 지시를 남긴다
       later(text);
     }
   });

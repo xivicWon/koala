@@ -80,8 +80,8 @@ function checkClaude() {
 }
 checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
-const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order']);
-const TOOLS = ['run', 'snapshot', 'screenshot', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
+const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order', 'tabs']);
+const TOOLS = ['run', 'snapshot', 'screenshot', 'tabs', 'use_tab', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
   'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'];
 // 계획 모드: 로그인·검색 입력과 확인은 할 수 있지만, 데이터를 바꾸는 버튼 클릭과 Enter 제출은 확장이 차단한다.
 // 테스트 기록에는 남기지 않는다. 결과는 save_plan
@@ -105,6 +105,7 @@ const SYSTEM = `너는 웹 QA 담당자다. koala 도구로만 브라우저를 �
 - 사용자가 지금까지 수행한 것으로 테스트(TDD·BDD·시나리오·케이스·테스트 초안)를 만들어 달라고 하면 make_tests 를 부르고 한 줄로 알린 뒤 응답을 끝낸다.
   "○○ 테스트해줘"처럼 수행을 요청하면 그것은 브라우저로 수행하라는 뜻이다. 만들어 달라는 뜻이 분명하지 않으면 먼저 묻는다.
 - 먼저 snapshot으로 화면을 읽고, locator는 testid > text > css 순으로 고른다.
+- 관리 탭은 #1, #2 처럼 라벨로 부른다. 사용자가 "#2 탭에서 …"라고 하면 use_tab("#2") 후 진행하고, 도구 응답의 tab 으로 어느 탭에서 조작했는지 확인한다. 탭 목록이 필요하면 tabs 를 쓴다.
 - 단계마다 도구를 따로 부르지 말고, 화면을 읽은 뒤 할 일을 **run으로 묶어 한 번에** 보낸다.
   (조작과 검증을 섞어 화면 전환 단위로 5~15단계씩. 다음 화면 구성을 모르면 거기까지만 묶는다)
   run이 중간에 실패하면 실패 지점의 오류·요청·현재 화면(snapshot)이 돌아온다. 그걸 보고 원인을 판단해 남은 계획을 다시 run으로 보낸다.
@@ -447,16 +448,16 @@ async function relay(name, args) {
     send({ type: 'tool', id, name, args: real });
   });
   console.log(`[time] ${name} ${Date.now() - t0}ms`);
-  audit('tool', { name, args: briefArgs(args), ok: !!result.ok, ms: Date.now() - t0, url: result.result?.url, error: result.ok ? undefined : String(result.error || '').slice(0, 300) });
+  audit('tool', { name, args: briefArgs(args), ok: !!result.ok, ms: Date.now() - t0, url: result.result?.url, tab: result.result?.tab || result.context?.tab, error: result.ok ? undefined : String(result.error || '').slice(0, 300) });
   if (result.ok && !READ_ONLY.has(name) && mode === 'plan') {
     await trackPath(name, args, result.result); // 이동 경로는 그래프에 남기고, 테스트 기록에는 넣지 않는다
   } else if (result.ok && !READ_ONLY.has(name)) {
     // 기록은 generate.mjs 형식에 맞춘다. 비밀값은 $이름 그대로 남긴다.
     const action = name.replace(/_(\w)/g, (_, c) => c.toUpperCase());
     const { url, locator, value, option, key, text, count, pattern, method, path: fpath, kind, status, body, delay_ms, times } = args;
-    steps.push({ action, url, locator, value, option, key, text, count, pattern, method, path: fpath, kind, status, body, delay_ms, times, matched: result.result?.matched, role: actor?.role || undefined });
+    steps.push({ action, url, locator, value, option, key, text, count, pattern, method, path: fpath, kind, status, body, delay_ms, times, matched: result.result?.matched, role: actor?.role || undefined, tab: result.result?.tab || args.tab || undefined });
     saveRec();
-    await trackPath(name, args, result.result);
+    if (name !== 'use_tab') await trackPath(name, args, result.result);
   }
   return result;
 }
@@ -1438,7 +1439,9 @@ function rolePrompt(keys) {
 
 // 도메인이 달라 막힌 지시. 사용자가 "그래도 진행"을 누르면 그대로 다시 보낸다
 let blocked = null;
-async function instruct(text, { derive = false, job: kind = 'run', roles = null, force = false } = {}) {
+// 관리 탭이 둘 이상이면 지시에 목록을 붙인다(사용자가 "#2 탭"이라고 하면 Claude 가 알아듣게)
+const tabsContext = (tabs) => (tabs?.length > 1 ? `\n[관리 탭] ${tabs.map((t) => `${t.tab}${t.current ? '(지금 작업 탭)' : ''} ${t.title} ${t.url}`).join(' / ')}\n다른 탭에서 하라는 지시면 use_tab 으로 그 라벨의 탭으로 바꾼 뒤 진행한다.` : '');
+async function instruct(text, { derive = false, job: kind = 'run', roles = null, force = false, tabs = null } = {}) {
   const why = setBlocked();
   if (why) { log('err', why); return; }
   stopRequested = false;
@@ -1466,7 +1469,7 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
     if (force) log('err', `대상 탭(${tabHost})이 세트 도메인(${domain})이 아니지만 승인해서 진행합니다 · 기록은 세트 ${activeSet}에 남습니다`);
     else {
       const go = startUrl && hostOf(startUrl) === domain ? startUrl : profile?.target?.base_url;
-      blocked = { text, opts: { derive, job: kind, roles } };
+      blocked = { text, opts: { derive, job: kind, roles, tabs } };
       log('err', `대상 탭(${tabHost})이 세트 도메인(${domain})이 아니라 멈췄습니다 · 이동하거나 그래도 진행을 고르세요`);
       send({ type: 'domain_mismatch', expected: domain, actual: tabHost, go, can_force: true });
       endJob(false, '대상 탭이 세트 도메인이 아닙니다');
@@ -1484,7 +1487,7 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
   }
   if (derive) return sendToClaude(text);
   intent = text.slice(0, 120);
-  text += profileContext();
+  text += profileContext() + tabsContext(tabs);
   // 대화를 새로 열지 않게 지식 묶음(stamp)과 따로 붙인다
   if (actor) text += `\n지금 브라우저에 로그인한 역할(koa가 마지막으로 로그인한 계정): ${actor.role || '-'} ${roleName(actor.role)} · $${actor.key}_USER`;
   text += rolePrompt(roles);
@@ -1885,8 +1888,8 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       if (m.set && (m.set !== activeSet || !profile) && !activateSet(m.set)) return;
       if (!profile) { log('err', '세트를 먼저 고르세요'); return; }
       if (m.mode) mode = m.mode === 'plan' ? 'plan' : 'write';
-      audit('request', { text: m.text, roles: m.roles, mode });
-      instruct(m.text, { roles: m.roles });
+      audit('request', { text: m.text, roles: m.roles, mode, tabs: m.tabs?.map((t) => t.tab) });
+      instruct(m.text, { roles: m.roles, tabs: m.tabs });
     }
     if (m.type === 'reset') { archiveRec(); sessionId = null; sessionAlias = null; steps = []; actor = null; saveRec(); sendActor(); stopClaude(); sendSession(); log('sys', '새 시나리오 시작'); scheduleWarm(300); }
   });
