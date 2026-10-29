@@ -5,15 +5,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
 // pre: 강조 후 조작 전, move: 커서 이동, type: 글자 간격, post: 조작 후, hold: 검증 결과 표시 유지
-// fast는 보여 주기용 대기를 모두 없앤다(표시물은 그리되 기다리지 않음)
-const SPEED = {
-  slow: { pre: 700, move: 900, type: 110, post: 700, hold: 500 },
-  normal: { pre: 300, move: 450, type: 45, post: 350, hold: 300 },
-  fast: { pre: 0, move: 0, type: 0, post: 0, hold: 0 },
-};
+// 배속: AI 가 작업 탭에서 조작할 때 단계를 보여 주는 대기(커서 이동·강조·입력 간격). x2 는 대기를 절반으로
+const BASE_PACE = { pre: 300, move: 450, type: 45, post: 350, hold: 300 };
+const RATES = [1, 2];
 const nap = (ms) => (ms > 0 ? sleep(ms) : null);
-let speed = 'normal';
-const sp = () => SPEED[speed];
+let rate = 1;
+const sp = () => Object.fromEntries(Object.entries(BASE_PACE).map(([k, v]) => [k, Math.round(v / rate)]));
 const SLOW_MS = 1000;
 const isBad = (r) => r.status === 'ERR' || r.status >= 400;
 const isSlow = (r) => r.ms >= SLOW_MS;
@@ -201,12 +198,29 @@ $('pause').onclick = () => {
   paused = !paused;
   $('pause').classList.toggle('on', paused);
   $('pause').textContent = paused ? '▶' : '❚❚';
-  $('pause').title = paused ? '이어서 진행' : '다음 조작 전에 멈춤';
+  renderPlay();
 };
-$('speed').querySelectorAll('button').forEach((b) => (b.onclick = () => {
-  speed = b.dataset.v;
-  $('speed').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
-}));
+// 배속은 AI 가 조작하는 동안에만 켠다(그때만 효과가 있다). 바꾸면 다음 단계부터 적용
+function setRate(r) {
+  rate = RATES.includes(r) ? r : 1;
+  renderPlay();
+}
+function renderPlay() {
+  $('rate-v').textContent = `x${rate}`;
+  $('rate-down').disabled = !aiBusy || rate === RATES[0];
+  $('rate-up').disabled = !aiBusy || rate === RATES.at(-1);
+  $('rate').classList.toggle('off', !aiBusy);
+  $('pause').disabled = !aiBusy;
+  $('rate').dataset.tip = `조작 배속 · 지금 x${rate}${aiBusy ? '' : ' (AI가 조작할 때만 켜집니다)'}
+AI가 작업 탭에서 클릭·입력할 때 커서 이동과 강조를 얼마나 천천히 보여 줄지입니다.
+· x1: 단계마다 커서·강조를 보여 주며 진행
+· x2: 보여 주는 대기를 절반으로
+지시를 시작할 때 자동으로 정합니다: 처음 가는 경로(탐색)는 x1, 이미 지나간 경로(재생)는 x2.
+진행 중에 바꾸면 다음 단계부터 적용됩니다. 테스트 결과, 생성 코드, Playwright 로컬 실행 속도에는 영향이 없습니다.`;
+  $('pause').dataset.tip = !aiBusy ? '일시정지 · AI가 조작할 때만 켜집니다' : paused ? '이어서 진행' : '다음 조작 전에 멈춥니다(지금 단계는 끝까지)';
+}
+$('rate-down').onclick = () => setRate(RATES[Math.max(0, RATES.indexOf(rate) - 1)]);
+$('rate-up').onclick = () => setRate(RATES[Math.min(RATES.length - 1, RATES.indexOf(rate) + 1)]);
 $('b-net').onclick = () => openSheet('net');
 $('b-neterr').onclick = () => openSheet('net', { errorsOnly: true });
 $('b-con').onclick = () => openSheet('con');
@@ -219,13 +233,13 @@ function setMode(mode, v) {
   $('mode').title = mode === 'replay'
     ? '재생 모드: 이 화면에서 이미 지나간 경로가 있어, 저장된 경로를 빠르게 이어서 실행합니다'
     : '탐색 모드: 처음 가는 경로라 화면을 하나씩 확인하며 천천히 진행합니다';
-  speed = v;
-  $('speed').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.v === v));
+  setRate(v === 'fast' ? 2 : 1); // 호스트: 탐색·계획은 normal(x1), 재생은 fast(x2)
 }
 
 // ---------- 실행 환경 경고: 호스트 꺼짐 / Claude Code 없음 / 로그인 안 됨 ----------
 let hostUp = false;
 let aiBusy = false;
+renderPlay(); // 배속·일시정지는 AI 가 조작할 때만 켜진다(처음에는 꺼짐)
 
 // Claude 버튼의 점: 작업 중(밝게 맥동) / 연결 중(노랑 맥동) / 대기(파랑) / 연결 안 됨(빨강: 호스트 꺼짐·Claude Code 사용 불가·연결 실패)
 // 호스트는 패널이 열리면 Claude를 미리 띄우고 대화를 연다(claude_conn: off | connecting | ready | failed)
@@ -327,6 +341,8 @@ let cancelled = false;
 function setBusy(b) {
   aiBusy = b;
   if (b) cancelled = false;
+  if (!b && paused) { paused = false; $('pause').classList.remove('on'); $('pause').textContent = '❚❚'; }
+  renderPlay();
   $('send').textContent = b ? '중지' : '실행';
   $('send').classList.toggle('stop', b);
   $('send').title = b ? 'AI 작업을 멈춥니다' : '';
@@ -837,11 +853,6 @@ async function renderPageState() {
   renderWorkTab();
   if (!tab) return;
   $('s-url').textContent = tab.url;
-  const loading = tab.status !== 'complete' || activeInflight() > 0;
-  $('s-load').textContent = tab.status !== 'complete' ? '페이지 불러오는 중' : activeInflight() ? '데이터 받는 중' : '페이지 준비됨';
-  $('s-load-dot').className = `ld ${loading ? 'loading' : 'ready'}`;
-  const longOnes = inflight.size - activeInflight();
-  $('s-inflight').textContent = `${activeInflight()}${longOnes > 0 ? ` · 장기 ${longOnes}` : ''}`;
 }
 setInterval(renderPageState, 500);
 

@@ -36,20 +36,16 @@
       <span id="s-actor" class="role-tag actor" hidden></span>
       <!-- 조작 재생: 속도·일시정지 -->
       <div class="play">
-        <div class="seg" id="speed" role="radiogroup" title="조작 속도: 화면에서 조작을 얼마나 천천히 보여 줄지">
-          <button data-v="slow" title="느리게" aria-label="느리게"><svg class="spd" viewBox="0 0 6 10" width="6" height="10" aria-hidden="true"><path d="M1 1.5 5 5 1 8.5"/></svg></button><button data-v="normal" class="on" title="보통" aria-label="보통"><svg class="spd" viewBox="0 0 11 10" width="11" height="10" aria-hidden="true"><path d="M1 1.5 5 5 1 8.5 M6 1.5 10 5 6 8.5"/></svg></button><button data-v="fast" title="빠르게" aria-label="빠르게"><svg class="spd" viewBox="0 0 16 10" width="16" height="10" aria-hidden="true"><path d="M1 1.5 5 5 1 8.5 M6 1.5 10 5 6 8.5 M11 1.5 15 5 11 8.5"/></svg></button>
+        <div class="rate" id="rate" data-tip="">
+          <button type="button" id="rate-down" class="rate-btn" aria-label="배속 내리기"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5"/></svg></button>
+          <span id="rate-v" class="rate-v">x1</span>
+          <button type="button" id="rate-up" class="rate-btn" aria-label="배속 올리기"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5"/></svg></button>
         </div>
-        <button id="pause" class="icon-btn" title="다음 조작 전에 멈춤">❚❚</button>
+        <button id="pause" class="icon-btn" aria-label="일시정지">❚❚</button>
       </div>
     </div>
     <div id="work-list" class="work-list" hidden></div>
     <div class="metrics">
-      <span class="metric" data-tip="대상 탭의 화면 상태입니다.
-· 페이지 준비됨: 페이지와 데이터 요청이 모두 끝나 조작할 수 있음
-· 페이지 불러오는 중: 페이지를 여는 중
-· 데이터 받는 중: 화면은 떴지만 API 응답을 기다리는 중"><span id="s-load-dot" class="ld"></span><span id="s-load">-</span></span>
-      <span class="metric" data-tip="보냈지만 아직 응답을 받지 못한 요청 수입니다.
-3초 넘게 끝나지 않는 요청(실시간 연결 등)은 '장기'로 따로 세고, 화면 준비 판단에서는 뺍니다.">응답 대기 <b id="s-inflight">0</b></span>
       <span class="grow"></span>
       <button id="b-net" class="metric-btn" title="이 시나리오의 전체 요청">요청 <b id="c-net">0</b></button>
       <button id="b-neterr" class="metric-btn" title="4xx·5xx·실패한 요청">API 오류 <b id="c-neterr">0</b></button>
