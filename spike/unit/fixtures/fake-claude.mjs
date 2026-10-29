@@ -13,6 +13,8 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
+// 시험: 어떤 옵션으로 띄워졌는지 남긴다(stream-json 상주 실행만)
+if (process.env.FAKE_CLAUDE_DUMP && args.includes('--input-format')) fs.appendFileSync(process.env.FAKE_CLAUDE_DUMP, `ARGS ${args.filter((a, i) => ['--model', '--effort'].includes(a) || ['--model', '--effort'].includes(args[i - 1])).join(' ')}\n`);
 if (args[0] === '--version') { console.log('0.0.0 (fake claude)'); process.exit(0); }
 if (args[0] === 'auth' && args[1] === 'status') { console.log(JSON.stringify({ loggedIn: true, authMethod: 'fake' })); process.exit(0); }
 

@@ -1,6 +1,13 @@
 // "Claude 설정" 시트: koa가 Claude를 실행하는 작업 폴더(지식 문서 사본)와 실제로 전달되는 내용을 보여 준다
 let claudeView = null;
 let claudeTab = 'prompt';
+// 내가 고른 모델·effort(이 확장에 저장, 세트 설정보다 우선). 빈 값은 '기본'(세트 → Claude Code 설정)
+let claudePrefs = { model: '', effort: '' };
+const MODELS = [['', '기본(세트·Claude Code)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['fable', 'Fable']];
+const EFFORT_OPTS = [['', '기본'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
+const claudePrefsReady = chrome.storage.local.get('claudePrefs').then((r) => { if (r?.claudePrefs) claudePrefs = { ...claudePrefs, ...r.claudePrefs }; }).catch(() => {});
+// 호스트에 알린다(연결될 때마다, 바꿀 때). 저장된 값을 읽은 뒤에 보낸다. 호스트는 바뀌었으면 대화를 이어 가며 Claude 를 다시 띄운다
+function sendClaudePrefs() { claudePrefsReady.then(() => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'claude_prefs', ...claudePrefs })); }); }
 
 async function loadClaudeView() {
   try {
@@ -26,8 +33,13 @@ function renderClaudeSheet(body) {
        <div class="cs-sec"><b>③ 프로필 (대상 서비스·계정·사이트 지식)</b> <span class="pf-hint">지시마다 덧붙임</span><pre class="cs-pre mono">${esc(v.profileContext || '(활성 프로필 없음)')}</pre></div>`;
   const busy = aiBusy;
   body.innerHTML = `<div class="cs">
+    <div class="cs-pick">
+      <label><span class="pf-hint">모델</span><select data-cp="model" ${busy ? 'disabled' : ''}>${MODELS.map(([v, t]) => `<option value="${v}" ${claudePrefs.model === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label><span class="pf-hint">effort</span><select data-cp="effort" ${busy ? 'disabled' : ''}>${EFFORT_OPTS.map(([v, t]) => `<option value="${v}" ${claudePrefs.effort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <span class="pf-hint">${busy ? 'AI 작업 중에는 바꿀 수 없습니다' : '바꾸면 대화는 이어서 새 설정으로 다시 연결합니다'}</span>
+    </div>
     <div class="cs-sum">
-      <span><span class="pf-hint">모델</span> <b>${esc(claudeRun.model || '아직 실행 전')}</b></span>
+      <span><span class="pf-hint">지금 모델</span> <b>${esc(claudeRun.model || '아직 실행 전')}</b></span>
       <span><span class="pf-hint">effort</span> <b>${esc(claudeRun.effort || '-')}</b></span>
       <span><span class="pf-hint">세션</span> <b class="mono">${esc(sessionAlias || '없음')}</b></span>
     </div>
@@ -163,3 +175,13 @@ function updateClaudeTip() {
   ].join('\n');
   $('claude-btn').removeAttribute('title');
 }
+
+// 모델·effort 고르기
+document.getElementById('sheet-body').addEventListener('change', (e) => {
+  const k = sheetMode === 'claude' && e.target.dataset?.cp;
+  if (!k || aiBusy) return;
+  claudePrefs = { ...claudePrefs, [k]: e.target.value };
+  chrome.storage.local.set({ claudePrefs }).catch(() => {});
+  sendClaudePrefs();
+  msg('sys', `Claude 설정: 모델 ${claudePrefs.model || '기본'} · effort ${claudePrefs.effort || '기본'}`);
+});

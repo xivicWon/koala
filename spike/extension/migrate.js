@@ -153,4 +153,4 @@ async function onMigrated(m) {
 }
 
 // 처음: 세트·내 설정 → 옮길 예전 데이터 → 그 세트의 타임라인 → 호스트 연결(연결되면 세트 목록과 테스트 목록이 온다)
-loadSetState().then(loadLegacy).then(restoreSetData).finally(connect);
+loadSetState().then(loadLegacy).then(restoreSetData).then(() => autoClaimOnOpen().catch(() => {})).finally(connect);

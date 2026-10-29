@@ -21,6 +21,7 @@
         <button type="button" id="menu-btn" class="icon-btn menu-btn" aria-label="메뉴" aria-haspopup="menu" aria-expanded="false"></button>
         <div id="menu" class="menu" role="menu" hidden>
           <button type="button" role="menuitem" data-menu="release"><span class="mi-ic release" aria-hidden="true"></span>릴리즈 노트 보기<span id="menu-release-badge" class="mi-badge" hidden>새 버전</span></button>
+          <button type="button" role="menuitem" data-menu="feedback" title="버그·개선 제안·질문을 koala GitHub Issues 로 보냅니다"><span class="mi-ic feedback" aria-hidden="true"></span>피드백 보내기</button>
           <button type="button" role="menuitem" data-menu="logs" title="지금 세트의 작업 기록(지시·도구 호출·테스트 실행)을 날짜별로 남긴 폴더를 엽니다"><span class="mi-ic logs" aria-hidden="true"></span>작업 로그 폴더 열기</button>
           <button type="button" role="menuitem" data-menu="wip" title="아직 완성되지 않았거나 임시로 돌아가는 기능"><span class="mi-ic wip" aria-hidden="true"></span>공사 중인 기능<span id="menu-wip-count" class="mi-badge wip"></span></button>
         </div>
@@ -106,6 +107,7 @@
   <script src="suite.js"></script>
   <script src="guide.js"></script>
   <script src="wip.js"></script>
+  <script src="feedback.js"></script>
   <script src="update.js"></script>
   <script src="job.js"></script>
 </body>

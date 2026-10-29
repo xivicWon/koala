@@ -224,3 +224,20 @@ async function useTabFromAi(ref) {
   if (t.id !== (await workTab({ claim: false }))?.id) await setWorkTab(t, { note: 'AI가 작업 탭을 바꿨습니다' });
   return { tab: labelOf(t.id), title: t.title, url: t.url };
 }
+
+// 패널을 처음 열 때: 세트가 골라져 있고 작업 탭이 없으면 지금 보던 탭을 작업 탭으로 정한다.
+// 세트의 사이트가 아닌 탭(메일 등)은 koala 그룹에 넣지 않고 안내만 한다
+async function autoClaimOnOpen() {
+  if (!viewSet || !setInfo(viewSet)) return;
+  if (await workTab({ claim: false })) return;
+  const t = await activeTab();
+  if (!t || !/^(https?|file):/.test(t.url || '')) return;
+  const dom = domainOf(setInfo(viewSet));
+  let host = '';
+  try { host = new URL(t.url).hostname; } catch {}
+  if (dom && dom !== 'default' && host && host !== dom) {
+    msg('sys', `지금 탭(${host})은 이 세트의 사이트(${dom})가 아니라 작업 탭으로 정하지 않았습니다. 세트 사이트 탭에서 위쪽 '지금 탭으로'를 누르세요`);
+    return;
+  }
+  await setWorkTab(t, { note: '패널을 열 때 보던 탭을 작업 탭으로 정했습니다' });
+}

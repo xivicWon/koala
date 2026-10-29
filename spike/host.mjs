@@ -506,8 +506,13 @@ const PERSIST = process.env.KOALA_PERSIST !== '0';
 let proc = null;
 let timing = null; // 지시 1건의 시간 분해: 기동 / 모델 / 브라우저
 
-// effort: 프로필 → 사용자 Claude Code 설정(~/.claude/settings.json 의 effortLevel) → medium
+// 패널에서 고른 내 설정(모델·effort). 세트 설정보다 우선한다. 비우면 세트 → Claude Code 기본값
+let userClaude = { model: '', effort: '' };
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const modelFor = () => userClaude.model || profile?.claude?.model || process.env.KOALA_MODEL || '';
+// effort: 내 설정 → 세트 → 사용자 Claude Code 설정(~/.claude/settings.json 의 effortLevel) → medium
 function effortFor() {
+  if (EFFORTS.includes(userClaude.effort)) return userClaude.effort;
   if (profile?.claude?.effort) return profile.claude.effort;
   try {
     const v = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).effortLevel;
@@ -529,7 +534,7 @@ function spawnClaude(extra, ws) {
     '--tools', '', '--allowedTools', toolsFor().map((t) => `mcp__koala__${t}`).join(','),
     '--append-system-prompt', mode === 'plan' ? SYSTEM + PLAN_SYSTEM : SYSTEM];
   // 모델은 프로필 설정을 따르고(없으면 Claude Code 기본값), effort는 항상 명시해 실제 값을 알 수 있게 한다
-  const model = profile?.claude?.model || process.env.KOALA_MODEL;
+  const model = modelFor();
   if (model) args.push('--model', model);
   args.push('--effort', effortFor());
   const env = { ...process.env };
@@ -1697,7 +1702,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({
         ...d,
         flags: ['--setting-sources project', '--strict-mcp-config', '--tools ""', `--allowedTools mcp__koala__*`,
-          ...(profile?.claude?.model ? [`--model ${profile.claude.model}`] : []), `--effort ${effortFor()}`],
+          ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
         system: SYSTEM,
         profileContext: profileContext().trim(),
         claude: claudeEnv,
@@ -1845,6 +1850,23 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       }
     }
     // 테스트 목록 지우기(BDD·TDD·흐름·전부). 지우기 전 목록은 세트의 tests/archive/ 에 남는다
+    // 모델·effort 바꾸기: 대화는 그대로 두고(이어받기) Claude 만 새 설정으로 다시 띄운다. 작업 중에는 바꾸지 않는다
+    if (m.type === 'claude_prefs') {
+      const next = { model: String(m.model || '').trim().slice(0, 80), effort: EFFORTS.includes(m.effort) ? m.effort : '' };
+      if (next.model && !/^[\w.\-[\]]+$/.test(next.model)) log('err', `모델 이름이 올바르지 않습니다: ${next.model}`);
+      else if (next.model !== userClaude.model || next.effort !== userClaude.effort) {
+        if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 모델·effort 를 바꿀 수 없습니다. 끝난 뒤 다시 고르세요');
+        else {
+          userClaude = next;
+          // 이미 떠 있거나 띄우는 중이면 새 설정으로 다시 띄운다(패널이 연결될 때 저장된 값이 늦게 와도 맞춰진다)
+          if (proc || warming) {
+            log('sys', `Claude 를 ${modelFor() || 'Claude Code 기본 모델'} · effort ${effortFor()} 로 바꿉니다(대화는 이어서)`);
+            stopClaude();
+            scheduleWarm(300);
+          }
+        }
+      }
+    }
     if (m.type === 'tests_clear') {
       const sid = m.set || activeSet;
       const what = { bdd: 'BDD 시나리오', tdd: 'TDD 케이스', flow: '흐름', all: '테스트 목록 전부' }[m.part];

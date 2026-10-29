@@ -57,6 +57,7 @@ function connect() {
     // 끊기기 전의 진행 중 작업은 끝난 것으로 본다. 호스트가 아직 하고 있으면 연결하자마자 job 을 다시 보낸다
     if (jobNow && !jobNow.done) { jobNow = null; renderJob(); }
     clearStaleRun?.();
+    sendClaudePrefs(); // 내가 고른 모델·effort 를 Claude 를 띄우기 전에 알린다
     maybeMigrate(); // 옮길 예전 데이터가 있으면 세트 작업보다 먼저
     renderSetChip();
   };
@@ -778,6 +779,7 @@ function renderSheet() {
   if (sheetMode === 'release') return renderReleaseSheet(body);
   if (sheetMode === 'guide') return renderGuideSheet(body);
   if (sheetMode === 'wip') return renderWipSheet(body);
+  if (sheetMode === 'feedback') return renderFeedbackSheet(body);
   if (sheetMode === 'confirm') {
     // Claude 설정의 '기록까지 비우기'에서 연다. 지울 것을 호스트 기준(세션·기록 수)으로 보여 주고 항상 확인한다
     $('sheet-title').textContent = '기록까지 비울까요?';

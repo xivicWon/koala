@@ -132,6 +132,7 @@ $('menu').addEventListener('click', (e) => {
   setMenu(false);
   if (act === 'release') openRelease();
   if (act === 'wip') openSheet('wip');
+  if (act === 'feedback') openSheet('feedback');
   if (act === 'logs') {
     if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않아 로그 폴더를 열 수 없습니다');
     if (!viewSet) return msg('err', '세트를 먼저 고르세요');

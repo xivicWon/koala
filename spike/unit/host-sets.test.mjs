@@ -185,6 +185,17 @@ test('관리 탭이 둘 이상이면 지시에 #라벨 목록이 붙고 작업 �
   void at;
 });
 
+test('claude_prefs: 모델·effort 를 바꾸면 그 값으로 Claude 를 다시 띄운다', async () => {
+  pn.url = 'http://site-a.test/';
+  pn.send({ type: 'set', id: 'a', prefs: {} });
+  await until(() => fs.existsSync(dump) && fs.readFileSync(dump, 'utf8').includes('ARGS'), 'Claude 기동');
+  pn.send({ type: 'claude_prefs', model: 'opus', effort: 'high' });
+  await until(() => fs.readFileSync(dump, 'utf8').split('\n').some((l) => l === 'ARGS --model opus --effort high'), '새 설정으로 다시 띄움');
+  pn.send({ type: 'claude_prefs', model: 'bad name;rm', effort: 'high' });
+  await until(() => logsOf(data, 'a').includes('모델 이름이 올바르지 않습니다'), '잘못된 모델 이름 거절');
+  pn.send({ type: 'claude_prefs', model: '', effort: '' }); // 다음 시험을 위해 기본으로
+});
+
 test('탭이 다른 도메인이면 domain_mismatch(can_force)', async () => {
   pn.url = 'http://other.test/';
   const at = pn.mark();
