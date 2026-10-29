@@ -122,11 +122,20 @@ $('f').onsubmit = async (e) => {
   msg('me', text);
   const roles = profileRoles().length > 1 ? scopeRoles() : undefined;
   if (roles?.length > 1) msg('sys', `역할 ${roles.map(roleLabel).join(' · ')}(으)로 차례로 수행합니다`);
+  $('q').value = ''; // 탭 목록을 모으는 동안 입력한 글자가 지워지지 않게 먼저 비운다
   const tabs = await tabsForAi().catch(() => []);
   ws.send(JSON.stringify({ type: 'instruct', text, roles, tabs, set: activeSet }));
-  $('q').value = '';
 };
-$('q').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('f').requestSubmit(); };
+// 채팅처럼: Enter 로 실행, Shift+Enter 로 줄바꿈. 한글 입력 중(조합 중)의 Enter 는 글자 확정이라 실행하지 않는다
+$('q').onkeydown = (e) => {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  // AI 작업 중에는 실행 버튼이 '중지'다. Enter 로 작업을 멈추지 않게 보내지 않고 알린다(중지는 버튼으로)
+  if (aiBusy) { if (!enterBusyNoted) msg('sys', 'AI 작업 중입니다. 끝난 뒤 Enter 로 보내세요(멈추려면 중지 버튼)'); enterBusyNoted = true; return; }
+  enterBusyNoted = false;
+  $('f').requestSubmit();
+};
+let enterBusyNoted = false;
 // ---------- 타임라인 저장·복원: 다시 열어도 그 시점부터 이어 본다 ----------
 $('timeline').addEventListener('click', (e) => {
   const step = e.target.closest('.step');
