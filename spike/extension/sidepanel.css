@@ -792,3 +792,9 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .wip .btn { background: #fff; color: var(--wip-ink); border-color: var(--wip-ink); }
 .mi-badge.wip { background: var(--wip-bg); color: var(--wip-ink); }
 .mi-ic.wip { -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 9v4M12 17h.01'/%3E%3C/svg%3E") center / contain no-repeat; }
+
+/* 작업 탭: 보기·지금 탭으로 */
+.work-btn { flex: none; height: 18px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--text-2); font-size: 10.5px; cursor: pointer; }
+.work-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text-3); }
+.work-btn:disabled { opacity: .45; cursor: default; }
+.url-k.work::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; background: var(--wip-bg); box-shadow: 0 0 0 1px var(--wip-ink); vertical-align: 1px; }

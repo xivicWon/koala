@@ -30,7 +30,8 @@
 
   <section class="status">
     <div class="band-top">
-      <div class="url-row" data-tip="AI가 조작하고 지켜보는 탭(대상 탭)의 지금 주소입니다. 다른 탭을 보면 그 탭으로 바뀝니다."><span class="url-k">대상 탭</span><span id="s-url" class="url mono">페이지 없음</span></div>
+      <div class="url-row" data-tip="AI가 조작하는 작업 탭의 지금 주소입니다. 처음 지시할 때 보이던 탭이 작업 탭이 되고, 노란 탭 그룹(koala · 세트 이름)으로 묶입니다. 다른 탭을 봐도 AI는 작업 탭에서 계속합니다."><span id="s-url-k" class="url-k">대상 탭</span><span id="s-url" class="url mono">페이지 없음</span>
+        <button type="button" id="work-show" class="work-btn" hidden data-tip="작업 탭으로 가서 봅니다">보기</button><button type="button" id="work-take" class="work-btn">지금 탭으로</button></div>
       <span id="s-actor" class="role-tag actor" hidden></span>
       <!-- 조작 재생: 속도·일시정지 -->
       <div class="play">
@@ -98,6 +99,7 @@
   <script src="sidepanel.js"></script>
   <script src="profile.js"></script>
   <script src="sets.js"></script>
+  <script src="worktab.js"></script>
   <script src="migrate.js"></script>
   <script src="claude-settings.js"></script>
   <script src="suite.js"></script>

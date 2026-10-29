@@ -452,7 +452,7 @@ function pickBar() {
 async function tabMismatch() {
   const d = activeDomain();
   if (!d || d === 'default') return null;
-  try { const h = new URL((await activeTab()).url).hostname; return h && h !== d ? h : null; } catch { return null; }
+  try { const h = new URL(((await workTab({ claim: false })) || await activeTab()).url).hostname; return h && h !== d ? h : null; } catch { return null; }
 }
 async function requestRun(ids, only) {
   const actual = await tabMismatch();

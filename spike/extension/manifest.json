@@ -8,6 +8,8 @@
     "sidePanel",
     "scripting",
     "tabs",
+    "tabGroups",
+    "webNavigation",
     "debugger",
     "storage",
     "nativeMessaging"

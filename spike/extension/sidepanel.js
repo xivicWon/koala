@@ -366,8 +366,10 @@ async function activeTab() {
   return tab;
 }
 
+// AI는 작업 탭(worktab.js)에만 붙는다. 화면에 보이는 탭이 바뀌어도 따라가지 않는다
 async function ensureAttached() {
-  const tab = await activeTab();
+  const tab = await workTab();
+  if (!tab) throw new Error('작업할 탭이 없습니다');
   tabId = tab.id;
   if (attachedTo !== tabId) {
     if (attachedTo) await chrome.debugger.detach({ tabId: attachedTo }).catch(() => {});
@@ -376,6 +378,8 @@ async function ensureAttached() {
     await cdp('Network.enable');
     await cdp('Runtime.enable');
     await cdp('Page.enable');
+    // 작업 탭이 뒤로 가도(사용자가 다른 탭을 봐도) 화면 그리기·타이머가 멈추지 않게 포커스를 흉내 낸다
+    await cdp('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
     fetchOn = false;
     await updateFetch();
   }
@@ -817,7 +821,8 @@ function renderCounts() {
 }
 
 async function renderPageState() {
-  const tab = await activeTab();
+  const tab = (await workTab({ claim: false })) || await activeTab();
+  renderWorkTab();
   if (!tab) return;
   $('s-url').textContent = tab.url;
   const loading = tab.status !== 'complete' || activeInflight() > 0;
@@ -1127,7 +1132,7 @@ function stepContext() {
 async function guardSecret(a) {
   const base = setInfo()?.base_url;
   if (!base) throw new Error('세트에 대상 서버 주소가 없어 계정 값을 입력하지 않았습니다');
-  const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
+  const tab = await workTab(); // 계정 값은 작업 탭에만 입력한다
   let ok = false;
   try { ok = new URL(tab?.url || '').origin === new URL(base).origin; } catch {}
   if (!ok) throw new Error(`계정 값은 대상 서버(${new URL(base).origin}) 화면에만 입력합니다. 지금 탭: ${tab?.url || '없음'}`);
@@ -1175,21 +1180,22 @@ async function execTool(name, a) {
       await chrome.tabs.update(tab.id, { url: a.url });
       await waitTabComplete();
       await waitIdle(navAt);
-      return { url: (await activeTab()).url };
+      return { url: (await curTab()).url };
     }
     case 'back': {
       const navAt = Date.now();
       await cdp('Runtime.evaluate', { expression: 'history.back()' });
       await sleep(300); await waitTabComplete(); await waitIdle(navAt);
-      return { url: (await activeTab()).url };
+      return { url: (await curTab()).url };
     }
     case 'snapshot': {
       const snap = await inPage(pageSnapshot);
       return { url: tab.url, title: tab.title, ...snap, forAi: { url: tab.url, elements: snap.elements.length, tables: snap.tables } };
     }
     case 'screenshot': {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 60 });
-      return { image: dataUrl, forAi: { captured: true } };
+      // captureVisibleTab 은 보이는 탭만 찍는다. 작업 탭이 뒤에 있어도 그 탭을 찍도록 CDP로 찍는다
+      const shot = await cdp('Page.captureScreenshot', { format: 'jpeg', quality: 60 });
+      return { image: `data:image/jpeg;base64,${shot.data}`, forAi: { captured: true } };
     }
     case 'click':
     case 'hover':
@@ -1248,7 +1254,7 @@ async function execTool(name, a) {
       await nap(s.post);
       await overlay('hide');
       const after = name === 'type' && !a.secret ? await inPage(pageResolve, a.locator, { anyVisibility: true }) : null;
-      return { matched: t.matched, url: (await activeTab()).url, selected, value: after?.value };
+      return { matched: t.matched, url: (await curTab()).url, selected, value: after?.value };
     }
     case 'press': {
       await overlay('banner', `키 입력: ${a.key}`);
@@ -1258,7 +1264,7 @@ async function execTool(name, a) {
       await waitIdle(pressedAt);
       await nap(s.post);
       await overlay('banner', '');
-      return { url: (await activeTab()).url };
+      return { url: (await curTab()).url };
     }
     case 'expect_visible':
     case 'expect_text':
@@ -1289,7 +1295,7 @@ async function execTool(name, a) {
     }
     // 역할을 바꾸기 전에 대상 사이트의 로그인 상태(쿠키·저장소)를 지운다. 이 브라우저는 koala 전용이다
     case 'clear_login': {
-      const origin = new URL((await activeTab()).url).origin;
+      const origin = new URL((await curTab()).url).origin;
       await cdp('Network.clearBrowserCookies');
       await cdp('Storage.clearDataForOrigin', { origin, storageTypes: 'cookies,local_storage,session_storage,indexeddb,cache_storage' });
       return { cleared: origin };
@@ -1326,7 +1332,7 @@ async function execTool(name, a) {
     case 'expect_url': {
       const re = new RegExp(a.pattern);
       const r = await poll(async () => {
-        const url = (await activeTab()).url;
+        const url = (await curTab()).url;
         return { pass: re.test(url), url };
       });
       await overlay('banner', `${r.pass ? '✓' : '✗'} URL ${a.pattern}`);
@@ -1342,7 +1348,7 @@ async function execTool(name, a) {
 async function waitTabComplete(max = 15000) {
   const end = Date.now() + max;
   while (Date.now() < end) {
-    if ((await activeTab()).status === 'complete') return;
+    if ((await curTab()).status === 'complete') return;
     await sleep(100);
   }
 }
@@ -1360,7 +1366,7 @@ function onDomainMismatch(m) {
   if (m.go) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'btn sm'; b.textContent = `${m.go} 로 이동`;
-    b.onclick = async () => { done(); try { await chrome.tabs.update(tabId ?? (await activeTab()).id, { url: m.go }); } catch (e) { msg('err', `이동하지 못했습니다: ${e.message}`); } };
+    b.onclick = async () => { done(); try { await chrome.tabs.update((await workTab()).id, { url: m.go }); } catch (e) { msg('err', `이동하지 못했습니다: ${e.message}`); } };
     btns.push(b);
   }
   if (m.can_force) {
