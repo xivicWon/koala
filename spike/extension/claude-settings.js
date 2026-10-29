@@ -146,7 +146,7 @@ function renderClaudeRun(model, effort) {
   const m = $('claude-model');
   const e = $('claude-effort');
   // 모델명은 Claude Code가 알려 준 값 그대로
-  if (model) { m.textContent = model; m.hidden = false; }
+  if (model) { m.textContent = String(model).replace(/^claude-/, ''); m.title = model; m.hidden = false; } // 헤더에는 앞의 claude- 없이
   e.innerHTML = effortIcon(effort);
   e.hidden = !model;
   claudeRun = { model, effort };
