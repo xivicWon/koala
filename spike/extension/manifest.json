@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "koala",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "사이드패널에서 지시하면 로컬 Claude Code가 현재 탭을 조작하고 Playwright 코드로 기록한다",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm2Tv6nt/5AT6ncsjzdQtzjBD5SefYq11r1HZ/luEltCvJXUIHgiPFNhyFn3YO9HSVxugNVOjI1BkYjsgqllHIgDyTWveclm4QXuCUkJDw3QMhv1fR9AD2A34XAv21T+jQ27voCpLYiaNco/wBYQp7/8h+jUd36nbQ7I98AtLiBpuHA9VHlvAbxK75Fy4ItZWcjeRl3W/g2t/64uyhgREnkB8ldmm/FgFc7zWVx+yQxDwREBwHfdvhDBHw0ex39k2uIIbNdieL/xXgtpDHXXQIjB2NxUcIYQRXacrwFnDO4MOzDsuv9ooS5zvrbMtV/eBNPp9NDDVj2KcgjeHAfGXJwIDAQAB",
   "permissions": [
