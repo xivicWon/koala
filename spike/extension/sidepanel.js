@@ -1173,6 +1173,7 @@ async function poll(fn, ms = 5000) {
 
 async function execTool(name, a) {
   const tab = await ensureAttached();
+  if (labelOf(tabId)) overlay('badge', `koala ${labelOf(tabId)}`); // 화면 구석에 관리 탭 번호
   await setNetGuard(!!a.guard);
   const s = sp();
   switch (name) {

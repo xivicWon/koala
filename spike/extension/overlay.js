@@ -16,10 +16,12 @@ if (!window.__koala) {
     .ripple { position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
               border: 3px solid #0969da; animation: rp .5s ease-out forwards; }
     @keyframes rp { to { transform: scale(4); opacity: 0; } }
+    #badge { position: fixed; top: 8px; left: 8px; padding: 2px 9px; border-radius: 999px; background: #141414; color: #ffd21f;
+             font-size: 12px; font-weight: 700; box-shadow: 0 0 0 2px #ffd21f; display: none; }
     #banner { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); background: rgba(17,24,39,.88);
               color: #fff; font-size: 12px; padding: 4px 12px; border-radius: 999px; display: none; }
   </style>
-  <div id="box"></div><div id="label"></div><div id="banner"></div>
+  <div id="box"></div><div id="label"></div><div id="banner"></div><div id="badge"></div>
   <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2l16 9-7 2-3 7z" fill="#111" stroke="#fff" stroke-width="1.5"/></svg>`;
   document.documentElement.appendChild(host);
   const $ = (id) => root.getElementById(id);
@@ -50,6 +52,11 @@ if (!window.__koala) {
       r.style.left = `${x}px`; r.style.top = `${y}px`;
       root.appendChild(r);
       setTimeout(() => r.remove(), 600);
+    },
+    // 이 탭이 koala 관리 탭 몇 번인지(창을 나란히 놓고 볼 때 구분용)
+    badge(text) {
+      $('badge').style.display = text ? 'block' : 'none';
+      $('badge').textContent = text || '';
     },
     banner(text) {
       $('banner').style.display = text ? 'block' : 'none';
