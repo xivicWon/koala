@@ -1,0 +1,25 @@
+# 세트 예시: 서비스 + 버전 + 목적 하나(대상 사이트 하나). 서버가 내려준다고 가정한 임시본이다.
+# 실제 서비스의 세트는 .koa/store/sets/ 에 둔다(git 밖).
+id: example-set
+kind: set
+version: 1
+updated_at: "2026-10-29T00:00:00.000Z"
+name: 서비스A 2.0 취약점 점검
+profile:                   # 대상 사이트 하나. 프로필 문서의 내용
+  claude:
+    model: null
+  target:
+    base_url: https://svc-a.example
+    login_path: /login
+    start_url: https://svc-a.example/login
+    env: local
+  deploy:
+    url: ""
+  prompt: |
+    - 이 서비스에 대해 AI가 알아야 할 것을 적는다.
+  cleanup: []
+roles: example-roles       # 참조: 받을 때 received/ 로 풀어 넣는다
+knowledge:
+  - qa-common
+tags:
+  - qa-tags

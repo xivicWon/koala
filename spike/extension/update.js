@@ -131,10 +131,12 @@ $('menu').addEventListener('click', (e) => {
   if (!act) return;
   setMenu(false);
   if (act === 'release') openRelease();
+  if (act === 'wip') openSheet('wip');
   if (act === 'logs') {
     if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않아 로그 폴더를 열 수 없습니다');
+    if (!viewSet) return msg('err', '세트를 먼저 고르세요');
     ws.send(JSON.stringify({ type: 'open_logs' }));
-    msg('sys', `작업 로그 폴더를 엽니다: spike/.koa/domains/${viewDomain || 'default'}/logs/ (날짜별 .jsonl)`);
+    msg('sys', `작업 로그 폴더를 엽니다: spike/.koa/sets/${viewSet}/work/logs/ (날짜별 .jsonl)`);
   }
 });
 
@@ -220,9 +222,9 @@ async function checkWhatsNew() {
   const v = extVersion();
   let seen = null, existing = false;
   try {
-    const r = await chrome.storage.local.get(['seenRelease', 'profiles']);
+    const r = await chrome.storage.local.get(['seenRelease', 'profiles', 'activeSet']);
     seen = r.seenRelease || null;
-    existing = !!r.profiles; // 이 기능 전부터 쓰던 사람(본 버전 기록이 없다)도 한 번 보여 준다
+    existing = !!(r.profiles || r.activeSet); // 이 기능 전부터 쓰던 사람(본 버전 기록이 없다)도 한 번 보여 준다
   } catch {}
   try { await chrome.storage.local.set({ seenRelease: v }); } catch {}
   // 마지막으로 본 버전 다음부터 지금 버전까지를 '놓친 버전'으로 펼쳐 보여 준다

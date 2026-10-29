@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import http from 'node:http';
 import { hostToken, HEADER } from './host-token.mjs';
+import { HOST_URL } from './paths.mjs';
 
 const locator = z.object({
   testid: z.string().optional().describe('data-testid 값. 있으면 최우선'),
@@ -16,7 +17,7 @@ const locator = z.object({
 // 시간 제한 없는 node:http로 부른다
 function post(body) {
   return new Promise((resolve, reject) => {
-    const req = http.request('http://127.0.0.1:8765/tool', { method: 'POST', headers: { 'content-type': 'application/json', [HEADER]: hostToken() } }, (res) => {
+    const req = http.request(`${HOST_URL}/tool`, { method: 'POST', headers: { 'content-type': 'application/json', [HEADER]: hostToken() } }, (res) => {
       let data = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { data += c; });
@@ -114,7 +115,10 @@ tool('save_tests', `방금 실제로 수행한 이력(조작·확인·네트워�
 - flow: 업무 흐름 지도(화면 순서, 입력 항목·필수 여부·선택지, 안내 메시지, 막힌 데이터 변경 요청)
 - scenarios: BDD 시나리오(Given/When/Then, 사용자 행동 기준)
 - cases: TDD 케이스(시나리오별로 입력값·기대 결과·검증 방법을 먼저 정한 세부 케이스. 정상/동등분할/경계값/예외/권한)
-화면에서 확인하지 못한 내용은 만들지 않거나 '미확인'으로 표시한다.`, {
+화면에서 확인하지 못한 내용은 만들지 않거나 '미확인'으로 표시한다.
+저장하면 세트의 테스트 목록에 더하고, 세트 안 번호는 호스트가 다시 매겨 결과의 renamed(초안 id → 세트 id)로 알려 준다.
+같은 대화에서 같은 초안을 다시 저장하면(앞 저장 때 초안에 쓴 id 그대로) 그 항목을 고쳐 쓴다 — 사용자가 정한 채택·태그·이슈는 남는다.
+새로 만든 테스트에는 이 대화에서 아직 쓰지 않은 새 id를 쓴다(앞에서 쓴 id를 다른 테스트에 쓰면 그 항목을 덮어쓴다). 새 대화의 저장은 언제나 목록에 더한다.`, {
   title: str.describe('계획 제목. 예: 점검 의뢰 기능'),
   scope: str.describe('범위와 제외 범위'),
   flow: z.array(flowStep).min(1),

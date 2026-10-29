@@ -14,14 +14,15 @@
       <span id="mode" class="pill mode" hidden></span>
     </div>
     <div class="top-ctx">
-      <button type="button" id="profile-chip" class="profile-chip" title="프로필"></button>
+      <button type="button" id="set-chip" class="set-chip" title="세트"></button>
       <button type="button" id="claude-btn" class="claude-btn" title="Claude 설정 보기"><span id="ai-dot" class="ai-dot off" role="status" aria-label="AI 연결 안 됨 (호스트 꺼짐)"></span><span class="claude-mark" aria-hidden="true"></span><span class="claude-name">Claude</span><span id="claude-model" class="claude-model" hidden></span><span id="claude-effort" class="claude-effort" hidden></span><span id="claude-session" class="claude-session" hidden></span></button>
       <button type="button" id="theme-btn" class="icon-btn theme-btn" aria-label="테마"></button>
       <div class="menu-wrap">
         <button type="button" id="menu-btn" class="icon-btn menu-btn" aria-label="메뉴" aria-haspopup="menu" aria-expanded="false"></button>
         <div id="menu" class="menu" role="menu" hidden>
           <button type="button" role="menuitem" data-menu="release"><span class="mi-ic release" aria-hidden="true"></span>릴리즈 노트 보기<span id="menu-release-badge" class="mi-badge" hidden>새 버전</span></button>
-          <button type="button" role="menuitem" data-menu="logs" title="이 도메인의 작업 기록(지시·도구 호출·테스트 실행)을 날짜별로 남긴 폴더를 엽니다"><span class="mi-ic logs" aria-hidden="true"></span>작업 로그 폴더 열기</button>
+          <button type="button" role="menuitem" data-menu="logs" title="지금 세트의 작업 기록(지시·도구 호출·테스트 실행)을 날짜별로 남긴 폴더를 엽니다"><span class="mi-ic logs" aria-hidden="true"></span>작업 로그 폴더 열기</button>
+          <button type="button" role="menuitem" data-menu="wip" title="아직 완성되지 않았거나 임시로 돌아가는 기능"><span class="mi-ic wip" aria-hidden="true"></span>공사 중인 기능<span id="menu-wip-count" class="mi-badge wip"></span></button>
         </div>
       </div>
     </div>
@@ -96,9 +97,12 @@
   </div>
   <script src="sidepanel.js"></script>
   <script src="profile.js"></script>
+  <script src="sets.js"></script>
+  <script src="migrate.js"></script>
   <script src="claude-settings.js"></script>
   <script src="suite.js"></script>
   <script src="guide.js"></script>
+  <script src="wip.js"></script>
   <script src="update.js"></script>
   <script src="job.js"></script>
 </body>

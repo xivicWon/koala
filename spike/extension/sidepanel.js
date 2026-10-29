@@ -53,12 +53,19 @@ function connect() {
   ws = new WebSocket('ws://127.0.0.1:8765');
   ws.onopen = () => {
     hostUp = true; nativeState = null; renderEnvAlert();
-    sendProfileToHost();
-    syncProfiles?.();
+    setSentOnOpen = false; // 호스트가 보내는 세트 목록(sets)을 받으면 지금 세트를 알린다
+    // 끊기기 전의 진행 중 작업은 끝난 것으로 본다. 호스트가 아직 하고 있으면 연결하자마자 job 을 다시 보낸다
+    if (jobNow && !jobNow.done) { jobNow = null; renderJob(); }
     clearStaleRun?.();
+    maybeMigrate(); // 옮길 예전 데이터가 있으면 세트 작업보다 먼저
+    renderSetChip();
   };
   ws.onclose = () => {
     hostUp = false; renderEnvAlert();
+    requeueSent(); // 받았다는 답이 없던 테스트 목록 변경은 다시 연결되면 보낸다
+    onMigrateSocketClosed();
+    renderSetChip();
+    if (sheetMode === 'set' || sheetMode === 'suite') renderSheet();
     startHost();
     setTimeout(connect, 2000);
   };
@@ -67,7 +74,7 @@ function connect() {
     if (m.type === 'log') msg(m.kind, m.text);
     if (m.type === 'busy') setBusy(m.busy);
     if (m.type === 'env') { claudeEnv = m.claude; renderEnvAlert(); }
-    if (m.type === 'job') onJob(m);
+    if (m.type === 'job') { onJob(m); if (m.done) flushSuite(); }
     if (m.type === 'update') onUpdate(m);
     if (m.type === 'update_done') onUpdateDone(m);
     if (m.type === 'claude_run') renderClaudeRun(m.model, m.effort);
@@ -76,11 +83,15 @@ function connect() {
     if (m.type === 'domain_mismatch') onDomainMismatch(m);
     if (m.type === 'session') renderSession(m.alias);
     if (m.type === 'actor') renderActor(m.actor);
-    if (m.type === 'suite_draft') onSuiteDraft(m.suite, m.base_version, m.tag_doc);
+    if (m.type === 'sets') onSets(m);
+    if (m.type === 'set_active') onSetActive(m);
+    if (m.type === 'migration_needed') onMigrationNeeded();
+    if (m.type === 'migrated') onMigrated(m);
+    if (m.type === 'tests') onTests(m);
+    if (m.type === 'tests_saved') onTestsSaved(m);
     if (m.type === 'suite_tags') onSuiteTags(m);
     if (m.type === 'suite_retag') onSuiteRetag(m);
     if (m.type === 'suite_listed') onSuiteListed(m);
-    if (m.type === 'suite_add') onSuiteAdd(m);
     if (m.type === 'suite_published') onSuitePublished(m);
     if (m.type === 'suite_code') onSuiteCode(m);
     if (m.type === 'suite_code_progress') onSuiteCodeProgress(m);
@@ -105,10 +116,12 @@ $('f').onsubmit = (e) => {
   if (aiBusy) return stopRun();
   const text = $('q').value.trim();
   if (!text || ws?.readyState !== 1) return;
+  if (migrationNeeded) return msg('err', migrationText());
+  if (!setInfo()?.received) return msg('err', '세트를 먼저 고르세요 · 위쪽 세트 칩에서 세트를 받고 고릅니다');
   msg('me', text);
   const roles = profileRoles().length > 1 ? scopeRoles() : undefined;
   if (roles?.length > 1) msg('sys', `역할 ${roles.map(roleLabel).join(' · ')}(으)로 차례로 수행합니다`);
-  ws.send(JSON.stringify({ type: 'instruct', text, roles, profile: activeProfilePayload(), domain: viewDomain }));
+  ws.send(JSON.stringify({ type: 'instruct', text, roles, set: activeSet }));
   $('q').value = '';
 };
 $('q').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('f').requestSubmit(); };
@@ -119,11 +132,11 @@ $('timeline').addEventListener('click', (e) => {
   if (e.target.closest('.open-suite')) return openSheet('suite');
   if (e.target.closest('.step .h')) step.classList.toggle('open');
 });
-// 타임라인은 도메인별로 저장한다(timeline@<도메인>). 도메인은 profile.js 의 viewDomain
-const timelineKey = (d) => `timeline@${d}`;
+// 타임라인은 세트별로 저장한다(timeline@<세트 id>). 세트는 profile.js 의 viewSet
+const timelineKey = (id) => `timeline@${id}`;
 let saveTimer;
-let restoringTimeline = false; // 도메인을 바꾸며 화면을 비우고 채우는 동안에는 저장하지 않는다
-function saveTimelineNow(d = viewDomain) {
+let restoringTimeline = false; // 세트를 바꾸며 화면을 비우고 채우는 동안에는 저장하지 않는다
+function saveTimelineNow(d = viewSet) {
   clearTimeout(saveTimer);
   if (!d || restoringTimeline) return;
   const reqs = [...requests.values()].slice(-300).map((r) => ({ ...r, body: r.body?.slice(0, 20000) }));
@@ -132,16 +145,13 @@ function saveTimelineNow(d = viewDomain) {
 function saveTimeline() {
   if (restoringTimeline) return;
   clearTimeout(saveTimer);
-  const d = viewDomain; // 0.8초 뒤 도메인이 바뀌어 있어도 지금 도메인에 저장한다
+  const d = viewSet; // 0.8초 뒤 세트가 바뀌어 있어도 지금 세트에 저장한다
   saveTimer = setTimeout(() => saveTimelineNow(d), 800);
 }
 new MutationObserver(saveTimeline).observe($('timeline'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-async function restoreTimeline(d) {
+async function restoreTimeline(d, label = d) {
   const key = timelineKey(d);
-  let { [key]: st, timelineState: legacy } = await chrome.storage.local.get([key, 'timelineState']).catch(() => ({}));
-  // 도메인 구분 전의 타임라인은 처음 불러오는 도메인으로 옮긴다
-  if (!st && legacy) { st = legacy; await chrome.storage.local.set({ [key]: st }).catch(() => {}); }
-  if (legacy) chrome.storage.local.remove('timelineState').catch(() => {});
+  const { [key]: st } = await chrome.storage.local.get([key]).catch(() => ({}));
   if (!st?.html) return;
   restoringTimeline = true;
   const empty = $('empty');
@@ -160,10 +170,10 @@ async function restoreTimeline(d) {
   renderCounts();
   await new Promise((r) => setTimeout(r)); // 위 변경으로 생긴 저장 예약을 건너뛴다
   restoringTimeline = false;
-  msg('sys', `이전 기록을 불러왔습니다(${d}). 이어서 지시하면 같은 대화로 진행합니다`);
+  msg('sys', `이전 기록을 불러왔습니다(${label}). 이어서 지시하면 같은 대화로 진행합니다`);
 }
 
-// 화면만 비운다(저장된 타임라인은 그대로). 도메인을 바꿀 때 쓴다
+// 화면만 비운다(저장된 타임라인은 그대로). 세트를 바꿀 때 쓴다
 function clearTimelineView() {
   restoringTimeline = true;
   [...$('timeline').children].forEach((c) => c.id !== 'empty' && c.remove());
@@ -173,7 +183,7 @@ function clearTimelineView() {
 }
 function clearView() {
   clearTimelineView();
-  if (viewDomain) chrome.storage.local.remove(timelineKey(viewDomain)).catch(() => {});
+  if (viewSet) chrome.storage.local.remove(timelineKey(viewSet)).catch(() => {});
 }
 function resetScenario() { clearView(); closeSheet(); ws.send(JSON.stringify({ type: 'reset' })); }
 $('pause').onclick = () => {
@@ -313,6 +323,7 @@ function setBusy(b) {
   $('send').disabled = !b && !$('env-alert').hidden;
   if (!b && lastAi) lastAi.classList.add('final'); // 마지막 AI 말은 요약으로 강조
   if (typeof updateDeriveBtn === 'function') updateDeriveBtn();
+  if (sheetMode === 'set') renderSheet(); // 작업 중에는 세트 바꾸기·받기를 막는다
 }
 function msg(kind, text) {
   const d = document.createElement('div');
@@ -756,11 +767,12 @@ function refreshSheet() {
 function renderSheet() {
   const body = $('sheet-body');
   $('net-tools').hidden = sheetMode !== 'net';
-  if (sheetMode === 'profile') return renderProfileSheet(body);
+  if (sheetMode === 'set') return renderSetSheet(body);
   if (sheetMode === 'claude') return renderClaudeSheet(body);
   if (sheetMode === 'suite') return renderSuiteSheet(body);
   if (sheetMode === 'release') return renderReleaseSheet(body);
   if (sheetMode === 'guide') return renderGuideSheet(body);
+  if (sheetMode === 'wip') return renderWipSheet(body);
   if (sheetMode === 'confirm') {
     // Claude 설정의 '기록까지 비우기'에서 연다. 지울 것을 호스트 기준(세션·기록 수)으로 보여 주고 항상 확인한다
     $('sheet-title').textContent = '기록까지 비울까요?';
@@ -1111,10 +1123,10 @@ function stepContext() {
   };
 }
 
-// 계정 값($KOALA_…)은 프로필 대상 서버 화면에만 입력한다. 페이지 글에 속은 AI가 다른 사이트 입력란에 넣게 하는 것을 막는다
+// 계정 값($KOALA_…)은 세트 대상 서버 화면에만 입력한다. 페이지 글에 속은 AI가 다른 사이트 입력란에 넣게 하는 것을 막는다
 async function guardSecret(a) {
-  const base = activeProfilePayload()?.target?.base_url;
-  if (!base) throw new Error('프로필에 대상 서버 주소가 없어 계정 값을 입력하지 않았습니다');
+  const base = setInfo()?.base_url;
+  if (!base) throw new Error('세트에 대상 서버 주소가 없어 계정 값을 입력하지 않았습니다');
   const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
   let ok = false;
   try { ok = new URL(tab?.url || '').origin === new URL(base).origin; } catch {}
@@ -1336,13 +1348,13 @@ async function waitTabComplete(max = 15000) {
 }
 
 $('ver').textContent = `v${chrome.runtime.getManifest().version}`;
-// 타임라인 복원과 호스트 연결은 프로필을 불러온 뒤 profile.js 가 한다(도메인을 알아야 하므로)
+// 타임라인 복원과 호스트 연결은 세트를 불러온 뒤 sets.js 가 한다(어느 세트의 타임라인인지 알아야 하므로)
 
-// 대상 탭이 프로필 도메인이 아니어서 멈췄을 때: 프로필 주소로 이동하거나, 승인하고 그대로 진행한다
+// 대상 탭이 세트 도메인이 아니어서 멈췄을 때: 세트 주소로 이동하거나, 승인하고 그대로 진행한다
 function onDomainMismatch(m) {
   const d = document.createElement('div');
   d.className = 'err domain-warn';
-  d.textContent = `대상 탭이 ${m.actual} 입니다. 이 프로필의 도메인은 ${m.expected} 입니다. 그대로 진행하면 ${m.actual} 화면을 조작하고, 기록은 ${m.expected} 쪽에 남습니다. `;
+  d.textContent = `대상 탭이 ${m.actual} 입니다. 이 세트의 도메인은 ${m.expected} 입니다. 그대로 진행하면 ${m.actual} 화면을 조작하고, 기록은 이 세트(${setInfo()?.name || m.expected})에 남습니다. `;
   const btns = [];
   const done = () => btns.forEach((x) => { x.disabled = true; });
   if (m.go) {
