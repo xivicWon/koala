@@ -92,7 +92,8 @@ let addOpen = false; // 테스트 추가 입력란을 연 상태
 const runPick = new Set(); // 테스트 코드 탭에서 실행하려고 고른 테스트 id
 let runConfirm = null;
 let publishWip = false;    // 서버 전송을 눌러 공사 표지판(임시 형태로 보냄)을 띄운 상태     // 대상 탭이 다른 도메인일 때 실행 확인을 기다리는 요청 { ids, only, actual }
-let scopeOpen = false; // 범위 설명을 펼친 상태(다시 그려도 유지)
+let stepsOpen = false;  // 단계 안내 전체를 펼친 상태(다시 그려도 유지)
+let clearAsk = null;    // 지우기 확인을 기다리는 항목: 'bdd' | 'tdd' | 'flow' | 'all'
 const rejectTag = (c) => (c.use ? '' : '<span class="tag reject">미채택</span>');
 
 // 테스트 목록의 원본은 호스트의 세트 폴더(tests.json)다. 패널은 호스트가 보낸 것(tests)을 보여 주고,
@@ -193,7 +194,7 @@ function onTests(m) {
 }
 
 const PRIO = { high: '높음', medium: '중간', low: '낮음' };
-const prioTag = (p) => `<span class="prio ${p}">${PRIO[p] || p}</span>`;
+const prioTag = (p) => (p ? `<span class="prio ${esc(p)}">${esc(PRIO[p] || p)}</span>` : ''); // 우선순위가 없는 항목은 표시하지 않는다
 const lis = (xs) => (xs || []).map((x) => `<li>${esc(x)}</li>`).join('');
 
 function recordedSteps() {
@@ -305,7 +306,9 @@ function renderSuiteSheet(body) {
     return;
   }
   if (!hasTests()) {
-    body.innerHTML = `<div class="none">이 세트에는 아직 테스트가 없습니다.<br>테스트를 수행한 뒤 입력창에 <b>"지금까지 한 걸로 테스트 만들어줘"</b>라고 하세요.</div>`;
+    body.innerHTML = `<div class="plan">${stepGuide()}${clearConfirmView()}
+      <div class="none">이 세트에는 아직 테스트가 없습니다.<br>테스트를 수행한 뒤 입력창에 <b>"지금까지 한 걸로 테스트 만들어줘"</b>라고 하세요.</div>
+      ${suite.flow?.length || suite.coverage?.length ? `<div class="pf-row" style="justify-content:flex-end"><button type="button" class="btn sm danger-text" data-clear="all">남은 흐름·점검표 지우기</button></div>` : ''}</div>`;
     return;
   }
   const useS = suite.scenarios.filter((c) => c.use).length;
@@ -324,13 +327,14 @@ function renderSuiteSheet(body) {
   body.innerHTML = `<div class="plan">
     <div class="pf-row"><b>${esc(suite.name)}</b><span class="grow"></span>
       <button type="button" class="btn sm" data-suite="add-open" ${aiBusy ? 'disabled' : ''} title="생각한 시나리오나 누락된 테스트를 이 묶음에 덧붙입니다(기존 항목은 그대로)">+ 테스트 추가</button>
+      <button type="button" class="btn sm danger-text" data-clear="all" ${clearBlocked() ? 'disabled' : ''} title="${esc(clearBlocked() || 'BDD·TDD·흐름·예외 점검표·테스트 코드·실행 결과를 모두 지우고 처음부터 시작합니다(지우기 전 목록은 세트 폴더에 보관)')}">초기화</button>
       <span class="tag ${suiteApplied ? '' : 'warn'}">${suiteApplied ? '반영됨' : '고르는 중'}</span>
       ${suiteBase ? `<span class="tag">서버 v${suiteBase}</span>` : ''}</div>
     ${addOpen ? `<div class="add-box"><textarea id="add-req" rows="3" placeholder="추가할 시나리오나 누락된 테스트를 적으세요. 예: 주문 목록에서 상품명으로 검색해 찾는다"></textarea>
       <div class="add-act"><span class="pf-hint">AI가 브라우저에서 직접 해 본 뒤 새 항목만 덧붙입니다. 안 쓸 기존 항목은 미채택하세요.</span><span class="grow"></span>
         <button type="button" class="btn sm" data-suite="add-cancel">취소</button><button type="button" class="primary sm" data-suite="add-send">추가 요청</button></div></div>` : ''}
-    <details class="scope-d" ${scopeOpen ? 'open' : ''}><summary><span class="scope-k">범위</span><span class="scope-peek">${esc(suite.scope || '-')}</span></summary>
-      <div class="scope-full">${esc(suite.scope || '-')}</div></details>
+    ${stepGuide()}
+    ${clearConfirmView()}
     <div class="st-tabs" role="tablist">${tabs.map(([k, name, badge, tone, tip]) => `<button type="button" role="tab" aria-selected="${k === suiteTab}" class="st-tab ${k === suiteTab ? 'on' : ''}" data-stab="${k}" title="${esc(tip)}">
       <span class="st-name">${esc(name)}</span>${badge ? `<span class="st-badge ${tone}">${esc(badge)}</span>` : ''}</button>`).join('')}</div>
     ${suiteTab === 'coverage' ? coverageView() : suiteTab === 'flow' ? flowView() : suiteTab === 'bdd' ? bddView() : suiteTab === 'tdd' ? tddView() : codeView()}
@@ -362,6 +366,58 @@ function renderSuiteSheet(body) {
     </div>
   </div>`;
 }
+
+// ── 단계 안내: 지금 무엇을 누르면 되는지 ──
+const STEPS = [
+  ['do', '수행', '입력창에 시험할 일을 지시하면 AI가 작업 탭에서 직접 해 봅니다. 예: "로그인해서 휴가 신청서를 작성해줘"'],
+  ['make', '테스트 만들기', '수행이 끝나면 입력창에 "지금까지 한 걸로 테스트 만들어줘"라고 합니다. BDD 시나리오·TDD 케이스 초안이 이 목록에 생깁니다. 빠진 것은 위쪽 <b>+ 테스트 추가</b>로 더합니다.'],
+  ['pick', '고르고 반영', '<b>BDD</b>·<b>TDD</b> 탭에서 쓸 항목만 체크(채택)하고 아래 <b>반영</b>을 누릅니다. 미채택 항목은 지워지지 않고 보관됩니다.'],
+  ['code', '코드 생성·실행', '아래 <b>코드 생성</b>을 누르면 채택한 테스트로 Playwright 코드를 만들고, 별도 Chrome 창에서 실행해 결과를 <b>테스트 코드</b> 탭에 보여 줍니다.'],
+  ['send', '서버 전송', '로컬 실행이 끝나면 아래 <b>서버 전송</b>으로 세트의 배포 서버에 보냅니다(아직 임시 형태).'],
+];
+function suiteStepNow() {
+  if (!hasTests()) return 'make';
+  if (!suiteApplied) return 'pick';
+  if (!codeFresh()) return 'code';
+  return 'send';
+}
+function stepGuide() {
+  const cur = suiteStepNow();
+  const ci = STEPS.findIndex(([k]) => k === cur);
+  const [, name, desc] = STEPS[ci];
+  return `<div class="steps">
+    <ol class="steps-row">${STEPS.map(([k, t], i) => `<li class="${i < ci ? 'done' : i === ci ? 'on' : ''}"><span class="st-n">${i < ci ? '✓' : i + 1}</span>${t}</li>`).join('')}</ol>
+    <div class="steps-now"><b>지금 할 일 · ${ci + 1}. ${name}</b> ${desc}</div>
+    <details class="steps-d" ${stepsOpen ? 'open' : ''}><summary>단계 전체 보기</summary>
+      <ol class="steps-all">${STEPS.map(([, t, d]) => `<li><b>${t}</b> ${d}</li>`).join('')}</ol>
+      <div class="pf-hint">다시 시작하려면 위쪽 <b>초기화</b>, 일부만 지우려면 각 탭의 <b>모두 지우기</b>를 누릅니다. 지우기 전 목록은 세트 폴더(tests/archive)에 남습니다.</div>
+    </details></div>`;
+}
+
+// ── 지우기 ──
+const clearBlocked = () => (aiBusy ? 'AI 작업 중에는 지울 수 없습니다' : suite?.code?.running ? '테스트 실행 중에는 지울 수 없습니다' : ws?.readyState !== 1 ? '호스트와 연결되어 있지 않습니다' : '');
+const CLEAR_TEXT = {
+  bdd: () => `BDD 시나리오 ${suite.scenarios.length}개와 거기 딸린 TDD 케이스 ${suite.cases.filter((c) => suite.scenarios.some((x) => x.id === c.scenario)).length}개를 지웁니다.`,
+  tdd: () => `TDD 케이스 ${suite.cases.length}개를 지웁니다(BDD는 그대로).`,
+  flow: () => `흐름 ${suite.flow?.length || 0}단계를 지웁니다(BDD·TDD는 그대로).`,
+  all: () => `BDD ${suite.scenarios.length}개 · TDD ${suite.cases.length}개 · 흐름 ${suite.flow?.length || 0}단계 · 예외 점검표 · 테스트 코드·실행 결과를 모두 지우고 처음부터 시작합니다.`,
+};
+function clearConfirmView() {
+  if (!clearAsk || !suite) return '';
+  return `<div class="pf-alert suite-conflict clear-ask"><span>${CLEAR_TEXT[clearAsk]()} 지우기 전 목록은 세트 폴더에 보관합니다. 서버에 이미 보낸 것은 지우지 않습니다.</span>
+    <span class="grow"></span><button type="button" class="btn sm" data-clear-cancel>취소</button><button type="button" class="primary sm danger-bg" data-clear-go>지우기</button></div>`;
+}
+document.getElementById('sheet-body').addEventListener('click', (e) => {
+  if (sheetMode !== 'suite' || !suite) return;
+  const ask = e.target.closest('[data-clear]')?.dataset.clear;
+  if (ask && !clearBlocked()) { clearAsk = ask; renderSheet(); document.querySelector('.clear-ask')?.scrollIntoView({ block: 'nearest' }); return; }
+  if (e.target.closest('[data-clear-cancel]')) { clearAsk = null; return renderSheet(); }
+  if (e.target.closest('[data-clear-go]') && clearAsk && !clearBlocked()) {
+    ws.send(JSON.stringify({ type: 'tests_clear', set: viewSet, part: clearAsk }));
+    clearAsk = null;
+    renderSheet();
+  }
+});
 
 // "작성됨"(코드에 있음, --list로 확인)과 "실행 결과"를 따로 센다
 const codeTests = () => suite.code?.listed || suite.code?.results || [];
@@ -498,7 +554,9 @@ function coverageView() {
 }
 
 function flowView() {
-  return (suite.flow || []).map((f) => `<div class="case">
+  const head = suite.flow?.length ? `<div class="filter-row"><span class="pf-hint">수행한 업무 흐름 ${suite.flow.length}단계</span><span class="grow"></span>
+    <button type="button" class="btn sm ghost danger-text" data-clear="flow" ${clearBlocked() ? 'disabled' : ''} title="${esc(clearBlocked() || '흐름을 모두 지웁니다(BDD·TDD는 그대로)')}">흐름 지우기</button></div>` : '<div class="none">흐름이 없습니다.</div>';
+  return head + (suite.flow || []).map((f) => `<div class="case">
     <div class="case-h"><b class="case-title">${esc(f.step)}</b><span class="grow"></span><span class="mono case-id">${esc(f.screen)}</span></div>
     ${f.inputs?.length ? `<div class="case-sec"><b>입력</b><ul>${f.inputs.map((x) => `<li>${esc(x.name)}${x.required ? ' <span class="tag warn">필수</span>' : ''}${x.options?.length ? ` — ${esc(x.options.join(' / '))}` : ''}${x.note ? ` <span class="pf-hint">${esc(x.note)}</span>` : ''}</li>`).join('')}</ul></div>` : ''}
     ${f.tab_order?.length ? `<div class="case-sec"><b>탭 순서</b> <span class="mono">${esc(f.tab_order.join(' → '))}</span></div>` : ''}
@@ -515,7 +573,8 @@ function filterBar() {
     ${tagIndex().size ? `<select class="tfilter" data-tag-filter><option value="">모든 태그</option>${[...tagIndex().keys()].map((t) => {
       const n = list.filter((c) => effTags(c).includes(t)).length;
       return n ? `<option value="${esc(t)}" ${suiteTagFilter === t ? 'selected' : ''}>${esc(t)} (${n})</option>` : '';
-    }).join('')}</select>` : ''}</div>`;
+    }).join('')}</select>` : ''}
+    <span class="grow"></span><button type="button" class="btn sm ghost danger-text" data-clear="${suiteTab === 'tdd' ? 'tdd' : 'bdd'}" ${clearBlocked() || !list.length ? 'disabled' : ''} title="${esc(clearBlocked() || (suiteTab === 'tdd' ? 'TDD 케이스를 모두 지웁니다' : 'BDD 시나리오와 거기 딸린 TDD 케이스를 모두 지웁니다'))}">${suiteTab === 'tdd' ? 'TDD' : 'BDD'} 모두 지우기</button></div>`;
 }
 
 function bddView() {
@@ -577,7 +636,7 @@ const act0 = (e) => e.target.closest('[data-suite]')?.dataset.suite;
 // 태그 고르기·태그 필터·이슈 번호 입력
 // 범위 설명 접기·펼치기 상태를 기억한다(목록은 자주 다시 그려진다)
 document.getElementById('sheet-body').addEventListener('toggle', (e) => {
-  if (sheetMode === 'suite' && e.target.classList?.contains('scope-d')) scopeOpen = e.target.open;
+  if (sheetMode === 'suite' && e.target.classList?.contains('steps-d')) stepsOpen = e.target.open;
 }, true);
 
 document.getElementById('sheet-body').addEventListener('change', (e) => {

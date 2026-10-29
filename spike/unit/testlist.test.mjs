@@ -139,3 +139,35 @@ test('adoptedKey: 채택한 것의 id·태그·이슈(패널 suite.js 와 같은
   assert.equal(adoptedKey(s), 'SC-1:@a+@b:I-1,TC-1::,TC-2:@c:');
   assert.equal(adoptedKey({}), '');
 });
+
+test('clearTests: BDD 를 지우면 딸린 TDD 도 지우고, 지우기 전 목록을 보관한다', async () => {
+  const { clearTests, saveTests, loadTests } = await import('../testlist.mjs');
+  const { setPaths } = await import('../sets.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'koa-clear-'));
+  try {
+    const sc = (id) => ({ id, title: id, given: [], when: [], then: [], use: true });
+    saveTests('s', { id: 's', name: '세트', scenarios: [sc('SC-1'), sc('SC-2')], cases: [{ id: 'TC-1', scenario: 'SC-1' }, { id: 'TC-9', scenario: 'SC-X' }], flow: [{ step: 'a' }], coverage: [{ category: 'c' }], code: { source: 'x' }, applied: true, base_version: 3 }, root);
+    const r = clearTests('s', 'bdd', root);
+    assert.deepEqual(r.removed, { scenarios: 2, cases: 1, flow: 0 });
+    const t = loadTests('s', root);
+    assert.deepEqual(t.scenarios, []);
+    assert.deepEqual(t.cases.map((c) => c.id), ['TC-9']);
+    assert.equal(t.applied, false);
+    assert.equal(t.base_version, 3);
+    assert.equal(JSON.parse(fs.readFileSync(r.archive, 'utf8')).scenarios.length, 2);
+    clearTests('s', 'flow', root);
+    assert.deepEqual(loadTests('s', root).flow, []);
+    // 전부: 목록·점검표·코드·결과를 지우고 이름·서버 기준 버전은 둔다
+    fs.mkdirSync(setPaths('s', root).code, { recursive: true });
+    fs.writeFileSync(path.join(setPaths('s', root).code, 's.spec.ts'), '//');
+    fs.mkdirSync(setPaths('s', root).results, { recursive: true });
+    const all = clearTests('s', 'all', root);
+    const e = loadTests('s', root);
+    assert.deepEqual([e.scenarios, e.cases, e.flow, e.coverage, e.code], [[], [], [], [], null]);
+    assert.equal(e.name, '세트');
+    assert.equal(e.base_version, 3);
+    assert.ok(!fs.existsSync(setPaths('s', root).code) && !fs.existsSync(setPaths('s', root).results));
+    assert.ok(fs.existsSync(all.archive));
+    assert.throws(() => clearTests('s', 'nope', root), /지울 수 없는 항목/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

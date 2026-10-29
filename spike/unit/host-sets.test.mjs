@@ -377,6 +377,18 @@ test('패널 tests_save 는 세트 id 를 그대로 적는다(/ 나 한글이 �
   assert.equal(t.scenarios[0].use, false);
 });
 
+test('tests_clear: BDD(딸린 TDD 포함)를 지우고 목록을 다시 보낸다 · 지우기 전 목록은 보관', async () => {
+  writeTests('a', { id: 'a', name: 'n', scenarios: [sc('SC-1', 'x', { use: true })], cases: [{ id: 'TC-1', scenario: 'SC-1', use: true }], flow: [{ step: 's' }], applied: true });
+  const at = pn.mark();
+  pn.send({ type: 'tests_clear', set: 'a', part: 'bdd' });
+  const m = await pn.waitFor((x) => x.type === 'tests' && x.set === 'a' && x.suite && !x.suite.scenarios.length, at, '지운 목록');
+  assert.equal(m.suite.cases.length, 0);
+  assert.equal(m.suite.flow.length, 1);
+  assert.equal(m.suite.applied, false);
+  const arch = path.join(data, 'sets', 'a', 'tests', 'archive');
+  assert.equal(fs.readdirSync(arch).length, 1);
+});
+
 test('보내기: 목록이 깨졌거나 보낸 뒤 기준 버전 저장에 실패해도 호스트는 살아 있고 suite_published{ok:false}', async () => {
   const id = 'pub';
   putYaml(data, `store/sets/${id}.yaml`, { ...siteSet(id), profile: { target: { base_url: 'http://site-a.test', start_url: 'http://site-a.test/' }, deploy: { url: `http://127.0.0.1:${host.port}` } } });

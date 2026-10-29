@@ -104,3 +104,35 @@ export function recordResults(setId, results, ranAt, root) {
   // 파일 이름에 쓸 수 없는 글자(':' '/' 등)는 '-'로 바꾼다. 원래 값은 본문에 남긴다
   writeJson(`${dir}/runs/${String(ranAt).replace(/[^0-9A-Za-z._-]/g, '-')}.json`, { ranAt, results });
 }
+
+// 지우기: part = 'bdd'(시나리오와 거기 딸린 케이스) | 'tdd'(케이스) | 'flow'(흐름) | 'all'(목록·점검표·코드·실행 결과 전부).
+// 지우기 전 목록을 tests/archive/<시각>.json 에 남긴다. 목록이 바뀌었으니 반영(applied)은 풀린다. 서버 기준 버전(base_version)은 둔다
+export function clearTests(setId, part, root) {
+  const p = setPaths(setId, root);
+  const cur = loadTests(setId, root);
+  const stamp = new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-');
+  const archive = path.join(p.tests, 'archive', `${stamp}-${part}.json`);
+  writeJson(archive, cur);
+  const removed = { scenarios: 0, cases: 0, flow: 0 };
+  let next = { ...cur, applied: false };
+  if (part === 'bdd') {
+    const ids = new Set(cur.scenarios.map((s) => s.id));
+    removed.scenarios = cur.scenarios.length;
+    const cases = cur.cases.filter((c) => !ids.has(c.scenario));
+    removed.cases = cur.cases.length - cases.length;
+    next = { ...next, scenarios: [], cases };
+  } else if (part === 'tdd') {
+    removed.cases = cur.cases.length;
+    next = { ...next, cases: [] };
+  } else if (part === 'flow') {
+    removed.flow = (cur.flow || []).length;
+    next = { ...next, flow: [] };
+  } else if (part === 'all') {
+    Object.assign(removed, { scenarios: cur.scenarios.length, cases: cur.cases.length, flow: (cur.flow || []).length });
+    next = { ...emptySuite(setId), name: cur.name, base_version: cur.base_version || 0 };
+    fs.rmSync(p.code, { recursive: true, force: true });
+    fs.rmSync(p.results, { recursive: true, force: true });
+  } else throw new Error(`지울 수 없는 항목: ${part}`);
+  saveTests(setId, next, root);
+  return { suite: next, removed, archive };
+}
