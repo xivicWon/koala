@@ -1,5 +1,5 @@
 // API 요금제(Agent SDK) 실행: CLI 인자 → SDK 옵션 변환과 API 키 파일 다루기
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +9,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-sdk-'));
 process.env.KOALA_API_KEY_FILE = path.join(tmp, 'sub', 'anthropic-api-key'); // 사용자의 실제 키 파일은 건드리지 않는다
 const sdk = await import('../claude-sdk.mjs');
 const KEY = `sk-ant-api03-${'x'.repeat(40)}`;
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 test('optionsFromArgs: 상주 실행 인자를 SDK 옵션으로 옮긴다', () => {
   const mcp = path.join(tmp, 'mcp.json');
