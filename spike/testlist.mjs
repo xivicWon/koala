@@ -136,3 +136,22 @@ export function clearTests(setId, part, root) {
   saveTests(setId, next, root);
   return { suite: next, removed, archive };
 }
+
+// 항목 하나씩 지우기(카드의 휴지통). BDD 시나리오를 지우면 딸린 TDD 케이스도 지운다.
+// 채택된 항목을 지웠으면 다시 반영해야 한다(코드가 채택 목록과 어긋난다). 지우기 전 목록은 tests/archive 에 남긴다
+export function deleteTests(setId, ids, root) {
+  const p = setPaths(setId, root);
+  const cur = loadTests(setId, root);
+  const want = new Set(ids);
+  const scenarios = cur.scenarios.filter((s) => !want.has(s.id));
+  const goneS = new Set(cur.scenarios.filter((s) => want.has(s.id)).map((s) => s.id));
+  const cases = cur.cases.filter((c) => !want.has(c.id) && !goneS.has(c.scenario));
+  const gone = [...cur.scenarios.filter((s) => goneS.has(s.id)), ...cur.cases.filter((c) => !cases.includes(c))];
+  if (!gone.length) throw new Error(`지울 항목이 목록에 없습니다: ${ids.join(', ')}`);
+  const stamp = new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-');
+  const archive = path.join(p.tests, 'archive', `${stamp}-items.json`);
+  writeJson(archive, cur);
+  const next = { ...cur, scenarios, cases, applied: cur.applied && !gone.some((c) => c.use) };
+  saveTests(setId, next, root);
+  return { suite: next, removed: { scenarios: goneS.size, cases: cur.cases.length - cases.length }, ids: gone.map((c) => c.id), archive };
+}

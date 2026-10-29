@@ -171,3 +171,24 @@ test('clearTests: BDD 를 지우면 딸린 TDD 도 지우고, 지우기 전 목�
     assert.throws(() => clearTests('s', 'nope', root), /지울 수 없는 항목/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('deleteTests: 항목 하나씩 지운다 · BDD 는 딸린 TDD 와 함께 · 채택 항목을 지우면 다시 반영해야 한다', async () => {
+  const { deleteTests, saveTests, loadTests } = await import('../testlist.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'koa-del-'));
+  try {
+    const sc = (id, use) => ({ id, title: id, given: [], when: [], then: [], use });
+    saveTests('s', { id: 's', name: '세트', scenarios: [sc('SC-1', true), sc('SC-2', false)], cases: [{ id: 'TC-1', scenario: 'SC-1', use: true }, { id: 'TC-2', scenario: 'SC-2', use: false }, { id: 'TC-3', scenario: 'SC-1', use: true }], applied: true }, root);
+    // 미채택 항목을 지우면 반영 상태는 그대로
+    let r = deleteTests('s', ['SC-2'], root);
+    assert.deepEqual(r.ids, ['SC-2', 'TC-2']);
+    assert.deepEqual(r.removed, { scenarios: 1, cases: 1 });
+    assert.equal(loadTests('s', root).applied, true);
+    // 채택된 TDD 하나를 지우면 다시 반영해야 한다
+    r = deleteTests('s', ['TC-3'], root);
+    assert.deepEqual(r.ids, ['TC-3']);
+    const t = loadTests('s', root);
+    assert.deepEqual([t.scenarios.map((x) => x.id), t.cases.map((x) => x.id), t.applied], [['SC-1'], ['TC-1'], false]);
+    assert.equal(fs.readdirSync(path.join(root, 'sets', 's', 'tests', 'archive')).length, 2);
+    assert.throws(() => deleteTests('s', ['SC-404'], root), /지울 항목이 목록에 없습니다/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

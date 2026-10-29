@@ -1799,7 +1799,7 @@ const server = http.createServer(async (req, res) => {
 
 // 세트에 묶인 패널 메시지: 옮기기 전에는 거절한다. SET_PICK 은 세트를 고르기 전에도 받는다
 const SET_PICK = new Set(['set', 'set_receive', 'set_create_local', 'set_update_local', 'set_delete']);
-const SET_SCOPED = new Set([...SET_PICK, 'instruct', 'tests_save', 'tests_clear', 'run_code', 'write_code', 'retag_code', 'list_code', 'suggest_tags',
+const SET_SCOPED = new Set([...SET_PICK, 'instruct', 'tests_save', 'tests_clear', 'tests_delete', 'run_code', 'write_code', 'retag_code', 'list_code', 'suggest_tags',
   'add_tests', 'derive', 'reinforce', 'publish', 'reset', 'domain_override', 'open_logs']);
 // 연결이 여럿이어도(패널 다시 열기, 점검용 접속) 가장 최근에 열린 것을 패널로 쓰고, 그것이 끊기면 남은 연결로 돌아간다
 const sockets = new Set();
@@ -1921,6 +1921,21 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
           const r = testlist.clearTests(sid, m.part);
           const n = r.removed;
           log('sys', `${what}을(를) 지웠습니다 · 시나리오 ${n.scenarios} · 케이스 ${n.cases} · 흐름 ${n.flow}${m.part === 'all' ? ' · 코드·실행 결과' : ''} (지우기 전 목록: tests/archive/${path.basename(r.archive)})`);
+          send({ type: 'tests', set: sid, suite: r.suite, tag_doc: sid === activeSet ? tagDoc() : null });
+        } catch (e) { log('err', `테스트를 지우지 못했습니다: ${e.message}`); }
+      }
+    }
+    // 항목 하나 지우기(카드의 휴지통). BDD 를 지우면 딸린 TDD 도 지운다
+    if (m.type === 'tests_delete') {
+      const sid = m.set || activeSet;
+      const ids = Array.isArray(m.ids) ? m.ids.map(String).filter(Boolean) : [];
+      if (!ids.length) log('err', '지울 항목이 없습니다');
+      else if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 테스트를 지울 수 없습니다. 끝난 뒤 다시 누르세요');
+      else if (!readSet(sid)) log('err', `세트 ${sid}를 아직 받지 않았습니다`);
+      else {
+        try {
+          const r = testlist.deleteTests(sid, ids);
+          log('sys', `${r.ids.join(', ')}을(를) 지웠습니다${r.suite.applied ? '' : ' · 채택한 항목이 빠져 다시 반영해야 합니다'} (지우기 전 목록: tests/archive/${path.basename(r.archive)})`);
           send({ type: 'tests', set: sid, suite: r.suite, tag_doc: sid === activeSet ? tagDoc() : null });
         } catch (e) { log('err', `테스트를 지우지 못했습니다: ${e.message}`); }
       }

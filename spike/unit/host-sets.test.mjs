@@ -432,6 +432,17 @@ test('tests_clear: BDD(딸린 TDD 포함)를 지우고 목록을 다시 보낸�
   assert.equal(fs.readdirSync(arch).length, 1);
 });
 
+test('tests_delete: 카드 하나를 지우고(BDD 는 딸린 TDD 포함) 목록을 다시 보낸다', async () => {
+  writeTests('a', { id: 'a', name: 'n', scenarios: [sc('SC-1', 'x', { use: true }), sc('SC-2', 'y', { use: true })], cases: [{ id: 'TC-1', scenario: 'SC-1', use: true }, { id: 'TC-2', scenario: 'SC-2', use: true }], applied: true });
+  const at = pn.mark();
+  pn.send({ type: 'tests_delete', set: 'a', ids: ['SC-1'] });
+  const m = await pn.waitFor((x) => x.type === 'tests' && x.set === 'a' && x.suite?.scenarios.length === 1, at, '지운 목록');
+  assert.deepEqual(m.suite.scenarios.map((x) => x.id), ['SC-2']);
+  assert.deepEqual(m.suite.cases.map((x) => x.id), ['TC-2']);
+  assert.equal(m.suite.applied, false);
+  await until(() => logsOf(data, 'a').includes('SC-1, TC-1을(를) 지웠습니다') || pn.msgs.slice(at).some((x) => x.type === 'log' && x.text.includes('SC-1, TC-1을(를) 지웠습니다')), '지운 항목 안내');
+});
+
 test('보내기: 목록이 깨졌거나 보낸 뒤 기준 버전 저장에 실패해도 호스트는 살아 있고 suite_published{ok:false}', async () => {
   const id = 'pub';
   putYaml(data, `store/sets/${id}.yaml`, { ...siteSet(id), profile: { target: { base_url: 'http://site-a.test', start_url: 'http://site-a.test/' }, deploy: { url: `http://127.0.0.1:${host.port}` } } });

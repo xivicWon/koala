@@ -855,3 +855,15 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .rate-v { min-width: 22px; text-align: center; font-size: 11.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 .rate.off .rate-v { color: var(--text-3); font-weight: 600; }
 #pause:disabled { opacity: .4; cursor: default; }
+
+/* 고르기 → 반영 막대(BDD·TDD 탭 맨 위, 반영 전이면 테스트 코드 탭 위에도) */
+.apply-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 8px 0; border-radius: 8px; font-size: 12px;
+  background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+.apply-bar.done { background: var(--bg-soft); border-color: var(--line); color: var(--text-2); }
+.apply-bar.done b { color: var(--text); }
+.apply-bar .btn, .apply-bar .primary { flex-shrink: 0; }
+/* 카드의 휴지통: 두 번 눌러야 지운다 */
+.del-btn { border: 0; background: none; padding: 2px 4px; margin-left: 2px; border-radius: 5px; color: var(--text-3, var(--text-2)); line-height: 0; flex-shrink: 0; }
+.del-btn:hover:not(:disabled) { color: var(--fail); background: var(--fail-soft); }
+.del-btn:disabled { opacity: .35; }
+.del-btn.armed { color: #fff; background: var(--fail); font-size: 11px; line-height: 1.4; padding: 1px 6px; font-weight: 600; }

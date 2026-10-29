@@ -356,7 +356,6 @@ function renderSuiteSheet(body) {
           : `로컬 실행 통과 ${suite.code.summary?.passed ?? 0}/${suite.code.results?.length ?? 0}${suite.code.summary?.failed ? ` · 실패 ${suite.code.summary.failed}` : ''}${suiteBase ? ` · 서버 v${suiteBase}` : ''}${deployServer() ? '' : ' · <b class="next-step">세트에 배포 서버가 없습니다 · 세트 정의에 있어야 서버 전송을 쓸 수 있습니다</b>'}`}</span>
       <span class="grow"></span>
       <button type="button" class="btn" data-suite="reinforce" ${todo ? '' : 'disabled'} title="미수행 예외·오류를 실제로 수행하고(필요하면 오류 주입) 초안을 갱신합니다">예외·오류 보강 수행</button>
-      <button type="button" class="btn" data-suite="apply" ${suiteApplied ? 'disabled' : ''}>반영</button>
       <button type="button" class="btn" data-suite="tags" title="서버 태그 목록 기준으로 자동 태그와 AI 판단 태그를 붙입니다(사람이 붙인 태그는 유지)">태그 붙이기</button>
       ${tagsOnly() ? `<button type="button" class="primary" data-suite="retag" ${suiteApplied && !allTagProblems().length ? '' : 'disabled'} title="태그·이슈만 바뀌었습니다. AI 없이 코드의 태그만 바꾸고 목록 검사만 합니다(테스트 실행 없음, 지난 실행 결과 유지)">태그만 코드에 반영</button>` : ''}
       ${canAppend() ? `<button type="button" class="primary" data-suite="append" ${suiteApplied && !aiBusy && !allTagProblems().length ? '' : 'disabled'} title="코드가 없는 새 항목만 AI가 써서 기존 파일 끝에 덧붙이고, 새 테스트만 실행합니다">새 테스트 코드 추가 (${missingCode().length})</button>` : ''}
@@ -371,8 +370,8 @@ function renderSuiteSheet(body) {
 const STEPS = [
   ['do', '수행', '입력창에 시험할 일을 지시하면 AI가 작업 탭에서 직접 해 봅니다. 예: "로그인해서 휴가 신청서를 작성해줘"'],
   ['make', '테스트 만들기', '수행이 끝나면 입력창에 "지금까지 한 걸로 테스트 만들어줘"라고 합니다. BDD 시나리오·TDD 케이스 초안이 이 목록에 생깁니다. 빠진 것은 위쪽 <b>+ 테스트 추가</b>로 더합니다.'],
-  ['pick', '고르고 반영', '<b>BDD</b>·<b>TDD</b> 탭에서 쓸 항목만 체크(채택)하고 아래 <b>반영</b>을 누릅니다. 미채택 항목은 지워지지 않고 보관됩니다.'],
-  ['code', '코드 생성·실행', '아래 <b>코드 생성</b>을 누르면 채택한 테스트로 Playwright 코드를 만들고, 별도 Chrome 창에서 실행해 결과를 <b>테스트 코드</b> 탭에 보여 줍니다.'],
+  ['pick', '고르고 반영', '<b>BDD</b>·<b>TDD</b> 탭에서 쓸 항목만 체크(채택)하고 탭 맨 위의 <b>반영</b>을 누릅니다. 미채택 항목은 보관되고, 아예 빼려면 카드의 휴지통으로 지웁니다.'],
+  ['code', '코드 생성·실행', '<b>테스트 코드</b> 탭에서 아래 <b>코드 생성</b>을 누르면 채택한 테스트로 Playwright 코드를 만들고, 별도 Chrome 창에서 실행해 결과를 <b>테스트 코드</b> 탭에 보여 줍니다.'],
   ['send', '서버 전송', '로컬 실행이 끝나면 아래 <b>서버 전송</b>으로 세트의 배포 서버에 보냅니다(아직 임시 형태).'],
 ];
 function suiteStepNow() {
@@ -412,6 +411,17 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
   const ask = e.target.closest('[data-clear]')?.dataset.clear;
   if (ask && !clearBlocked()) { clearAsk = ask; renderSheet(); document.querySelector('.clear-ask')?.scrollIntoView({ block: 'nearest' }); return; }
   if (e.target.closest('[data-clear-cancel]')) { clearAsk = null; return renderSheet(); }
+  const del = e.target.closest('[data-del]')?.dataset.del;
+  if (del && !clearBlocked()) {
+    if (delArm !== del) {
+      delArm = del; renderSheet();
+      setTimeout(() => { if (delArm === del) { delArm = null; if (sheetMode === 'suite') renderSheet(); } }, 4000);
+    } else {
+      delArm = null;
+      ws.send(JSON.stringify({ type: 'tests_delete', set: viewSet, ids: [del] }));
+    }
+    return;
+  }
   if (e.target.closest('[data-clear-go]') && clearAsk && !clearBlocked()) {
     ws.send(JSON.stringify({ type: 'tests_clear', set: viewSet, part: clearAsk }));
     clearAsk = null;
@@ -467,7 +477,9 @@ function codeBadge(item) {
 function codeView() {
   const c = suite.code;
   const ref = `<details class="case-d"><summary>녹화 기반 참고 코드(수행 전체)</summary><pre class="cs-pre mono">${esc(suite.spec || '(없음)')}</pre></details>`;
-  if (!c?.source) return `<div class="none">아직 코드가 없습니다. 반영한 뒤 <b>코드 생성</b>을 누르면 채택한 테스트만 코드로 만들고 로컬에서 돌려 봅니다.</div>${ref}`;
+  const pickFirst = suiteApplied ? '' : `<div class="apply-bar"><span><b>아직 반영 전입니다</b> · BDD·TDD 탭에서 쓸 항목을 고르고 <b>반영</b>해야 코드를 만들 수 있습니다</span>
+    <span class="grow"></span><button type="button" class="btn sm" data-stab="bdd">← BDD·TDD 고르러 가기</button></div>`;
+  if (!c?.source) return `${pickFirst}<div class="none">아직 코드가 없습니다. ${suiteApplied ? '아래 <b>코드 생성</b>을 누르면' : '반영한 뒤 <b>코드 생성</b>을 누르면'} 채택한 테스트만 코드로 만들고 로컬에서 돌려 봅니다.</div>${ref}`;
   const icon = { passed: ['ok', '통과'], failed: ['err', '실패'], skipped: ['', '보류'], notrun: ['', '미실행'] };
   const pickable = !c.running && !aiBusy;
   const row = (r) => `<div class="case run-row">
@@ -565,6 +577,23 @@ function flowView() {
   </div>`).join('');
 }
 
+// 고르기 → 반영: BDD·TDD 탭 맨 위에 둔다. 반영은 고르는 단계의 마무리이고, 코드 생성은 그다음 테스트 코드 탭의 일이다
+function applyBar() {
+  const n = (xs) => `${xs.filter((c) => c.use).length}/${xs.length}`;
+  if (suiteApplied) return `<div class="apply-bar done"><span><b>반영됨</b> · 채택 BDD ${n(suite.scenarios)} · TDD ${n(suite.cases)} · 다음은 <b>테스트 코드</b> 탭에서 코드 생성</span>
+    <span class="grow"></span><button type="button" class="btn sm" data-stab="code">테스트 코드 탭으로 →</button></div>`;
+  return `<div class="apply-bar"><span><b>고르는 중</b> · 채택 BDD ${n(suite.scenarios)} · TDD ${n(suite.cases)} · 쓸 항목만 체크하고 반영하세요(미채택은 보관)</span>
+    <span class="grow"></span><button type="button" class="primary sm" data-suite="apply">반영</button></div>`;
+}
+// 항목 하나 지우기: 두 번 눌러야 지운다(처음 누르면 '지우기?'로 바뀌고 몇 초 뒤 돌아온다)
+let delArm = null;
+function delBtn(id, tddCount = 0) {
+  const why = clearBlocked();
+  const armed = delArm === id;
+  const tip = why || (armed ? '한 번 더 누르면 지웁니다' : `${id}를 지웁니다${tddCount ? ` (딸린 TDD ${tddCount}개도 함께)` : ''} · 지우기 전 목록은 세트 폴더에 보관`);
+  return `<button type="button" class="del-btn ${armed ? 'armed' : ''}" data-del="${esc(id)}" ${why ? 'disabled' : ''} title="${esc(tip)}" aria-label="${esc(tip)}">${armed ? '지우기?' : '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>'}</button>`;
+}
+
 function filterBar() {
   const n = (xs, f) => xs.filter(f).length;
   const list = suiteTab === 'tdd' ? suite.cases : suite.scenarios;
@@ -578,12 +607,12 @@ function filterBar() {
 }
 
 function bddView() {
-  return filterBar() + suite.scenarios.filter(shown).map((c) => {
+  return applyBar() + filterBar() + suite.scenarios.filter(shown).map((c) => {
     const tdd = suite.cases.filter((x) => x.scenario === c.id);
     return `<div class="case ${c.use ? '' : 'off'}">
       <div class="case-h"><input type="checkbox" data-use-s="${esc(c.id)}" ${c.use ? 'checked' : ''} title="${c.use ? '채택됨 · 해제하면 미채택(보관)' : '미채택 · 체크하면 다시 채택'}">
         ${prioTag(c.priority)}<span class="mono case-id">${esc(c.id)}</span>${roleTag(c)}<b class="case-title">${esc(c.title)}</b>
-        <span class="grow"></span>${c.added ? '<span class="tag new">새로</span>' : ''}${rejectTag(c)}${codeBadge(c)}${c.changes_data ? '<span class="tag warn">데이터 변경</span>' : ''}</div>
+        <span class="grow"></span>${c.added ? '<span class="tag new" title="새로 만들어진 항목 · 반영하면 표시가 사라집니다">New</span>' : ''}${rejectTag(c)}${codeBadge(c)}${c.changes_data ? '<span class="tag warn">데이터 변경</span>' : ''}${delBtn(c.id, tdd.length)}</div>
       ${tagRow(c)}
       <div class="gwt">
         ${c.given.map((x, i) => `<div><span class="kw">${i ? 'And' : 'Given'}</span>${esc(x)}</div>`).join('')}
@@ -616,12 +645,12 @@ function scRef(id) {
 
 // TDD 케이스: BDD처럼 한 장의 카드로. 머리줄(체크·우선순위·ID·기법·제목) + 입력/기대/검증 세 줄
 function tddView() {
-  return filterBar() + suite.cases.filter(shown).map((x) => `<div class="case tc ${x.use ? '' : 'off'}">
+  return applyBar() + filterBar() + suite.cases.filter(shown).map((x) => `<div class="case tc ${x.use ? '' : 'off'}">
     <div class="case-h">
       <input type="checkbox" data-use-c="${esc(x.id)}" ${x.use ? 'checked' : ''} title="${x.use ? '채택됨 · 해제하면 미채택(보관)' : '미채택 · 체크하면 다시 채택'}">
       ${prioTag(x.priority)}<span class="mono case-id">${esc(x.id)}</span><span class="tag">${esc(x.technique)}</span>
       <b class="case-title">${esc(x.title)}</b>
-      <span class="grow"></span>${x.added ? '<span class="tag new">새로</span>' : ''}${rejectTag(x)}${codeBadge(x)}${scRef(x.scenario)}
+      <span class="grow"></span>${x.added ? '<span class="tag new" title="새로 만들어진 항목 · 반영하면 표시가 사라집니다">New</span>' : ''}${rejectTag(x)}${codeBadge(x)}${scRef(x.scenario)}${delBtn(x.id)}
     </div>
     ${tagRow(x)}
     <div class="tc-rows">
@@ -720,10 +749,11 @@ document.getElementById('sheet-body').addEventListener('click', (e) => {
     // 지우지 않는다. 미채택 항목도 그대로 두어 언제든 다시 채택할 수 있다
     const n = (xs) => `${xs.filter((c) => c.use).length}/${xs.length}`;
     suiteApplied = true;
-    for (const c of [...suite.scenarios, ...suite.cases]) if (c.added) { delete c.added; markEdit(c.id, 'added'); } // 반영하면 '새로' 표시를 뗀다
+    for (const c of [...suite.scenarios, ...suite.cases]) if (c.added) { delete c.added; markEdit(c.id, 'added'); } // 반영하면 'New' 표시를 뗀다
     markEdit('', 'applied');
     saveSuite();
     msg('sys', `테스트 묶음 반영: 채택 BDD ${n(suite.scenarios)} · TDD ${n(suite.cases)} (미채택 항목은 보관)`);
+    suiteTab = 'code'; // 다음 단계(코드 생성)가 있는 탭으로
     return renderSheet();
   }
   if (act === 'add-open') { addOpen = true; renderSheet(); return $('add-req')?.focus(); }
