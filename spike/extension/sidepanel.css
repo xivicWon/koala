@@ -798,3 +798,13 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .work-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text-3); }
 .work-btn:disabled { opacity: .45; cursor: default; }
 .url-k.work::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; background: var(--wip-bg); box-shadow: 0 0 0 1px var(--wip-ink); vertical-align: 1px; }
+/* 관리 탭 목록(노란 그룹 안의 탭) */
+.work-list { margin: 6px 0 2px; padding: 4px 6px; border: 1px solid var(--line); border-left: 3px solid var(--wip-bg); border-radius: 6px; background: var(--bg); }
+.wl-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 11.5px; min-width: 0; }
+.wl-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.wl-row.on .wl-dot { background: var(--wip-bg); box-shadow: 0 0 0 1px var(--wip-ink); }
+.wl-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-row.on .wl-t { font-weight: 600; }
+.wl-h { flex: 0 1 auto; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--text-3); }
+.wl-cur { flex: none; font-size: 10.5px; color: var(--text-2); }
+.wl-hint { margin-top: 3px; font-size: 10.5px; color: var(--text-3); }

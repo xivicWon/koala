@@ -28,7 +28,7 @@ async function workTab({ claim = true } = {}) {
   return tab;
 }
 
-async function setWorkTab(tab) {
+async function setWorkTab(tab, { note = '작업 탭을 정했습니다' } = {}) {
   workFor = wkSet();
   workTabId = tab.id;
   workTabs[wkSet()] = { ...workTabs[wkSet()], tabId: tab.id };
@@ -36,14 +36,30 @@ async function setWorkTab(tab) {
   // 작업 중에 브라우저가 메모리 정리로 탭을 버리지 않게 한다
   chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   saveWork();
-  msg('sys', `작업 탭을 정했습니다: ${tab.title || tab.url} · AI는 이 탭에서만 조작하니 다른 탭을 써도 됩니다`);
+  msg('sys', `${note}: ${tab.title || tab.url} · AI는 이 탭에서만 조작하니 다른 탭을 써도 됩니다`);
   renderWorkTab();
+  renderWorkList();
+}
+
+const selfGrouping = new Set();
+const setGroup = () => workTabs[wkSet()]?.groupId;
+// 이 세트의 관리 탭: 노란 그룹 안의 탭들. 그룹이 없으면(지원 안 함·아직 없음) 작업 탭 하나
+async function groupTabs() {
+  const gid = setGroup();
+  if (gid != null) {
+    const ts = await chrome.tabs.query({ groupId: gid }).catch(() => []);
+    if (ts.length) return ts;
+  }
+  const t = await workTab({ claim: false });
+  return t ? [t] : [];
 }
 
 // 세트 이름의 탭 그룹에 넣는다. 탭 그룹을 지원하지 않는 브라우저면 건너뛴다
 async function groupWork(id) {
   if (!chrome.tabGroups || !chrome.tabs.group) return;
   const w = workTabs[wkSet()] || {};
+  selfGrouping.add(id); // 우리가 넣는 것은 '사용자가 끌어 넣었다'로 보지 않는다(onUpdated)
+  setTimeout(() => selfGrouping.delete(id), 1500);
   try {
     const tab = await chrome.tabs.get(id);
     let gid = w.groupId;
@@ -79,7 +95,35 @@ chrome.tabs.onRemoved.addListener((id) => {
   for (const k of Object.keys(workTabs)) if (workTabs[k].tabId === id) { delete workTabs[k]; changed = true; }
   if (changed) saveWork();
   renderWorkTab();
+  renderWorkList();
 });
+// 사용자가 탭을 노란 그룹으로 끌어 넣거나 빼면: 넣은 탭은 관리 탭이 되고(작업 탭이 없으면 바로 작업 탭),
+// 작업 탭을 그룹 밖으로 빼면 그룹의 다른 탭으로 옮기거나(없으면 작업 탭 없음) 진행 중이면 멈춘다
+chrome.tabs.onUpdated.addListener(async (id, ch, tab) => {
+  if (ch.title || ch.url) renderWorkList();
+  if (!('groupId' in ch)) return;
+  const gid = setGroup();
+  if (gid == null) return;
+  if (ch.groupId === gid && selfGrouping.has(id)) return; // koala 가 넣은 것. 빼는 것은 언제나 사용자 동작으로 본다
+  const base = workTabs[wkSet()]?.tabId;
+  if (ch.groupId === gid) {
+    if (await liveTab(base)) msg('sys', `작업 그룹에 탭을 넣었습니다: ${tab.title || tab.url} · 위쪽 탭 목록에서 골라 작업 탭으로 쓸 수 있습니다`);
+    else await setWorkTab(tab, { note: '그룹에 넣은 탭을 작업 탭으로 정했습니다' });
+  } else if (id === base || id === workTabId) {
+    if (aiBusy) { msg('err', '작업 탭을 그룹에서 빼서 진행을 멈췄습니다'); stopRun(); }
+    const rest = (await chrome.tabs.query({ groupId: gid }).catch(() => [])).filter((t) => t.id !== id);
+    if (rest[0]) await setWorkTab(rest[0], { note: '작업 탭을 그룹에서 빼서 그룹의 다른 탭으로 옮겼습니다' });
+    else {
+      workTabId = null;
+      delete workTabs[wkSet()];
+      saveWork();
+      msg('sys', '작업 탭을 그룹에서 뺐습니다. 다음 지시 때 그때 보이는 탭을 작업 탭으로 정합니다');
+    }
+  }
+  renderWorkTab();
+  renderWorkList();
+});
+
 // 미리 불러오기 등으로 탭이 바뀌면(id 교체) 새 id로 이어 간다
 chrome.tabs.onReplaced.addListener((added, removed) => {
   if (workTabId === removed) workTabId = added;
@@ -90,18 +134,39 @@ chrome.tabs.onReplaced.addListener((added, removed) => {
 // ── 헤더: 작업 탭 표시·보기·지금 탭으로 바꾸기 ──
 async function renderWorkTab() {
   const t = await workTab({ claim: false });
+  const n = t ? (await groupTabs()).length : 0;
+  $('work-list-btn').textContent = `탭 ${n}`;
+  $('work-list-btn').hidden = !t;
+  if (!t && !$('work-list').hidden) $('work-list').hidden = true;
   $('s-url-k').textContent = t ? '작업 탭' : '대상 탭';
   $('s-url-k').classList.toggle('work', !!t); // 탭 그룹과 같은 노란 점: 이 주소가 koala 가 관리하는 탭이라는 표시
-  $('work-show').hidden = !t;
   $('work-take').disabled = aiBusy;
   $('work-take').dataset.tip = aiBusy ? 'AI 작업 중에는 작업 탭을 바꿀 수 없습니다' : '지금 보고 있는 탭을 이 세트의 작업 탭으로 정합니다(작업 탭 그룹에 넣습니다)';
 }
-$('work-show').onclick = async () => {
-  const t = await workTab({ claim: false });
-  if (!t) return;
+const showTab = async (t) => {
   await chrome.tabs.update(t.id, { active: true }).catch(() => {});
   await chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
 };
+// 관리 탭 목록: 그룹 안의 탭. 하나를 골라 작업 탭으로 쓰고, 보기로 그 탭에 간다
+async function renderWorkList() {
+  const box = $('work-list');
+  if (box.hidden) return;
+  const cur = await workTab({ claim: false });
+  const ts = await groupTabs();
+  const host = (u) => { try { return new URL(u).host; } catch { return u || ''; } };
+  box.innerHTML = `${ts.map((t) => `<div class="wl-row${t.id === cur?.id ? ' on' : ''}">
+      <span class="wl-dot" aria-hidden="true"></span><span class="wl-t" title="${esc(t.url || '').replace(/"/g, '&quot;')}">${esc(t.title || t.url || '(제목 없음)')}</span><span class="wl-h mono">${esc(host(t.url))}</span>
+      ${t.id === cur?.id ? '<span class="wl-cur">작업 탭</span>' : `<button type="button" class="work-btn" data-wl-use="${t.id}" ${aiBusy ? 'disabled data-tip="AI 작업 중에는 작업 탭을 바꿀 수 없습니다"' : ''}>작업 탭으로</button>`}
+      <button type="button" class="work-btn" data-wl-show="${t.id}">보기</button></div>`).join('')}
+    <div class="wl-hint">탭을 노란 그룹(koala · ${esc(setInfo(wkSet())?.name || wkSet())})으로 끌어 넣으면 여기에 나타납니다. AI는 한 번에 작업 탭 하나에서 조작합니다.</div>`;
+}
+$('work-list-btn').onclick = () => { $('work-list').hidden = !$('work-list').hidden; renderWorkList(); };
+$('work-list').addEventListener('click', async (e) => {
+  const use = Number(e.target.closest('[data-wl-use]')?.dataset.wlUse);
+  const show = Number(e.target.closest('[data-wl-show]')?.dataset.wlShow);
+  if (use && !aiBusy) { const t = await liveTab(use); if (t) await setWorkTab(t, { note: '작업 탭을 바꿨습니다' }); }
+  if (show) { const t = await liveTab(show); if (t) await showTab(t); }
+});
 $('work-take').onclick = async () => {
   if (aiBusy) return;
   const t = await activeTab();
