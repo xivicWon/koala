@@ -145,6 +145,7 @@ tool('save_tags', '테스트 초안의 시나리오·케이스에 서버 태그 
 tool('save_code', `채택된 테스트를 Playwright 테스트 코드 한 파일로 저장한다. 저장하면 호스트가 바로 로컬에서 실행하고 테스트별 결과(통과·실패·오류 메시지)를 돌려준다.
 실패가 있으면 고쳐서 다시 호출한다. 주소는 상대 경로, 계정은 시나리오 역할의 process.env.KOALA_ADMIN_USER 같은 환경변수로만 쓴다.`, {
   code: str.describe('TypeScript 전체 소스. import { test, expect } from \'@playwright/test\''),
+  note: z.string().optional().describe('실패를 고쳐 다시 저장할 때: 테스트마다 한 줄 "<테스트 id>: <분류> · <가설> · <바꾼 것>". 다음 실행 결과의 tries 로 돌아온다'),
 });
 
 tool('add_tests', `[테스트 추가] 기존 테스트 묶음에 새 시나리오·케이스만 덧붙인다. 기존 항목은 다시 보내지 않는다(고치거나 지우지 않음).
@@ -158,6 +159,7 @@ tool('append_code', `[테스트 추가] 새 테스트만 담은 코드 조각을
 조각은 같은 파일 안이므로 기존 import·도우미 함수를 그대로 쓸 수 있다. test.describe('BDD', …) / test.describe('TDD', …) 를 다시 열어 그 안에 쓴다.
 저장하면 호스트가 목록 검사 뒤 새 테스트만 실행해 결과를 돌려준다. 실패하면 조각 전체를 고쳐 다시 호출한다(앞서 보낸 조각은 버려진다).`, {
   code: str.describe('파일 끝에 붙일 TypeScript 조각(import 문 없이)'),
+  note: z.string().optional().describe('실패를 고쳐 다시 저장할 때: 테스트마다 한 줄 "<테스트 id>: <분류> · <가설> · <바꾼 것>". 다음 실행 결과의 tries 로 돌아온다'),
 });
 
 // 읽기

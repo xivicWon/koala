@@ -20,6 +20,7 @@ import { safeId, setPaths, readSet, listSets, receiveSet, createLocalSet, update
 import * as testlist from './testlist.mjs';
 import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
+import { failDetail, createFixLog } from './fixlog.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 import * as sdk from './claude-sdk.mjs';
 import { startTabRelay, tabSpecSource, tabSpecFile } from './tab-relay.mjs';
@@ -1058,6 +1059,25 @@ function saveAdded(args) {
   return { ok: true, result: { scenarios: suite.scenarios.filter((c) => added.includes(c.id)).map((c) => c.id), cases: suite.cases.filter((c) => added.includes(c.id)).map((c) => c.id) } };
 }
 
+// 코드 생성·추가가 함께 쓰는 지침: Playwright 기본과 실패 고치기(소거법)
+const PW_BASICS = `[Playwright 기본]
+- 고정 대기(waitForTimeout·setTimeout)와 waitForLoadState('networkidle') 를 쓰지 않는다. 기다림은 expect(locator).toBeVisible()·toHaveText()·toHaveURL() 같은 자동 재시도 검증으로 한다.
+- 응답을 기다릴 때는 동작 전에 등록한다: const res = page.waitForResponse(…); await 동작; await res. 동작 뒤에 등록하면 이미 지나간 응답을 기다리며 멈춘다.
+- 자동완성·검색 제안: pressSequentially 로 입력하고(fill 은 키 이벤트가 없어 제안이 안 뜨는 화면이 있다), 제안 목록(getByRole('option') 등)이 보이는지 확인한 뒤 고르고, 고른 결과를 검증한다.
+- 타임아웃이 나면 시간을 늘리지 않는다. 기다리던 대상이 틀렸거나 그 신호가 오지 않는 것이다. 재시도(retries)로 덮지도 않는다.
+- 테스트는 서로 독립이다: test.describe.serial·테스트 사이 공유 변수·앞 테스트가 만든 상태에 기대지 않는다.
+- 일부만 빼고(또는 일부만) 돌리라는 요청은 실행 대상을 거르는 것(grep·태그)이다. 그 때문에 테스트를 합치거나 묶거나 순서를 바꾸지 않는다.
+- 이미 통과한 테스트의 코드와 그 테스트가 쓰는 공통 도우미는 이유 없이 고치지 않는다.`;
+const FIX_GUIDE = `[실패 고치기 — 소거법] 실행 결과 failures 에는 테스트마다 error(오류)·at·snippet(실패한 줄과 앞뒤 코드)·step(실패한 단계)·page(실패 순간의 화면 구조)·tries(이 작업의 지난 시도)·repeat(같은 실패 연속 횟수)가 있다.
+1. 증거부터 읽는다. error·snippet·page 로 원인이 보이면 브라우저를 다시 열지 않는다. 화면을 다시 볼 때는 page 로 답할 수 없는 무엇을 볼지 먼저 정한다.
+2. 실패를 하나로 분류한다: A 로케이터(못 찾음·여러 개) · B 기다리는 신호가 오지 않음(타임아웃) · C 값·문구가 기대와 다름 · D 시작 상태(로그인·데이터·앞 테스트 영향) · E 앱 결함 · F 실행 환경(주소·계정·화면 크기).
+3. 가설 하나만 골라 그것만 바꾼다. 두 가지를 함께 바꾸면 무엇이 고쳤는지 알 수 없다. 저장할 때 note 에 테스트마다 한 줄로 '<테스트 id>: <분류> · <가설> · <바꾼 것>'을 적는다. tries 에서 이미 배제된 가설은 다시 시도하지 않는다.
+4. B 는 시간을 늘리지 않는다: 무엇을 기다리는가 → 그 신호가 실제로 오는가(page·네트워크로 확인) → 오지 않으면 기다릴 대상을 바꾼다.
+5. regressed(지난번 통과 → 이번 실패)가 있으면 새 실패보다 먼저 본다. 이번에 그 테스트나 공통 도우미를 바꿨으면 되돌린다. 바꾸지 않았는데 실패하면 불안정한 것이므로 D·B 의 경쟁 상태를 찾는다.
+6. repeat 가 2 이상이면 지금 가설은 틀렸다. 같은 방향으로 더 고치지 말고 분류부터 다시 한다. repeat 가 3 이면 그 테스트는 멈추고 보고한다.
+7. 앱 결함(E)으로 판단되면 검증을 빼지 말고 test.fixme 와 이유 주석으로 두고 보고한다.
+8. 끝나면 보고한다: 통과/실패/보류, 남은 실패마다 배제한 가설·남은 가설·더 필요한 정보.`;
+
 // 새 테스트 코드만 덧붙이기: 기존 파일(appendBase) + AI가 쓴 조각. 다시 부르면 조각만 바뀐다
 const APPEND_PROMPT = `[테스트 코드 추가] 아래 '새' 테스트만 Playwright 코드 조각으로 써서 append_code 로 저장한다. 기존 코드는 다시 쓰지 않는다.
 - 조각은 기존 파일 끝에 붙는다. import 문은 쓰지 않고, 아래 기존 도우미 함수와 상수를 그대로 쓴다. 새 도우미가 필요하면 기존과 겹치지 않는 이름으로 조각 안에 둔다.
@@ -1065,7 +1085,11 @@ const APPEND_PROMPT = `[테스트 코드 추가] 아래 '새' 테스트만 Playw
 - 주소는 상대 경로, [koa] 데이터는 RUN 을 붙이고 정리한다.
 - 화면 크기가 결과에 영향을 주는 새 테스트는 그 describe 안에 test.use({ viewport, isMobile, hasTouch }) 를 두거나 page.setViewportSize 를 쓴다(devices 펼치기·userAgent 기대는 쓰지 않는다). 지시에 [화면 크기]가 있으면 그 크기에서 확인한 것이다.
 - 계정은 시나리오의 역할로 로그인한다. 기존 파일에 역할별 로그인(ACCOUNTS·login(page, 역할))이 있으면 그대로 쓰고, 없는 역할이 필요하면 조각 안에 process.env.<계정>_USER! 를 글자 그대로 적어 둔다.
-- 저장하면 새 테스트만 실행된다. 실패하면 원인을 보고 조각 전체를 고쳐 다시 저장한다. 검증을 빼서 통과시키지 않는다.`;
+- 저장하면 새 테스트만 실행된다. 실패하면 아래 [실패 고치기] 순서로 조각을 고쳐 다시 저장한다(조각 전체를 다시 보내되 통과한 테스트는 그대로 둔다). 검증을 빼서 통과시키지 않는다.
+
+${PW_BASICS}
+
+${FIX_GUIDE}`;
 let appendBase = null; // { file, code, ids: [새 id] }
 
 function codeOutline(src) {
@@ -1102,8 +1126,12 @@ const CODE_PROMPT = `[코드 작성] 아래 '채택된' 테스트를 Playwright 
   · devices['iPhone …'] 를 펼쳐 쓰지 않는다(브라우저 종류까지 바꿔 실행이 깨진다). userAgent 에 기대는 검증도 하지 않는다.
   · 크기와 상관없는 테스트에는 넣지 않는다(실행 환경의 크기를 따른다). 지시에 [화면 크기]가 있으면 사용자가 그 크기에서 확인한 것이므로, 그 크기에서 확인한 시나리오는 같은 크기를 코드에 고정한다. 녹화 기반 참고 코드의 setViewportSize 도 참고한다.
 - 자동화할 수 없는 케이스(실제 동시 로그인, 다른 권한 계정 필요 등)는 test.fixme로 두고 이유를 주석으로 적는다.
-- 실행 결과에 실패가 있으면 원인을 보고 고쳐 다시 save_code 한다. 테스트를 통과시키려고 검증을 빼지 않는다. 앱 결함으로 보이면 그대로 두고 보고한다. 같은 실패가 세 번 이어지면 멈춘다.
-- 끝나면 통과/실패/보류를 한국어로 짧게 요약한다.`;
+- 실행 결과에 실패가 있으면 아래 [실패 고치기] 순서로 고쳐 다시 save_code 한다(파일 전체를 다시 보내되 통과한 테스트는 그대로 둔다). 테스트를 통과시키려고 검증을 빼지 않는다.
+- 끝나면 통과/실패/보류를 한국어로 짧게 요약한다.
+
+${PW_BASICS}
+
+${FIX_GUIDE}`;
 // 시나리오의 역할 → 코드가 로그인할 계정(환경변수 이름)
 function roleLine(c) {
   const role = c.as || defaultRole();
@@ -1134,6 +1162,7 @@ function writeCode(s) {
   const sc = s.scenarios.map((c) => `${c.id} ${c.title}${roleLine(c)}\n  Given ${c.given.join(' / ')}\n  When ${c.when.join(' / ')}\n  Then ${c.then.join(' / ')}${c.cleanup ? `\n  정리: ${c.cleanup}` : ''}${tagLine(c.tags, c.issue)}${
     tags.inherited(doc, c).length ? `\n  TDD describe에 물려줄 태그: ${tags.inherited(doc, c).join(' ')}` : ''}`).join('\n');
   const tc = s.cases.map((c) => `${c.id} (${c.scenario}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}${tagLine((c.tags || []).filter((t) => !inh(c).includes(t)), c.issue)}`).join('\n');
+  fixLog.reset(activeSet);
   instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(activeSet)} (정리 도우미는 '@support/…' 로 불러온다)\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}`, { job: 'code' });
 }
 
@@ -1209,6 +1238,7 @@ function writeAppend(s) {
     const inh = tags.inherited(doc, scById.get(c.scenario));
     return `${c.id} (${c.scenario} — ${scById.get(c.scenario)?.title || ''}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}\n  TDD describe 물려줄 태그: ${inh.join(' ') || '(없음)'}\n  케이스 태그: ${(c.tags || []).filter((t) => !inh.includes(t)).join(' ') || '(없음)'}${c.issue ? `\n  이슈: ${c.issue}` : ''}`;
   }).join('\n');
+  fixLog.reset(activeSet);
   instruct(`${APPEND_PROMPT}\n\n${codeOutline(code)}\n\n[새 BDD 시나리오]\n${sc || '(없음)'}\n\n[새 TDD 케이스]\n${tc || '(없음)'}`, { job: 'append' });
 }
 
@@ -1232,7 +1262,7 @@ async function appendCode(args) {
   send({ type: 'suite_listed', id: codeTarget, tests: listed(pre.results) });
   // 새 테스트만 실행한다
   const grep = `(${ids.join('|')}) `; // id는 영문·숫자·하이픈뿐이다
-  return runAndReport(codeTarget, file, code, { grep, merge: true });
+  return runAndReport(codeTarget, file, code, { grep, merge: true, note: args.note });
 }
 
 // Playwright JSON 결과 → [{ title, status, error, ms }]
@@ -1248,7 +1278,9 @@ function flatResults(report) {
         .map((x) => ({ title: x.title, status: x.error ? 'failed' : 'passed', ms: x.duration }));
       // Playwright JSON은 태그를 '@' 없이 낸다
       out.push({ title: sp.title, tags: (sp.tags || []).map((x) => (x.startsWith('@') ? x : `@${x}`)), group: prefix, kind: /^SC-/.test(sp.title) ? 'bdd' : 'tdd', steps: gwt.length ? gwt : undefined, status, ms: r?.duration ?? 0,
-        error: r?.error?.message ? r.error.message.replace(/\u001b\[[0-9;]*m/g, '').slice(0, 800) : undefined });
+        error: r?.error?.message ? r.error.message.replace(/\u001b\[[0-9;]*m/g, '').slice(0, 800) : undefined,
+        // AI만 보는 실패 증거(runAndReport 가 떼어 낸다)
+        debug: status === 'failed' ? failDetail(r) : undefined });
     }
     for (const c of suite.suites || []) walk(c, c.title && !c.title.endsWith('.ts') ? c.title : prefix);
   };
@@ -1422,7 +1454,7 @@ async function saveCode(args) {
     stepJob('review', `검사에서 걸림(빠진 ${preCheck.missing.length} · 태그 ${preCheck.tagMismatch.length}) · AI가 고치는 중`);
     return { ok: true, result: { file, not_run: '실행 전 검사에서 걸려 실행하지 않았다. 고쳐서 다시 저장한다', missing: preCheck.missing.length ? preCheck.missing : undefined, tag_mismatch: preCheck.tagMismatch.length ? preCheck.tagMismatch : undefined } };
   }
-  return runAndReport(id, file, args.code);
+  return runAndReport(id, file, args.code, { note: args.note });
 }
 
 // 코드는 그대로 두고 테스트만 실행한다(사이드패널 "테스트 실행"). AI를 거치지 않는다
@@ -1443,7 +1475,8 @@ async function runCode(s, ids = [], only = false) {
 }
 
 // 실행하고 결과를 사이드패널(진행·결과)과 AI(도구 결과)에 알린다
-async function runAndReport(id, file, code, { grep = null, merge = false } = {}) {
+const fixLog = createFixLog(); // 고치기 작업 안의 테스트별 시도(소거법). 코드 생성·추가 지시마다 비운다
+async function runAndReport(id, file, code, { grep = null, merge = false, note = '' } = {}) {
   const env = [...new Set(['KOALA_BASE_URL', ...[...code.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1])])];
   codeRunning = true;
   log('sys', `테스트를 로컬에서 실행합니다 · ${file}`);
@@ -1461,6 +1494,8 @@ async function runAndReport(id, file, code, { grep = null, merge = false } = {})
     }
     send({ type: 'suite_code_progress', id, total, n, ...ev });
   }, { grep });
+  const fix = fixLog.record(id, run.results, note);
+  run.results = run.results.map(({ debug, ...r }) => r);
   const count = (st) => run.results.filter((r) => r.status === st).length;
   const summary = { passed: count('passed'), failed: count('failed'), skipped: count('skipped'), ms: Date.now() - t };
   audit('test_run', { suite: id, file, only: grep || undefined, summary, error: run.error?.slice(0, 500),
@@ -1485,7 +1520,7 @@ async function runAndReport(id, file, code, { grep = null, merge = false } = {})
     results: merge ? [...(prev.results || []).filter((r) => !run.results.some((x) => x.title === r.title)), ...run.results] : run.results,
   }));
   send({ type: 'suite_code', id, code, file, env, results: run.results, summary, error: run.error, ran_at: ranAt, tag_mismatch: tagMismatch, merge, key });
-  return { ok: true, result: { file, ...summary, missing: missing.length ? missing : undefined, tag_mismatch: tagMismatch.length ? tagMismatch : undefined, error: run.error, failures: run.results.filter((r) => r.status === 'failed').map(({ title, error }) => ({ title, error })) } };
+  return { ok: true, result: { file, ...summary, missing: missing.length ? missing : undefined, tag_mismatch: tagMismatch.length ? tagMismatch : undefined, error: run.error, failures: fix.failures, regressed: fix.regressed.length ? fix.regressed : undefined } };
 }
 
 // 세션 비우기: 대화 맥락만 지운다(수행 기록·타임라인은 유지). 다음 지시는 새 kaa-N으로 시작
