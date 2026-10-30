@@ -25,40 +25,40 @@ function renderClaudeSheet(body) {
   const v = claudeView;
   if (!v) { body.innerHTML = '<div class="none">불러오는 중…</div>'; return; }
   if (v.error) { body.innerHTML = `<div class="none">${esc(v.error)}</div>`; return; }
-  // AI에게 전달되는 내용: 파일 경로만
-  const content = `<div class="cs-files">${(v.prompts || []).map(([label, paths]) => `<div class="cs-file"><span class="pf-hint">${esc(label)}</span>${paths.map((p) => `<code class="mono">${esc(p)}</code>`).join('')}</div>`).join('')}</div>`;
+  // 블록 안의 이름 + 값(코드 블록)
+  const field = (label, codes) => `<div class="cs-field"><span class="cs-label">${esc(label)}</span>${codes.map((c) => `<code class="cs-code mono">${esc(c)}</code>`).join('')}</div>`;
   const busy = aiBusy;
+  const ver = v.claude?.version ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가';
   body.innerHTML = `<div class="cs">
     ${billingHtml(v, busy)}
-    <div class="cs-pick">
-      <label><span class="pf-hint">모델</span><select data-cp="model" ${busy ? 'disabled' : ''}>${MODELS.map(([v, t]) => `<option value="${v}" ${claudePrefs.model === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-      <label><span class="pf-hint">effort</span><select data-cp="effort" ${busy ? 'disabled' : ''}>${EFFORT_OPTS.map(([v, t]) => `<option value="${v}" ${claudePrefs.effort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-      <span class="pf-hint">${busy ? 'AI 작업 중에는 바꿀 수 없습니다' : '바꾸면 대화는 이어서 새 설정으로 다시 연결합니다'}</span>
-    </div>
-    <div class="cs-sum">
-      <span><span class="pf-hint">지금 모델</span> <b>${esc(claudeRun.model || '아직 실행 전')}</b></span>
-      <span><span class="pf-hint">effort</span> <b>${esc(claudeRun.effort || '-')}</b></span>
-      <span><span class="pf-hint">세션</span> <b class="mono">${esc(sessionAlias || '없음')}</b></span>
-    </div>
-    ${usageHtml()}
-    <div class="cs-actions">
-      <button type="button" class="btn sm" data-cs="compact" ${sessionAlias && !busy ? '' : 'disabled'} title="지금까지 대화를 요약해 토큰을 줄입니다(같은 세션 유지)">압축</button>
-      <button type="button" class="btn sm ghost" data-cs="clear" ${sessionAlias && !busy ? '' : 'disabled'} title="대화 맥락만 지우고 새 세션으로 시작합니다(수행 기록은 유지)">세션 비우기</button>
-      <button type="button" class="btn sm ghost danger-text" data-cs="reset" ${(sessionAlias || v.recorded) && !busy ? '' : 'disabled'} title="세션과 수행 기록·타임라인까지 비우고 처음부터 시작합니다">기록까지 비우기</button>
-    </div>
-    <div class="cs-meta">
-      <span>Claude Code <b>${esc(v.claude?.version ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가')}</b></span>
-      <span>실행 <b>${claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</b></span>
-    </div>
-    <details class="cs-more" ${claudeMore ? 'open' : ''}>
-      <summary>자세히: 작업 폴더 · 실행 옵션 · AI에게 전달되는 내용</summary>
-      <div class="cs-row">
-        <div class="cs-path"><span class="pf-hint">작업 폴더 (지식 문서로 만든 사본. 고치려면 지식 문서를 새 버전으로 게시)</span><code class="mono">${esc(v.dir)}</code></div>
-        <button type="button" class="btn sm" data-cs="open">폴더 열기</button>
-        <button type="button" class="btn sm ghost" data-cs="reload">새로고침</button>
+    <section class="cs-block">
+      <div class="cs-block-h"><b>실행 설정</b><span class="pf-hint">${busy ? 'AI 작업 중에는 바꿀 수 없습니다' : '바꾸면 대화를 이어서 새 설정으로 다시 연결합니다'}</span></div>
+      <div class="cs-pick">
+        <label><span class="cs-label">모델</span><select data-cp="model" ${busy ? 'disabled' : ''}>${MODELS.map(([v, t]) => `<option value="${v}" ${claudePrefs.model === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label><span class="cs-label">effort</span><select data-cp="effort" ${busy ? 'disabled' : ''}>${EFFORT_OPTS.map(([v, t]) => `<option value="${v}" ${claudePrefs.effort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       </div>
-      <div class="cs-meta"><span class="pf-hint">실행 옵션</span> <code class="mono">${esc(v.flags.join(' '))}</code></div>
-      ${content}
+      <dl class="cs-kv">
+        <div><dt>지금 모델</dt><dd>${esc(claudeRun.model || '아직 실행 전')}</dd></div>
+        <div><dt>effort</dt><dd>${esc(claudeRun.effort || '-')}</dd></div>
+        <div><dt>Claude Code</dt><dd>${esc(ver)}</dd></div>
+        <div><dt>실행</dt><dd>${claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</dd></div>
+      </dl>
+    </section>
+    ${usageHtml()}
+    <section class="cs-block">
+      <div class="cs-block-h"><b>세션</b><code class="cs-tag mono">${esc(sessionAlias || '없음')}</code></div>
+      <div class="cs-actions">
+        <button type="button" class="btn" data-cs="compact" ${sessionAlias && !busy ? '' : 'disabled'} title="지금까지 대화를 요약해 토큰을 줄입니다(같은 세션 유지)">압축</button>
+        <button type="button" class="btn" data-cs="clear" ${sessionAlias && !busy ? '' : 'disabled'} title="대화 맥락만 지우고 새 세션으로 시작합니다(수행 기록은 유지)">세션 비우기</button>
+        <button type="button" class="btn danger-line" data-cs="reset" ${(sessionAlias || v.recorded) && !busy ? '' : 'disabled'} title="세션과 수행 기록·타임라인까지 비우고 처음부터 시작합니다">기록까지 비우기</button>
+      </div>
+    </section>
+    <details class="cs-more cs-block" ${claudeMore ? 'open' : ''}>
+      <summary><b>자세히</b><span class="pf-hint">작업 폴더 · 실행 옵션 · AI에게 전달되는 내용</span></summary>
+      <div class="cs-field"><span class="cs-label">작업 폴더</span><code class="cs-code mono">${esc(v.dir)}</code>
+        <div class="cs-actions"><button type="button" class="btn" data-cs="open">폴더 열기</button><button type="button" class="btn" data-cs="reload">새로고침</button></div></div>
+      ${field('실행 옵션', [v.flags.join(' ')])}
+      ${(v.prompts || []).map(([label, paths]) => field(label, paths)).join('')}
     </details>
   </div>`;
   body.querySelector('.cs-more').addEventListener('toggle', (e) => { claudeMore = e.target.open; });
@@ -70,25 +70,25 @@ function billingHtml(v, busy) {
   const api = claudePrefs.billing === 'api';
   const k = v.billing.key || {};
   const keyLine = k.saved
-    ? `<span class="cs-key ok">● 키 저장됨</span> <span class="pf-hint mono" title="${esc(k.file)}">${esc(String(k.file).replace(/^(\/(Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~'))}</span>
-       <span class="grow"></span><button type="button" class="btn sm" data-cs="key-edit">바꾸기</button><button type="button" class="btn sm ghost danger-text" data-cs="key-del" title="Console 키는 만들 때 한 번만 보입니다. 지우면 새로 만들어야 할 수 있습니다">${keyDelArm ? '한 번 더 누르면 지웁니다' : '지우기'}</button>`
+    ? `<span class="cs-key ok">● 키 저장됨</span> <code class="cs-code mono" title="${esc(k.file)}">${esc(String(k.file).replace(/^(\/(Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~'))}</code>
+       <span class="cs-actions"><button type="button" class="btn" data-cs="key-edit">바꾸기</button><button type="button" class="btn danger-line" data-cs="key-del" title="Console 키는 만들 때 한 번만 보입니다. 지우면 새로 만들어야 할 수 있습니다">${keyDelArm ? '한 번 더 누르면 지웁니다' : '지우기'}</button></span>`
     : `<span class="cs-key ${k.invalid ? 'bad' : 'missing'}">● ${k.invalid ? '저장된 키가 올바르지 않습니다' : '키 없음'}</span>`;
   const form = !k.saved || keyEditing
     ? `<div class="cs-key-form">
          <input type="password" class="pf-input mono" data-cs-key autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-…  (Console › API Keys 에서 만든 키)">
          <button type="button" class="primary sm" data-cs="key-save">저장</button>
-         ${k.saved ? '<button type="button" class="btn sm ghost" data-cs="key-cancel">취소</button>' : ''}
+         ${k.saved ? '<button type="button" class="btn" data-cs="key-cancel">취소</button>' : ''}
        </div>`
     : '';
-  return `<div class="cs-billing">
-    <div class="cs-bill-h"><span class="pf-hint">요금제</span>
+  return `<section class="cs-block cs-billing">
+    <div class="cs-bill-h"><b>요금제</b>
       <div class="seg" role="radiogroup">${BILLING.map(([b, t]) => `<button type="button" data-cs-bill="${b}" class="${claudePrefs.billing === b ? 'on' : ''}" ${busy ? 'disabled' : ''}>${t}</button>`).join('')}</div>
     </div>
     ${api ? `<div class="cs-key-row">${keyLine}</div>${form}
       <div class="pf-hint">Anthropic Console 의 API 크레딧(프로모션 크레딧 포함)에서 차감됩니다. Agent SDK 로 실행해 요청이 Agent SDK 사용으로 기록됩니다.
         키는 호스트가 이 PC 파일(본인만 읽기)에만 저장하며 화면·기록·서버로 보내지 않습니다.</div>`
     : '<div class="pf-hint">이 PC 에 로그인한 Claude Code 구독 한도 안에서 실행합니다.</div>'}
-  </div>`;
+  </section>`;
 }
 let keyEditing = false;
 let keyDelArm = false; // 지우기는 두 번 눌러야 한다
@@ -133,14 +133,14 @@ function usageHtml() {
     const cost = se?.cost != null
       ? `<div class="cs-meta"><span>이 대화 비용 <b>$${se.cost.toFixed(4)}</b></span>${se.lastCost != null ? `<span>마지막 지시 <b>$${se.lastCost.toFixed(4)}</b></span>` : ''}<span>응답 <b>${se.turns}회</b></span><span>입력 <b>${fmtTok(se.input)}</b> · 출력 <b>${fmtTok(se.output)}</b> 토큰</span></div>`
       : '<div class="pf-hint">비용은 AI가 한 번 응답하면 표시됩니다.</div>';
-    return `<div class="cs-usage">${cost}<div class="pf-hint">정가 기준 추정치입니다. 실제 차감액은 Console 의 Usage·Billing 에서 확인하세요.</div></div>`;
+    return `<div class="cs-usage"><div class="cs-block-h"><b>사용량</b><span class="pf-hint">이 대화 비용(추정)</span></div>${cost}<div class="pf-hint">정가 기준 추정치입니다. 실제 차감액은 Console 의 Usage·Billing 에서 확인하세요.</div></div>`;
   }
   const limits = l && (l.five_hour || l.seven_day)
     ? `${usageRow('5시간 한도', l.five_hour)}${usageRow('주간 한도', l.seven_day)}
        <div class="pf-hint">Claude Code 구독 한도입니다. AI가 응답할 때마다 갱신됩니다(마지막 ${new Date(l.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}).</div>`
     : '<div class="pf-hint">사용량은 AI가 한 번 응답하면 표시됩니다.</div>';
   const sess = se?.turns ? `<div class="cs-meta"><span>이 세션 <b>응답 ${se.turns}회</b></span><span>입력 <b>${fmtTok(se.input)}</b> 토큰</span><span>출력 <b>${fmtTok(se.output)}</b> 토큰</span></div>` : '';
-  return `<div class="cs-usage">${limits}${sess}</div>`;
+  return `<div class="cs-usage"><div class="cs-block-h"><b>사용량</b><span class="pf-hint">Claude Code 구독 한도</span></div>${limits}${sess}</div>`;
 }
 function onClaudeUsage(m) {
   claudeUsage = m;
