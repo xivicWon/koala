@@ -204,7 +204,9 @@ let steps = [];
 const pending = new Map();
 
 const send = (m) => panel?.readyState === 1 && panel.send(JSON.stringify(m));
-const log = (kind, text) => { send({ type: 'log', kind, text }); console.log(`[${kind}] ${text}`); audit('log', { kind, text }); };
+// 채팅창에서 AI 가 한 일과 구분한다: 메뉴 지도 돌기(AI 없이 도는 스크립트) 중에는 driver = 'script'
+let driver = 'ai';
+const log = (kind, text, by = driver === 'script' ? 'script' : undefined) => { send({ type: 'log', kind, text, by }); console.log(`[${kind}]${by ? `[${by}]` : ''} ${text}`); audit('log', { kind, text, by }); };
 // 작업 기록: 세트마다 .koa/sets/<세트>/work/logs/<날짜>.jsonl 에 한 줄씩 남긴다(사용자 지시·도구 호출·테스트 실행·안내 문구).
 // 비밀값은 남기지 않는다($KOALA_* 이름만). 30일이 지난 파일은 호스트가 켜질 때 지운다. 세트를 고르기 전에는 남기지 않는다
 const LOG_DAYS = 30;
@@ -444,7 +446,7 @@ async function relay(name, args) {
   const result = await new Promise((resolve) => {
     const timer = setTimeout(() => { pending.delete(id); resolve({ ok: false, error: '사이드패널 응답 시간 초과' }); }, 90000);
     pending.set(id, (m) => { clearTimeout(timer); resolve(m); });
-    send({ type: 'tool', id, name, args: real });
+    send({ type: 'tool', id, name, args: real, by: driver });
   });
   console.log(`[time] ${name} ${Date.now() - t0}ms`);
   if (result.ok) trackMenu(name, result.result);
@@ -475,7 +477,7 @@ async function runPlan(steps) {
   const shown = plan.map(({ tool, args = {} }) => ({
     tool, args: { ...args, secret: typeof args.value === 'string' && args.value.startsWith('$') },
   }));
-  send({ type: 'plan', steps: shown });
+  send({ type: 'plan', steps: shown, by: 'ai' });
   const results = [];
   let lastImage = null; // 묶음 안에서 찍은 스크린샷도 AI가 볼 수 있게 마지막 한 장을 결과에 붙인다
   for (let i = 0; i < plan.length; i++) {
@@ -821,6 +823,7 @@ async function crawlMenus(rows) {
   const save = (extra) => { try { fs.mkdirSync(path.dirname(crawlFile()), { recursive: true }); fs.writeFileSync(crawlFile(), JSON.stringify({ kind, done: [...done], at: new Date().toISOString(), ...extra }, null, 1)); } catch (e) { console.log('[crawl]', e.message); } };
   const prevMode = mode;
   mode = 'plan';
+  driver = 'script';
   stopRequested = false;
   startJob(kind);
   send({ type: 'busy', busy: true });
@@ -897,6 +900,7 @@ async function crawlMenus(rows) {
   if (out.skipped.length) log('sys', `건너뛴 메뉴: ${list(out.skipped, (x) => `${x.menu.join(' › ')}(${x.why})`)}`);
   if (writeList.length) log('err', `화면을 여는 동안 나간 쓰기 요청(앱이 보낸 것, koala 가 누른 버튼 아님) ${writeList.length}종: ${list(writeList, (w) => `${w.req} ×${w.n}`)}`);
   endJob(finished && !out.failed.length, `방문 ${out.visited.length} · 실패 ${out.failed.length}`);
+  driver = 'ai';
   send({ type: 'busy', busy: false });
   send({ type: 'menu_map_changed' });
 }

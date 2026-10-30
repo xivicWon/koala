@@ -956,3 +956,10 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .cs .btn[data-cs="reload"] { --ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-3-6.7L21 8'/%3E%3Cpath d='M21 3v5h-5'/%3E%3C/svg%3E"); }
 .cs .btn[data-cs="key-edit"] { --ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3C/svg%3E"); }
 .cs .btn[data-cs="key-cancel"] { --ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E"); }
+
+/* 채팅창 출처 배지: AI 가 한 일 / AI 없이 도는 스크립트(메뉴 지도 돌기) */
+.by { display: inline-flex; align-items: center; flex: none; height: 16px; padding: 0 6px; margin-right: 6px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px; border: 1px solid; }
+.by-ai { color: #6d4bd1; border-color: color-mix(in srgb, #6d4bd1 45%, transparent); background: color-mix(in srgb, #6d4bd1 10%, transparent); }
+.by-script { color: #0b7a8c; border-color: color-mix(in srgb, #0b7a8c 45%, transparent); background: color-mix(in srgb, #0b7a8c 10%, transparent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .by-ai { color: #b59cff; } :root:not([data-theme="light"]) .by-script { color: #5fd0e0; } }
+:root[data-theme="dark"] .by-ai { color: #b59cff; } :root[data-theme="dark"] .by-script { color: #5fd0e0; }

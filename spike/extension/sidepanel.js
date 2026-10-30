@@ -73,7 +73,7 @@ function connect() {
   };
   ws.onmessage = async (e) => {
     const m = JSON.parse(e.data);
-    if (m.type === 'log') msg(m.kind, m.text);
+    if (m.type === 'log') msg(m.kind, m.text, m.by);
     if (m.type === 'busy') setBusy(m.busy);
     if (m.type === 'menu_map_changed' && sheetMode === 'menumap') openMenuMap();
     if (m.type === 'env') { claudeEnv = m.claude; renderEnvAlert(); }
@@ -100,14 +100,14 @@ function connect() {
     if (m.type === 'suite_published') onSuitePublished(m);
     if (m.type === 'suite_code') onSuiteCode(m);
     if (m.type === 'suite_code_progress') onSuiteCodeProgress(m);
-    if (m.type === 'plan') queuePlan(m.steps);
+    if (m.type === 'plan') queuePlan(m.steps, m.by);
     if (m.type === 'plan_end') endPlan(m.skipped);
     if (m.type === 'reset') clearView();
     if (m.type === 'mode') setMode(m.mode, m.speed);
     if (m.type === 'tool') {
       let reply;
       try {
-        reply = { ok: true, result: await runTool(m.name, m.args) };
+        reply = { ok: true, result: await runTool(m.name, m.args, m.by) };
       } catch (err) {
         reply = { ok: false, error: String(err.message || err), context: stepContext() };
       }
@@ -363,7 +363,9 @@ function setBusy(b) {
   if (!b && typeof suiteSentAt !== 'undefined') suiteSentAt = 0; // 작업이 끝났으면 '보낸 직후' 잠금도 푼다
   if (sheetMode === 'set' || sheetMode === 'suite') renderSheet(); // 작업 중에는 세트 바꾸기·받기, 코드 생성 같은 AI 버튼을 막는다
 }
-function msg(kind, text) {
+// by: 'script'(AI 없이 도는 메뉴 지도 돌기) | 'ai' — 줄 앞에 배지로 구분한다
+const byBadge = (by) => (by === 'script' ? '<span class="by by-script" title="AI 없이 정해진 규칙으로 도는 스크립트">스크립트</span>' : by === 'ai' ? '<span class="by by-ai" title="AI가 판단해 부른 조작">AI</span>' : '');
+function msg(kind, text, by) {
   const d = document.createElement('div');
   if (kind === 'ai') {
     d.className = 'ai';
@@ -375,6 +377,7 @@ function msg(kind, text) {
   } else {
     d.className = kind === 'tool' ? 'sys' : kind;
     d.textContent = text;
+    if (by) d.insertAdjacentHTML('afterbegin', byBadge(by));
   }
   if (kind === 'me') lastAi = null;
   append(d);
@@ -1087,18 +1090,18 @@ let stepNo = 0;
 
 function locText(l) {
   if (!l) return '';
-  const base = l.testid ? l.testid : l.text ? `"${l.text}"` : l.css;
+  const base = l.menu ? l.menu.join(' › ') : l.row ? '목록 첫 행' : l.testid ? l.testid : l.text ? `"${l.text}"` : l.css;
   return l.nth != null ? `${base} [${l.nth}]` : base;
 }
 
-function stepCard(name, args, state) {
+function stepCard(name, args, state, by) {
   const n = ++stepNo;
   const [icon, label] = STEP_UI[name] || ['•', name];
   const el = document.createElement('div');
   el.className = `step ${state} ${READ_ONLY.has(name) ? 'read' : ''} ${name.startsWith('expect') ? 'verify' : ''}`;
   const tgt = args.locator ? locText(args.locator) : args.url || args.pattern || args.key || '';
   const val = args.secret ? '•••••' : args.value ?? args.text ?? args.option ?? (args.count != null ? `${args.count}개` : '');
-  el.innerHTML = `<div class="h" title="${esc(name)}"><span class="ic">${icon}</span><span class="name">${label}</span>
+  el.innerHTML = `<div class="h" title="${esc(name)}">${byBadge(by)}<span class="ic">${icon}</span><span class="name">${label}</span>
     <span class="tgt mono">${esc(tgt)}${val !== '' ? ` · ${esc(val)}` : ''}</span>
     <span class="meta">${state === 'pending' ? '대기' : '진행 중'}</span></div>
     <div class="issues"></div><div class="detail"></div>`;
@@ -1109,13 +1112,13 @@ function stepCard(name, args, state) {
 
 // AI가 run으로 보낸 계획은 대기 카드로 미리 쌓아 두고, 실행되는 대로 위에서부터 채운다
 let queue = [];
-function queuePlan(steps) {
+function queuePlan(steps, by) {
   const head = document.createElement('div');
   head.className = 'plan-head';
   head.textContent = `계획 ${steps.length}단계`;
   append(head);
   queue = steps.map((s) => {
-    const c = stepCard(s.tool, s.args || {}, 'pending');
+    const c = stepCard(s.tool, s.args || {}, 'pending', by);
     append(c.el);
     return c;
   });
@@ -1130,7 +1133,7 @@ function endPlan(skipped) {
   queue = [];
 }
 
-function newStep(name, args) {
+function newStep(name, args, by) {
   if (queue.length && queue[0].name === name) {
     const c = queue.shift();
     c.el.classList.replace('pending', 'run');
@@ -1138,7 +1141,7 @@ function newStep(name, args) {
     c.el.scrollIntoView({ block: 'nearest' });
     return { n: c.n, el: c.el, t0: performance.now() };
   }
-  const c = stepCard(name, args, 'run');
+  const c = stepCard(name, args, 'run', by);
   append(c.el);
   return { n: c.n, el: c.el, t0: performance.now() };
 }
@@ -1195,12 +1198,12 @@ async function guardSecret(a) {
   if (!ok) throw new Error(`계정 값은 대상 서버(${new URL(base).origin}) 화면에만 입력합니다. 지금 탭: ${tab?.url || '없음'}`);
 }
 
-async function runTool(name, a) {
+async function runTool(name, a, by) {
   if (a.secret && a.value) secrets.add(a.value);
   if (a.secret) await guardSecret(a);
   while (paused) await sleep(200);
   if (cancelled) throw new Error('사용자가 중지했습니다');
-  const step = newStep(name, a);
+  const step = newStep(name, a, by);
   currentStep = step;
   try {
     const result = await execTool(name, a);
