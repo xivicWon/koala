@@ -1,6 +1,5 @@
 // "Claude 설정" 시트: koa가 Claude를 실행하는 작업 폴더(지식 문서 사본)와 실제로 전달되는 내용을 보여 준다
 let claudeView = null;
-let claudeTab = 'prompt';
 // 내가 고른 모델·effort(이 확장에 저장, 세트 설정보다 우선). 빈 값은 '기본'(세트 → Claude Code 설정)
 // billing: sub = Claude Code 구독, api = Console API 키(Agent SDK, API 크레딧에서 차감)
 let claudePrefs = { model: '', effort: '', billing: 'sub' };
@@ -26,14 +25,8 @@ function renderClaudeSheet(body) {
   const v = claudeView;
   if (!v) { body.innerHTML = '<div class="none">불러오는 중…</div>'; return; }
   if (v.error) { body.innerHTML = `<div class="none">${esc(v.error)}</div>`; return; }
-  const tabs = [['prompt', '실제 전달 내용'], ...v.files.map((f) => [`file:${f.name}`, f.name])];
-  const file = claudeTab.startsWith('file:') && v.files.find((f) => `file:${f.name}` === claudeTab);
-  const content = file
-    ? `<pre class="cs-pre mono">${esc(file.content)}</pre>`
-    : `<div class="cs-sec"><b>① koa 기본 규칙</b> <span class="pf-hint">--append-system-prompt</span><pre class="cs-pre mono">${esc(v.system)}</pre></div>
-       <div class="cs-sec"><b>② 지식 (CLAUDE.md, 불러온 파일 펼침)</b> <span class="pf-hint">작업 폴더에서 자동으로 읽힘</span><pre class="cs-pre mono">${esc(v.claudeMdExpanded)}</pre></div>
-       <div class="cs-sec"><b>③ 메뉴 경로 (형식)</b> <span class="pf-hint">지시·코드 생성마다 덧붙임 · &lt;…&gt; 자리에 세트의 메뉴 경로 지도 내용이 들어갑니다(실제 내용은 메뉴 지도에서 봅니다)</span><pre class="cs-pre mono">${esc(v.menuMap || '')}</pre></div>
-       <div class="cs-sec"><b>④ 테스트 코드 지침 (Playwright 기본 · 실패 고치기)</b> <span class="pf-hint">테스트 코드 생성·추가 지시에만 덧붙임 · 참고: TestDino playwright-skill, Playwright 공식 healer 에이전트</span><pre class="cs-pre mono">${esc(v.codeGuide || '')}</pre></div>`;
+  // AI에게 전달되는 내용: 파일 경로만
+  const content = `<div class="cs-files">${(v.prompts || []).map(([label, paths]) => `<div class="cs-file"><span class="pf-hint">${esc(label)}</span>${paths.map((p) => `<code class="mono">${esc(p)}</code>`).join('')}</div>`).join('')}</div>`;
   const busy = aiBusy;
   body.innerHTML = `<div class="cs">
     ${billingHtml(v, busy)}
@@ -54,7 +47,6 @@ function renderClaudeSheet(body) {
       <button type="button" class="btn sm ghost danger-text" data-cs="reset" ${(sessionAlias || v.recorded) && !busy ? '' : 'disabled'} title="세션과 수행 기록·타임라인까지 비우고 처음부터 시작합니다">기록까지 비우기</button>
     </div>
     <div class="cs-meta">
-      <span>지식 <b>${esc(v.versions.knowledge.join(' · ') || '없음')}</b></span>
       <span>Claude Code <b>${esc(v.claude?.version ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가')}</b></span>
       <span>실행 <b>${claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</b></span>
     </div>
@@ -66,7 +58,6 @@ function renderClaudeSheet(body) {
         <button type="button" class="btn sm ghost" data-cs="reload">새로고침</button>
       </div>
       <div class="cs-meta"><span class="pf-hint">실행 옵션</span> <code class="mono">${esc(v.flags.join(' '))}</code></div>
-      <div class="cs-tabs">${tabs.map(([k, label]) => `<button type="button" class="cs-tab ${k === claudeTab ? 'on' : ''}" data-tab="${esc(k)}">${esc(label)}</button>`).join('')}</div>
       ${content}
     </details>
   </div>`;
@@ -159,8 +150,6 @@ function onClaudeUsage(m) {
 
 document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (sheetMode !== 'claude') return;
-  const tab = e.target.closest('[data-tab]')?.dataset.tab;
-  if (tab) { claudeTab = tab; return renderSheet(); }
   const act = e.target.closest('[data-cs]')?.dataset.cs;
   if (act === 'open') fetch('http://127.0.0.1:8765/claude/open', { method: 'POST' });
   if (act === 'compact' && ws?.readyState === 1) { ws.send(JSON.stringify({ type: 'session_compact' })); closeSheet(); }

@@ -687,7 +687,7 @@ test('migrate: 옮긴 세트의 역할·기본 역할이 호스트 프로필과 
       roles: [{ key: 'A', label: '가', account: { user: 'd', pass: 'secret-h2' } }, { key: 'B', label: '나' }] });
     const h = await startHost(old);
     const p = await connectPanel(h);
-    const effective = () => fetch(`http://127.0.0.1:${h.port}/claude/effective`, { headers: { Origin: EXT, 'x-koala-token': h.token } }).then((r) => r.json());
+    const profileCtx = () => fetch(`http://127.0.0.1:${h.port}/profile/context`, { headers: { Origin: EXT, 'x-koala-token': h.token } }).then((r) => r.json()).then((j) => j.text);
     try {
       await p.waitFor((m) => m.type === 'migration_needed', 0, 'migration_needed');
       await p.waitFor((m) => m.type === 'sets', 0, '연결 시 sets');
@@ -706,13 +706,13 @@ test('migrate: 옮긴 세트의 역할·기본 역할이 호스트 프로필과 
       at = p.mark();
       p.send({ type: 'set', id: 'pa', prefs: {} });
       await p.waitFor((m) => m.type === 'tests' && m.set === 'pa', at, 'pa 의 tests');
-      let ctx = (await effective()).profileContext;
+      let ctx = (await profileCtx());
       assert.match(ctx, /- ADMIN 관리자: /);
       assert.match(ctx, /- MEMBER 회원 \(기본\)/);
       at = p.mark();
       p.send({ type: 'set', id: lid, prefs: {} });
       await p.waitFor((m) => m.type === 'tests' && m.set === lid, at, '이 PC 전용 세트의 tests');
-      ctx = (await effective()).profileContext;
+      ctx = (await profileCtx());
       assert.match(ctx, /- A 가: /);
       assert.match(ctx, /- B 나 \(기본\)/);
       assert.ok(!JSON.stringify(s).includes('secret-h1') && !ctx.includes('secret-h2'));

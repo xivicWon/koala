@@ -92,6 +92,15 @@ function checkClaude() {
 }
 checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
+// AI 지시문 중 세트와 상관없는 일반 규칙은 prompts/ 의 파일에서 읽는다. Claude 설정에는 이 파일 경로를 보여 준다
+const PROMPTS = path.join(dir, 'prompts');
+const PROMPT_FILES = { system: 'system.md', playwright: 'playwright-basics.md', fix: 'fix-elimination.md', menuMap: 'menu-map.md' };
+const prompt = (k) => fs.readFileSync(path.join(PROMPTS, PROMPT_FILES[k]), 'utf8').trim();
+const SYSTEM = prompt('system');
+const PW_BASICS = prompt('playwright');
+const FIX_GUIDE = prompt('fix');
+// 메뉴 경로: 첫 줄은 지시에 붙는 머리, 나머지는 형식(<…> 자리에 세트의 지도 요약이 들어간다)
+const MENU_MAP_HEAD = prompt('menuMap').split('\n')[0];
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order', 'tabs']);
 const TOOLS = ['run', 'snapshot', 'screenshot', 'tabs', 'use_tab', 'viewport', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
   'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'];
@@ -113,29 +122,6 @@ const PLAN_SYSTEM = `
    - 화면에서 확인한 것만 근거로 쓴다. 확인 못 한 것은 만들지 않거나 '미확인'으로 적는다. 서비스 지식의 중점 방향으로 우선순위를 정한다.
 마지막에 save_plan으로 저장하고, 시나리오·케이스 수, 우선순위 분포, 확인하지 못한 부분을 한국어로 짧게 요약한다.`;
 
-const SYSTEM = `너는 웹 QA 담당자다. koala 도구로만 브라우저를 조작한다.
-- 사용자가 지금까지 수행한 것으로 테스트(TDD·BDD·시나리오·케이스·테스트 초안)를 만들어 달라고 하면 make_tests 를 부르고 한 줄로 알린 뒤 응답을 끝낸다.
-  "○○ 테스트해줘"처럼 수행을 요청하면 그것은 브라우저로 수행하라는 뜻이다. 만들어 달라는 뜻이 분명하지 않으면 먼저 묻는다.
-- 먼저 snapshot으로 화면을 읽고, locator는 testid > text > css 순으로 고른다.
-- 화면 크기: 사용자가 모바일·태블릿·특정 해상도에서 보라고 하면 viewport 로 작업 탭 크기를 바꾼 뒤 snapshot·screenshot 으로 확인한다. 지시에 [화면 크기]가 있으면 그 크기에서 보고 있는 것이다. 사용자가 바꾸라고 하지 않았으면 크기를 바꾸지 않는다.
-- 관리 탭은 #1, #2 처럼 라벨로 부른다. 사용자가 "#2 탭에서 …"라고 하면 use_tab("#2") 후 진행하고, 도구 응답의 tab 으로 어느 탭에서 조작했는지 확인한다. 탭 목록이 필요하면 tabs 를 쓴다.
-- 단계마다 도구를 따로 부르지 말고, 화면을 읽은 뒤 할 일을 **run으로 묶어 한 번에** 보낸다.
-  (조작과 검증을 섞어 화면 전환 단위로 5~15단계씩. 다음 화면 구성을 모르면 거기까지만 묶는다)
-  run이 중간에 실패하면 실패 지점의 오류·요청·현재 화면(snapshot)이 돌아온다. 그걸 보고 원인을 판단해 남은 계획을 다시 run으로 보낸다.
-- 숫자가 섞인 자동 생성 testid(예: datatable-v-0-93-…, …-294821354305466377-…)는 피한다.
-- 계정 입력은 아래 [대상 서비스]의 계정 이름($KOALA_ADMIN_USER, $KOALA_ADMIN_PASS 처럼)을 값으로 넘긴다. 실제 값을 추측하지 않는다.
-- 역할(관리자·일반 사용자 등)마다 보이는 메뉴와 권한이 다르다. 사용자가 역할을 말하면 그 역할의 계정으로, 말하지 않으면 기본 역할로 로그인한다.
-  로그인하기 전에 어느 역할로 하는지 한 줄로 말한다. 다른 역할로 바꿀 때는 로그아웃하고 그 역할 계정으로 다시 로그인한다.
-- 데이터를 바꾸는 등록·저장·삭제 버튼은 사용자가 명시하지 않으면 누르지 않는다.
-- 데이터를 새로 만들 때(제목·이름 입력) 값 앞에 반드시 '[koa] '를 붙인다. 테스트 데이터를 구분하고 나중에 정리하기 위해서다.
-- 확인한 사실은 expect_* 도구로 남긴다. 이것이 테스트 코드의 검증문이 된다.
-- 입력 폼은 탭 순서도 체크 포인트다. tab_order로 순서를 보고, 테스트로 남길 때는 press Tab 뒤에 expect_focused로 검증한다.
-  보이는지(expect_visible)만이 아니라 글자·값·개수(expect_text / expect_value / expect_count)도 확인한다.
-  단, 목업 데이터가 바뀌면 깨질 값(날짜, 건수 등)은 꼭 필요할 때만 쓴다.
-- 조작 결과에는 그 단계의 API 요청(requests)과 콘솔 오류(consoleErrors)가 온다.
-  4xx/5xx 응답, 실패한 요청, 콘솔 오류, 화면과 데이터의 불일치가 보이면 바로 한 줄로 알린다.
-- 사람이 사이드패널로 지켜보고 있다. run을 보내기 전에 이번 묶음에서 무엇을 확인하는지 한 문장으로 말한다.
-- 끝나면 무엇을 확인했고 이상한 점이 무엇이었는지 한국어로 짧게 요약한다.`;
 
 // 지금 세트의 프로필(대상 서버·사이트 지식·역할·계정). 세트 스냅숏 + 패널의 내 설정으로 만든다(profileOf)
 let profile = null;
@@ -892,17 +878,6 @@ function menuMapContext() {
   const d = menumap.describe(menumap.loadMap(menuMapFile()), { base });
   return d ? `\n\n${MENU_MAP_HEAD}\n${d}` : '';
 }
-const MENU_MAP_HEAD = '[메뉴 경로] 이 세트에서 지금까지 지나가며 본 메뉴와 화면이다. 화면에 갈 때는 이 경로를 먼저 쓰고, 없으면 찾는다(찾은 경로는 저절로 여기에 오른다). 미방문은 메뉴에서 보기만 한 것이다.';
-// Claude 설정에 보여 줄 일반 형식(특정 서비스 내용 없이). 실제 내용은 세트마다 메뉴 경로 지도에서 만든다
-const MENU_MAP_FORMAT = `${MENU_MAP_HEAD}
-진척: 메뉴 <전체 수>개 중 <방문 수>개 방문
-- <그룹> › <메뉴> → <화면 주소> (방문 <횟수>회 · <역할>)
-  - "<누른 것>" 클릭 → <하위 화면 주소>
-- <그룹> › <메뉴> → <화면 주소> (미방문 · 메뉴에서 봄)
-- <그룹> (그룹 · 아직 펼쳐 보지 않음)
-- <화면 주소> 에서 "<누른 것>" 클릭 → <화면 주소>
-- (메뉴 경로 모름, 주소로 들어감) <화면 주소>
-(최대 80줄. 지도가 비어 있으면 붙이지 않는다)`;
 
 // AI에게 줄 알려진 경로 요약: 같은 엣지는 한 번만
 function describeKnown(paths) {
@@ -1171,23 +1146,6 @@ function saveAdded(args) {
 }
 
 // 코드 생성·추가가 함께 쓰는 지침: Playwright 기본과 실패 고치기(소거법)
-const PW_BASICS = `[Playwright 기본]
-- 고정 대기(waitForTimeout·setTimeout)와 waitForLoadState('networkidle') 를 쓰지 않는다. 기다림은 expect(locator).toBeVisible()·toHaveText()·toHaveURL() 같은 자동 재시도 검증으로 한다.
-- 응답을 기다릴 때는 동작 전에 등록한다: const res = page.waitForResponse(…); await 동작; await res. 동작 뒤에 등록하면 이미 지나간 응답을 기다리며 멈춘다.
-- 자동완성·검색 제안: pressSequentially 로 입력하고(fill 은 키 이벤트가 없어 제안이 안 뜨는 화면이 있다), 제안 목록(getByRole('option') 등)이 보이는지 확인한 뒤 고르고, 고른 결과를 검증한다.
-- 타임아웃이 나면 시간을 늘리지 않는다. 기다리던 대상이 틀렸거나 그 신호가 오지 않는 것이다. 재시도(retries)로 덮지도 않는다.
-- 테스트는 서로 독립이다: test.describe.serial·테스트 사이 공유 변수·앞 테스트가 만든 상태에 기대지 않는다.
-- 일부만 빼고(또는 일부만) 돌리라는 요청은 실행 대상을 거르는 것(grep·태그)이다. 그 때문에 테스트를 합치거나 묶거나 순서를 바꾸지 않는다.
-- 이미 통과한 테스트의 코드와 그 테스트가 쓰는 공통 도우미는 이유 없이 고치지 않는다.`;
-const FIX_GUIDE = `[실패 고치기 — 소거법] 실행 결과 failures 에는 테스트마다 error(오류)·at·snippet(실패한 줄과 앞뒤 코드)·step(실패한 단계)·page(실패 순간의 화면 구조)·tries(이 작업의 지난 시도)·repeat(같은 실패 연속 횟수)가 있다.
-1. 증거부터 읽는다. error·snippet·page 로 원인이 보이면 브라우저를 다시 열지 않는다. 화면을 다시 볼 때는 page 로 답할 수 없는 무엇을 볼지 먼저 정한다.
-2. 실패를 하나로 분류한다: A 로케이터(못 찾음·여러 개) · B 기다리는 신호가 오지 않음(타임아웃) · C 값·문구가 기대와 다름 · D 시작 상태(로그인·데이터·앞 테스트 영향) · E 앱 결함 · F 실행 환경(주소·계정·화면 크기).
-3. 가설 하나만 골라 그것만 바꾼다. 두 가지를 함께 바꾸면 무엇이 고쳤는지 알 수 없다. 저장할 때 note 에 테스트마다 한 줄로 '<테스트 id>: <분류> · <가설> · <바꾼 것>'을 적는다. tries 에서 이미 배제된 가설은 다시 시도하지 않는다.
-4. B 는 시간을 늘리지 않는다: 무엇을 기다리는가 → 그 신호가 실제로 오는가(page·네트워크로 확인) → 오지 않으면 기다릴 대상을 바꾼다.
-5. regressed(지난번 통과 → 이번 실패)가 있으면 새 실패보다 먼저 본다. 이번에 그 테스트나 공통 도우미를 바꿨으면 되돌린다. 바꾸지 않았는데 실패하면 불안정한 것이므로 D·B 의 경쟁 상태를 찾는다.
-6. repeat 가 2 이상이면 지금 가설은 틀렸다. 같은 방향으로 더 고치지 말고 분류부터 다시 한다. repeat 가 3 이면 그 테스트는 멈추고 보고한다.
-7. 앱 결함(E)으로 판단되면 검증을 빼지 말고 test.fixme 와 이유 주석으로 두고 보고한다.
-8. 끝나면 보고한다: 통과/실패/보류, 남은 실패마다 배제한 가설·남은 가설·더 필요한 정보.`;
 
 // 새 테스트 코드만 덧붙이기: 기존 파일(appendBase) + AI가 쓴 조각. 다시 부르면 조각만 바뀐다
 const APPEND_PROMPT = `[테스트 코드 추가] 아래 '새' 테스트만 Playwright 코드 조각으로 써서 append_code 로 저장한다. 기존 코드는 다시 쓰지 않는다.
@@ -1945,16 +1903,18 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('content-type', 'application/json');
     if (!profile) { res.statusCode = 409; return res.end(JSON.stringify({ error: '세트를 먼저 고르세요' })); }
     try {
-      const d = workspace.describe(profile);
+      const { files, claudeMdExpanded, ...d } = workspace.describe(profile); // 파일 본문(세트 지식)은 보내지 않는다
       return res.end(JSON.stringify({
         ...d,
         flags: ['--setting-sources project', '--strict-mcp-config', '--tools ""', `--allowedTools mcp__koala__*`,
           ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
-        system: SYSTEM,
-        // 프로필(대상 서비스·계정·사이트 지식)은 세트 화면에서 보여 준다(GET /profile/context). 여기는 세트와 상관없는 내용만
-        // 테스트 코드 생성·추가 지시에만 덧붙는 지침, 지시마다 덧붙는 메뉴 경로 요약(형식)
-        codeGuide: `${PW_BASICS}\n\n${FIX_GUIDE}`,
-        menuMap: MENU_MAP_FORMAT,
+        // AI에게 전달되는 내용은 본문 대신 파일 경로만 준다. 프로필은 세트 화면(GET /profile/context)
+        prompts: [
+          ['기본 규칙', [path.join(PROMPTS, PROMPT_FILES.system)]],
+          ['지식', [path.join(d.dir, 'CLAUDE.md')]],
+          ['메뉴 경로 형식', [path.join(PROMPTS, PROMPT_FILES.menuMap)]],
+          ['테스트 코드 지침', [path.join(PROMPTS, PROMPT_FILES.playwright), path.join(PROMPTS, PROMPT_FILES.fix)]],
+        ],
         claude: claudeEnv,
         billing: { mode: billing, key: sdk.keyStatus() }, // 키 값은 보내지 않는다(있음·없음과 파일 위치만)
         recorded: steps.length, // '기록까지 비우기' 확인 창에 보여 줄 수행 기록 수

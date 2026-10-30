@@ -341,10 +341,11 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .cs-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 11.5px; color: var(--text-2); }
 .cs-meta b { color: var(--text); font-weight: 600; }
 .cs-meta code { font-size: 10.5px; }
-.cs-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 8px; border-bottom: 1px solid var(--line); }
-.cs-tab { border: 0; background: none; padding: 6px 8px; font-size: 11.5px; color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.cs-tab.on { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
 .cs-sec { margin-bottom: 10px; font-size: 12px; }
+.cs-files { display: grid; gap: 8px; margin-top: 12px; }
+.cs-file { display: flex; flex-direction: column; gap: 2px; }
+.cs-file .pf-hint { margin-left: 0; }
+.cs-file code { font-size: 11px; overflow-wrap: anywhere; user-select: all; }
 .cs-pre { margin: 4px 0 0; padding: 8px 10px; background: var(--bg-soft); border-radius: 7px; font-size: 10.5px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
 
