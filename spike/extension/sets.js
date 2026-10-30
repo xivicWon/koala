@@ -5,6 +5,21 @@ let setFormError = '';
 let setFormVals = {};    // 새 세트·고치기 입력값(검사에 걸려 다시 그려도 남게)
 let setWipSync = false;  // 받기를 눌렀으면 임시 저장소에서 받는다는 공사 표지판을 보여 준다
 let setSentOnOpen = false; // 이번 연결에서 호스트에 지금 세트를 알렸는지
+let setAi = { open: false, set: null, text: '' }; // 'AI에게 전달되는 프로필' 펼침 상태와 호스트가 준 내용
+
+// 펼칠 때마다 호스트에서 지금 내용을 받는다(내 설정을 고쳤으면 바로 반영된 것을 본다)
+document.getElementById('sheet-body').addEventListener('toggle', async (e) => {
+  // 펼친 채로 다시 그려도 toggle 이 오므로, 닫힘 → 펼침으로 바뀔 때만 받는다
+  if (sheetMode !== 'set' || !e.target.matches?.('details.set-ai') || setAi.open === e.target.open) return;
+  setAi.open = e.target.open;
+  if (!setAi.open) return;
+  try {
+    const r = await fetch('http://127.0.0.1:8765/profile/context');
+    const j = await r.json();
+    setAi = { open: true, set: j.set, text: j.text };
+  } catch { setAi = { open: true, set: activeSet, text: '호스트와 연결되어 있지 않아 불러오지 못했습니다' }; }
+  if (sheetMode === 'set') renderSheet();
+}, true);
 
 // 세트를 바꾸거나 받을 수 없는 이유(없으면 '')
 function setBlockReason() {
@@ -124,6 +139,10 @@ function setDetail(s, why) {
         <input class="pf-input" placeholder="비밀번호" type="password" data-acc="${esc(a.key)}" data-k="pass" value="${esc(mine.pass ?? '')}" autocomplete="new-password">
       </div></div>`;
     }).join('')}`)}
+
+    ${s.id === activeSet ? setCard('AI에게 전달되는 프로필', '세트 정의 + 내 설정으로 만듦 · 지시마다 덧붙음', `
+    <details class="set-ai" ${setAi.open ? 'open' : ''}><summary>펼쳐서 보기 <span class="pf-hint">대상 서비스 · 역할과 계정(값은 이름으로만) · 사이트 지식</span></summary>
+      <pre class="pf-ro pf-prompt-ro mono">${esc(setAi.set === s.id ? setAi.text || '(없음)' : '불러오는 중…')}</pre></details>`) : ''}
 
     ${s.id === activeSet ? setCard('메뉴 경로 지도', '이 PC 작업 데이터 · 세트 폴더(map/)', `
     <div class="pf-actions set-map"><button type="button" class="btn sm" data-set-act="map-open">지도 보기</button>

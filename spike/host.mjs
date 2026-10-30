@@ -1951,8 +1951,8 @@ const server = http.createServer(async (req, res) => {
         flags: ['--setting-sources project', '--strict-mcp-config', '--tools ""', `--allowedTools mcp__koala__*`,
           ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
         system: SYSTEM,
-        profileContext: profileContext().trim(),
-        // 테스트 코드 생성·추가 지시에만 덧붙는 지침, 지시마다 덧붙는 메뉴 경로 요약
+        // 프로필(대상 서비스·계정·사이트 지식)은 세트 화면에서 보여 준다(GET /profile/context). 여기는 세트와 상관없는 내용만
+        // 테스트 코드 생성·추가 지시에만 덧붙는 지침, 지시마다 덧붙는 메뉴 경로 요약(형식)
         codeGuide: `${PW_BASICS}\n\n${FIX_GUIDE}`,
         menuMap: MENU_MAP_FORMAT,
         claude: claudeEnv,
@@ -1962,6 +1962,11 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
   }
   // 릴리즈 노트: 이 설치본의 CHANGELOG.md(설치한 버전까지의 변경 내용). 사이드패널 메뉴의 '릴리즈 노트 보기'
+  // 세트 화면의 'AI에게 전달되는 프로필': 지시마다 덧붙는 대상 서비스·역할과 계정(이름만)·사이트 지식
+  if (req.method === 'GET' && req.url === '/profile/context') {
+    res.setHeader('content-type', 'application/json');
+    return res.end(JSON.stringify({ set: activeSet, text: profileContext().trim() }));
+  }
   // 사이드패널의 메뉴 경로 지도 보기: 지금 세트의 지도(트리)
   if (req.method === 'GET' && req.url === '/menu-map') {
     res.setHeader('content-type', 'application/json');

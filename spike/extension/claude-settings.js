@@ -32,9 +32,8 @@ function renderClaudeSheet(body) {
     ? `<pre class="cs-pre mono">${esc(file.content)}</pre>`
     : `<div class="cs-sec"><b>① koa 기본 규칙</b> <span class="pf-hint">--append-system-prompt</span><pre class="cs-pre mono">${esc(v.system)}</pre></div>
        <div class="cs-sec"><b>② 지식 (CLAUDE.md, 불러온 파일 펼침)</b> <span class="pf-hint">작업 폴더에서 자동으로 읽힘</span><pre class="cs-pre mono">${esc(v.claudeMdExpanded)}</pre></div>
-       <div class="cs-sec"><b>③ 프로필 (대상 서비스·계정·사이트 지식)</b> <span class="pf-hint">지시마다 덧붙임</span><pre class="cs-pre mono">${esc(v.profileContext || '(활성 프로필 없음)')}</pre></div>
-       <div class="cs-sec"><b>④ 메뉴 경로 (형식)</b> <span class="pf-hint">지시·코드 생성마다 덧붙임 · &lt;…&gt; 자리에 세트의 메뉴 경로 지도 내용이 들어갑니다(실제 내용은 메뉴 지도에서 봅니다)</span><pre class="cs-pre mono">${esc(v.menuMap || '')}</pre></div>
-       <div class="cs-sec"><b>⑤ 테스트 코드 지침 (Playwright 기본 · 실패 고치기)</b> <span class="pf-hint">테스트 코드 생성·추가 지시에만 덧붙임 · 참고: TestDino playwright-skill, Playwright 공식 healer 에이전트</span><pre class="cs-pre mono">${esc(v.codeGuide || '')}</pre></div>`;
+       <div class="cs-sec"><b>③ 메뉴 경로 (형식)</b> <span class="pf-hint">지시·코드 생성마다 덧붙임 · &lt;…&gt; 자리에 세트의 메뉴 경로 지도 내용이 들어갑니다(실제 내용은 메뉴 지도에서 봅니다)</span><pre class="cs-pre mono">${esc(v.menuMap || '')}</pre></div>
+       <div class="cs-sec"><b>④ 테스트 코드 지침 (Playwright 기본 · 실패 고치기)</b> <span class="pf-hint">테스트 코드 생성·추가 지시에만 덧붙임 · 참고: TestDino playwright-skill, Playwright 공식 healer 에이전트</span><pre class="cs-pre mono">${esc(v.codeGuide || '')}</pre></div>`;
   const busy = aiBusy;
   body.innerHTML = `<div class="cs">
     ${billingHtml(v, busy)}
@@ -56,7 +55,6 @@ function renderClaudeSheet(body) {
     </div>
     <div class="cs-meta">
       <span>지식 <b>${esc(v.versions.knowledge.join(' · ') || '없음')}</b></span>
-      <span>프로필 <b>${esc(v.versions.profile || '-')}</b></span>
       <span>Claude Code <b>${esc(v.claude?.version ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가')}</b></span>
       <span>실행 <b>${claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</b></span>
     </div>
