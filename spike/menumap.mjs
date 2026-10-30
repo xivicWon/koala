@@ -42,29 +42,33 @@ function addVia(map, key, url, via, { role, title, at }) {
 }
 
 // 도구 한 번의 결과를 지도에 올린다. 바뀌었으면 true
-//   click: { tool, from(이전 주소), url(새 주소), menu?(P(e)), label?(name(e)) } · goto: { tool, url } · snapshot: { tool, url, navItems }
+//   click: { tool, from(이전 주소), url(새 주소), menu?(P(e)), label?(name(e)) } · goto: { tool, url }
+//   navItems(메뉴 항목 목록)는 click·goto·back·snapshot 어느 결과에 와도 본 메뉴로 올린다
 export function observe(map, ev, { role = null, at = new Date().toISOString() } = {}) {
   const meta = { role, title: ev.title, at };
+  let changed = seeItems(map, ev.navItems, { role, at });
   if (ev.tool === 'goto' && ev.url) { addVia(map, screenKey(ev.url), ev.url, { kind: 'direct' }, meta); return true; }
   if (ev.tool === 'click' && ev.url && ev.from) {
     const a = screenKey(ev.from), b = screenKey(ev.url);
-    if (a === b) return false; // 그룹 펼치기·같은 화면 안의 클릭
+    if (a === b) return changed; // 그룹 펼치기·같은 화면 안의 클릭
     if (ev.menu?.length) addVia(map, b, ev.url, { kind: 'menu', menu: ev.menu }, meta);
     else addVia(map, b, ev.url, { kind: 'link', from: a, action: ev.label || '' }, meta);
     return true;
   }
-  if (ev.tool === 'snapshot' && ev.navItems?.length) {
-    let changed = false;
-    for (const it of ev.navItems) {
-      const k = it.menu.join(SEP);
-      const cur = map.seen[k];
-      const next = { menu: it.menu, href: it.href, screen: it.href ? screenKey(it.href) : undefined, group: it.group, last: at };
-      if (!cur || cur.href !== next.href || cur.group !== next.group) changed = true;
-      map.seen[k] = { ...cur, ...next, roles: { ...cur?.roles, ...(role ? { [role]: at } : {}) } };
-    }
-    return changed;
+  return changed;
+}
+
+// 본 메뉴(공식 3). 새 항목이거나 주소·그룹이 바뀌었을 때만 바뀐 것으로 본다(시각만 바뀌면 저장하지 않는다)
+function seeItems(map, items, { role, at }) {
+  let changed = false;
+  for (const it of items || []) {
+    const k = it.menu.join(SEP);
+    const cur = map.seen[k];
+    const next = { menu: it.menu, href: it.href, screen: it.href ? screenKey(it.href) : undefined, group: it.group, last: at };
+    if (!cur || cur.href !== next.href || cur.group !== next.group || (role && !cur.roles?.[role])) changed = true;
+    map.seen[k] = { ...cur, ...next, roles: { ...cur?.roles, ...(role ? { [role]: at } : {}) } };
   }
-  return false;
+  return changed;
 }
 
 const short = (key, base) => (base && key.startsWith(base) ? key.slice(base.length) || '/' : key);

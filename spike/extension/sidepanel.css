@@ -882,3 +882,23 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .vp-custom .btn { width: auto; margin-left: auto; }
 .vp-note { padding: 4px 8px 6px; margin-left: 0 !important; }
 .vp-btn.big::after { content: " ⤢"; }
+
+/* 메뉴 경로 지도 */
+.mi-ic.menumap { -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='5' cy='6' r='2'/%3E%3Ccircle cx='5' cy='18' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3Cpath d='M7 6h4a2 2 0 0 1 2 2v8a2 2 0 0 0 2 2M13 12h4M7 18h4'/%3E%3C/svg%3E") center / contain no-repeat; }
+.mm-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 10px; }
+.mm-prog { font-size: 13px; }
+.mm-bar { flex: 1 1 120px; height: 6px; border-radius: 3px; background: var(--bg-sunk); overflow: hidden; }
+.mm-bar > span { display: block; height: 100%; background: var(--accent); }
+.mm-filter { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 4px; }
+.mm-tree { font-size: 13px; }
+.mm-group > summary { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; font-weight: 600; }
+.mm-kids { padding-left: 14px; border-left: 1px solid var(--line); margin-left: 4px; }
+.mm-leaf { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 3px 0; color: var(--text-2); }
+.mm-leaf.on { color: var(--text); }
+.mm-dot { width: 14px; flex: none; color: var(--text-3); }
+.mm-leaf.on .mm-dot { color: var(--ok); }
+.mm-to { font-size: 11px; color: var(--text-3); overflow-wrap: anywhere; }
+.mm-meta { font-size: 11px; color: var(--text-3); font-weight: 400; }
+.mm-link { font-size: 12px; color: var(--text-2); padding: 2px 0 2px 22px; overflow-wrap: anywhere; }
+.mm-sec { margin: 14px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.mm-file { margin-top: 14px; }

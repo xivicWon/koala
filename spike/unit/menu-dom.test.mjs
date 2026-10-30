@@ -41,13 +41,30 @@ test('aria-controls 로 이어진 머리, 구역 제목은 바깥 목록에서�
   assert.deepEqual(await pathOf('#n'), ['관리', '게시판', '공지']);
 });
 
-test('items: 보이는 항목만, href·그룹 표시, 접힌 그룹 안은 빠진다', async () => {
+test('items: 숨은 하위 항목도 읽고, href·그룹 표시, 페이지 넘김은 메뉴가 아니다', async () => {
   await load(`<nav><ul>
     <li><button aria-expanded="false">통계</button><ul style="display:none"><li><a href="/stat/day">일별</a></li></ul></li>
-    <li><a href="/dash">대시보드</a></li><li><a href="#">빈 링크</a></li></ul></nav>`);
+    <li><a href="/dash">대시보드</a></li><li><a href="#">빈 링크</a></li></ul></nav>
+    <nav class="v-pagination" aria-label="pagination"><ul><li><button>1</button></li></ul></nav>`);
   const got = await items();
-  assert.deepEqual(got.map((x) => x.menu.join('›')), ['통계', '대시보드', '빈 링크']);
+  assert.deepEqual(got.map((x) => x.menu.join('›')), ['통계', '통계›일별', '대시보드', '빈 링크']);
   assert.equal(got[0].group, true);
-  assert.match(got[1].href, /\/dash$/);
-  assert.equal(got[2].href, undefined);
+  assert.equal(got[1].hidden, true);
+  assert.match(got[2].href, /\/dash$/);
+  assert.equal(got[3].href, undefined);
+});
+
+test('항목마다 nav- testid 가 붙은 메뉴(div 그룹 머리·배지·같은 이름의 그룹과 항목)', async () => {
+  await load(`<aside class="layout-vertical-nav"><div class="nav-top"><a href="/"><img alt="logo"></a></div><ul class="nav-items">
+    <li class="nav-link" data-testid="nav-link-dashboard"><a href="/dashboard"><span class="nav-item-title">대시보드</span></a></li>
+    <li class="nav-group"><div class="nav-group-label" data-testid="nav-group-approvals"><span class="nav-item-title">결재</span><span class="nav-item-badge">22</span></div>
+      <ul class="nav-group-children" style="display:none"><li class="nav-link" data-testid="nav-link-approvals-approval"><a href="/approvals/approval"><span class="nav-item-title">결재대기</span><span class="nav-item-badge">16</span></a></li></ul></li>
+    <li class="nav-group open"><div class="nav-group-label" data-testid="nav-group-compliance-management"><span class="nav-item-title">컴플라이언스</span></div>
+      <ul class="nav-group-children"><li class="nav-link" data-testid="nav-link-compliance"><a href="/compliance"><span class="nav-item-title">컴플라이언스</span></a></li></ul></li>
+  </ul></aside>`);
+  assert.deepEqual(await pathOf('[data-testid=nav-link-compliance] a'), ['컴플라이언스', '컴플라이언스']);
+  assert.deepEqual(await pathOf('[data-testid=nav-group-approvals]'), ['결재']);
+  const got = await items();
+  assert.deepEqual(got.map((x) => `${x.menu.join('›')}${x.group ? ' [G]' : ''}`),
+    ['결재 [G]', '컴플라이언스 [G]', '대시보드', '결재›결재대기', '컴플라이언스›컴플라이언스']);
 });

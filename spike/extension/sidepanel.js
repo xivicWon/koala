@@ -826,6 +826,7 @@ function renderSheet() {
   if (sheetMode === 'release') return renderReleaseSheet(body);
   if (sheetMode === 'guide') return renderGuideSheet(body);
   if (sheetMode === 'wip') return renderWipSheet(body);
+  if (sheetMode === 'menumap') return renderMenuMapSheet(body);
   if (sheetMode === 'feedback') return renderFeedbackSheet(body);
   if (sheetMode === 'confirm') {
     // Claude 설정의 '기록까지 비우기'에서 연다. 지울 것을 호스트 기준(세션·기록 수)으로 보여 주고 항상 확인한다
@@ -904,6 +905,8 @@ async function inPage(func, ...args) {
 }
 // 메뉴 위치 읽기 도우미(menu.js)를 페이지에 넣는다. 이미 있으면 그대로 둔다
 const ensureMenu = () => chrome.scripting.executeScript({ target: { tabId }, files: ['menu.js'] }).catch(() => {});
+// 지금 화면의 메뉴 항목 목록. 호스트가 메뉴 지도에만 쓰고 AI에게는 넘기지 않는다
+const navItems = async () => { await ensureMenu(); return inPage(() => window.__koalaMenu?.items() || []).catch(() => []); };
 async function overlay(fn, ...args) {
   const call = () => chrome.scripting.executeScript({
     target: { tabId },
@@ -1230,22 +1233,20 @@ async function execTool(name, a) {
       await chrome.tabs.update(tab.id, { url: a.url });
       await waitTabComplete();
       await waitIdle(navAt);
-      return { url: (await curTab()).url };
+      return { url: (await curTab()).url, navItems: await navItems() };
     }
     case 'back': {
       const navAt = Date.now();
       await cdp('Runtime.evaluate', { expression: 'history.back()' });
       await sleep(300); await waitTabComplete(); await waitIdle(navAt);
-      return { url: (await curTab()).url };
+      return { url: (await curTab()).url, navItems: await navItems() };
     }
     case 'viewport': return viewportFromAi(a);
     case 'tabs': return { tabs: await tabsForAi(), forAi: { tabs: (await tabsForAi()).map((t) => `${t.tab}${t.current ? '(작업 탭)' : ''} ${t.title} ${t.url}`) } };
     case 'use_tab': { const r = await useTabFromAi(a.tab); await ensureAttached(); return { ...r, forAi: { 작업탭: `${r.tab} ${r.title}` } }; }
     case 'snapshot': {
       const snap = await inPage(pageSnapshot);
-      await ensureMenu();
-      const navItems = await inPage(() => window.__koalaMenu?.items() || []); // 호스트가 메뉴 지도에만 쓴다
-      return { url: tab.url, title: tab.title, ...snap, navItems, forAi: { url: tab.url, elements: snap.elements.length, tables: snap.tables } };
+      return { url: tab.url, title: tab.title, ...snap, navItems: await navItems(), forAi: { url: tab.url, elements: snap.elements.length, tables: snap.tables } };
     }
     case 'screenshot': {
       // captureVisibleTab 은 보이는 탭만 찍는다. 작업 탭이 뒤에 있어도 그 탭을 찍도록 CDP로 찍는다
@@ -1311,7 +1312,7 @@ async function execTool(name, a) {
       await overlay('hide');
       const after = name === 'type' && !a.secret ? await inPage(pageResolve, a.locator, { anyVisibility: true }) : null;
       return { matched: t.matched, url: (await curTab()).url, selected, value: after?.value,
-        ...(name === 'click' ? { menu: t.menu, label: t.menu?.at(-1) || t.buttonText || t.text.slice(0, 40) || t.testid } : {}) };
+        ...(name === 'click' ? { menu: t.menu, label: t.menu?.at(-1) || t.buttonText || t.text.slice(0, 40) || t.testid, navItems: await navItems() } : {}) };
     }
     case 'press': {
       await overlay('banner', `키 입력: ${a.key}`);

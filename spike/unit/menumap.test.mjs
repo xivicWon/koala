@@ -72,3 +72,12 @@ test('저장하면 menu.json 과 사람용 menu-map.md 를 함께 쓰고, 깨진
   assert.deepEqual(loadMap(file), emptyMap());
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('클릭 결과에 온 메뉴 목록도 본 메뉴로 올린다(snapshot 없이 클릭만 해도 쌓인다)', () => {
+  const m = emptyMap();
+  const changed = observe(m, { tool: 'click', from: `${H}/dash`, url: `${H}/dash`, menu: ['통계'], navItems: [{ menu: ['통계'], group: true }, { menu: ['통계', '일별'], href: `${H}/stat/day` }] }, { role: 'ADMIN' });
+  assert.equal(changed, true);
+  assert.equal(m.seen['통계›일별'].screen, 'app.test/stat/day');
+  // 같은 목록이 다시 오면 저장할 만큼 바뀌지 않았다
+  assert.equal(observe(m, { tool: 'snapshot', url: `${H}/dash`, navItems: [{ menu: ['통계', '일별'], href: `${H}/stat/day` }] }, { role: 'ADMIN' }), false);
+});

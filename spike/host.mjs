@@ -807,7 +807,7 @@ function trackMenu(name, r) {
   const from = mapUrl;
   mapUrl = r.url;
   // 세트 도메인이 아닌 탭(승인하고 진행한 경우)은 지도에 넣지 않는다
-  if (!activeSet || !['click', 'goto', 'snapshot'].includes(name) || (domain !== 'default' && hostOf(r.url) !== domain)) return;
+  if (!activeSet || !['click', 'goto', 'back', 'snapshot'].includes(name) || (domain !== 'default' && hostOf(r.url) !== domain)) return;
   try {
     const file = menuMapFile();
     const map = menumap.loadMap(file);
@@ -1878,6 +1878,15 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
   }
   // 릴리즈 노트: 이 설치본의 CHANGELOG.md(설치한 버전까지의 변경 내용). 사이드패널 메뉴의 '릴리즈 노트 보기'
+  // 사이드패널의 메뉴 경로 지도 보기: 지금 세트의 지도(트리)
+  if (req.method === 'GET' && req.url === '/menu-map') {
+    res.setHeader('content-type', 'application/json');
+    if (!activeSet) return res.end(JSON.stringify({ set: null }));
+    let base = '';
+    try { base = new URL(profile?.target?.base_url).host; } catch {}
+    const file = menuMapFile();
+    return res.end(JSON.stringify({ set: activeSet, base, file: path.relative(dir, path.join(path.dirname(file), 'menu-map.md')), tree: menumap.buildTree(menumap.loadMap(file)) }));
+  }
   if (req.method === 'GET' && req.url === '/changelog') {
     res.setHeader('content-type', 'text/markdown; charset=utf-8');
     try { return res.end(fs.readFileSync(path.resolve(dir, '..', 'CHANGELOG.md'), 'utf8')); } catch { res.statusCode = 404; return res.end(''); }
