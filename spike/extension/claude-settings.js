@@ -32,7 +32,9 @@ function renderClaudeSheet(body) {
     ? `<pre class="cs-pre mono">${esc(file.content)}</pre>`
     : `<div class="cs-sec"><b>① koa 기본 규칙</b> <span class="pf-hint">--append-system-prompt</span><pre class="cs-pre mono">${esc(v.system)}</pre></div>
        <div class="cs-sec"><b>② 지식 (CLAUDE.md, 불러온 파일 펼침)</b> <span class="pf-hint">작업 폴더에서 자동으로 읽힘</span><pre class="cs-pre mono">${esc(v.claudeMdExpanded)}</pre></div>
-       <div class="cs-sec"><b>③ 프로필 (대상 서비스·계정·사이트 지식)</b> <span class="pf-hint">지시마다 덧붙임</span><pre class="cs-pre mono">${esc(v.profileContext || '(활성 프로필 없음)')}</pre></div>`;
+       <div class="cs-sec"><b>③ 프로필 (대상 서비스·계정·사이트 지식)</b> <span class="pf-hint">지시마다 덧붙임</span><pre class="cs-pre mono">${esc(v.profileContext || '(활성 프로필 없음)')}</pre></div>
+       <div class="cs-sec"><b>④ 메뉴 경로 (이 세트의 메뉴 경로 지도 요약)</b> <span class="pf-hint">지시·코드 생성마다 덧붙임</span><pre class="cs-pre mono">${esc(v.menuMap || '(아직 지나간 메뉴가 없습니다)')}</pre></div>
+       <div class="cs-sec"><b>⑤ 테스트 코드 지침 (Playwright 기본 · 실패 고치기)</b> <span class="pf-hint">테스트 코드 생성·추가 지시에만 덧붙임 · 참고: TestDino playwright-skill, Playwright 공식 healer 에이전트</span><pre class="cs-pre mono">${esc(v.codeGuide || '')}</pre></div>`;
   const busy = aiBusy;
   body.innerHTML = `<div class="cs">
     ${billingHtml(v, busy)}

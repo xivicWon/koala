@@ -1941,6 +1941,9 @@ const server = http.createServer(async (req, res) => {
           ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
         system: SYSTEM,
         profileContext: profileContext().trim(),
+        // 테스트 코드 생성·추가 지시에만 덧붙는 지침, 지시마다 덧붙는 메뉴 경로 요약
+        codeGuide: `${PW_BASICS}\n\n${FIX_GUIDE}`,
+        menuMap: menuMapContext().trim(),
         claude: claudeEnv,
         billing: { mode: billing, key: sdk.keyStatus() }, // 키 값은 보내지 않는다(있음·없음과 파일 위치만)
         recorded: steps.length, // '기록까지 비우기' 확인 창에 보여 줄 수행 기록 수
