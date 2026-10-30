@@ -22,6 +22,7 @@ import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { failDetail, createFixLog } from './fixlog.mjs';
 import * as menumap from './menumap.mjs';
+import * as rules from './rules.mjs';
 import { crawl as crawlSite } from './crawler.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 import * as sdk from './claude-sdk.mjs';
@@ -94,16 +95,17 @@ checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
 // AI 지시문 중 세트와 상관없는 일반 규칙은 prompts/ 의 파일에서 읽는다. Claude 설정에는 이 파일 경로를 보여 준다
 const PROMPTS = path.join(dir, 'prompts');
-const PROMPT_FILES = { system: 'system.md', playwright: 'playwright-basics.md', fix: 'fix-elimination.md', menuMap: 'menu-map.md' };
+const PROMPT_FILES = { system: 'system.md', rules: 'profile-rules.md', playwright: 'playwright-basics.md', fix: 'fix-elimination.md', menuMap: 'menu-map.md' };
 const prompt = (k) => fs.readFileSync(path.join(PROMPTS, PROMPT_FILES[k]), 'utf8').trim();
-const SYSTEM = prompt('system');
+const SYSTEM = `${prompt('system')}\n\n${prompt('rules')}`;
 const PW_BASICS = prompt('playwright');
 const FIX_GUIDE = prompt('fix');
 // 메뉴 경로: 첫 줄은 지시에 붙는 머리, 나머지는 형식(<…> 자리에 세트의 지도 요약이 들어간다)
 const MENU_MAP_HEAD = prompt('menuMap').split('\n')[0];
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order', 'tabs']);
 const TOOLS = ['run', 'snapshot', 'screenshot', 'tabs', 'use_tab', 'viewport', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
-  'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'];
+  'expect_visible', 'expect_text', 'expect_value', 'expect_count', 'expect_url', 'expect_focused', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests',
+  'read_rules', 'save_rule'];
 // 계획 모드: 로그인·검색 입력과 확인은 할 수 있지만, 데이터를 바꾸는 버튼 클릭과 Enter 제출은 확장이 차단한다.
 // 테스트 기록에는 남기지 않는다. 결과는 save_plan
 const PLAN_TOOLS = TOOLS;
@@ -486,7 +488,7 @@ async function runPlan(steps) {
       return { ok: false, error: '사용자가 중지했습니다' };
     }
     const { tool, args = {} } = plan[i];
-    const r = toolsFor().includes(tool) && !['run', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests'].includes(tool) ? await relay(tool, args)
+    const r = toolsFor().includes(tool) && !['run', 'save_tests', 'save_code', 'save_tags', 'add_tests', 'append_code', 'make_tests', 'read_rules', 'save_rule'].includes(tool) ? await relay(tool, args)
       : { ok: false, error: mode === 'plan' && TOOLS.includes(tool) ? `계획 모드에서는 ${tool}을 쓸 수 없습니다(둘러보기만 가능)` : `알 수 없는 도구: ${tool}` };
     if (!r.ok) {
       send({ type: 'plan_end', skipped: plan.length - i - 1 });
@@ -905,6 +907,37 @@ async function crawlMenus(rows) {
   send({ type: 'menu_map_changed' });
 }
 
+// ---------------- 프로필 규칙 ----------------
+// 세트 폴더 rules/*.md. 지시할 때마다 새로 읽어 붙인다(코드 지시는 전문, 수행 지시는 목록). 명세는 prompts/profile-rules.md
+const rulesDir = (id = activeSet) => path.join(setPaths(id).dir, 'rules');
+function rulesContext(full) {
+  if (!activeSet) return '';
+  if (!full) {
+    const idx = rules.rulesIndex(rulesDir());
+    return idx ? `\n\n[프로필 규칙 목록] 필요한 파일은 read_rules 로 읽는다\n${idx}` : '';
+  }
+  const r = rules.rulesText(rulesDir());
+  if (r.cut) log('err', `프로필 규칙이 ${rules.MAX_TOTAL}자를 넘어 일부만 붙였습니다(AI는 나머지를 read_rules 로 읽습니다)`);
+  return r.text ? `\n\n[프로필 규칙] 이 사이트에서 테스트를 쓸 때 지킨다\n${r.text}` : '';
+}
+function readRulesTool(args) {
+  if (!activeSet) return { ok: false, error: '세트가 정해지지 않았습니다' };
+  const all = rules.listRules(rulesDir());
+  if (!args?.file) return { ok: true, result: { files: all.map(({ name, title, size }) => ({ name, title, size })) } };
+  const want = path.basename(rules.ruleFile(rulesDir(), args.file));
+  const f = all.find((r) => r.name === want);
+  return f ? { ok: true, result: { name: f.name, text: f.text } } : { ok: false, error: `규칙 파일이 없습니다: ${want} (있는 것: ${all.map((r) => r.name).join(', ') || '없음'})` };
+}
+function saveRuleTool(args) {
+  if (!activeSet) return { ok: false, error: '세트가 정해지지 않았습니다' };
+  try {
+    const r = rules.saveRule(rulesDir(), args?.file, args?.content);
+    log('sys', `프로필 규칙 ${r.existed ? '고침' : '추가'}: ${r.file}`, 'ai');
+    send({ type: 'rules_changed' });
+    return { ok: true, result: r };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // AI에게 줄 메뉴 지도 요약. 지도가 비었으면 빈 문자열
 function menuMapContext() {
   if (!activeSet) return '';
@@ -1269,7 +1302,7 @@ function writeCode(s) {
     tags.inherited(doc, c).length ? `\n  TDD describe에 물려줄 태그: ${tags.inherited(doc, c).join(' ')}` : ''}`).join('\n');
   const tc = s.cases.map((c) => `${c.id} (${c.scenario}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}${tagLine((c.tags || []).filter((t) => !inh(c).includes(t)), c.issue)}`).join('\n');
   fixLog.reset(activeSet);
-  instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(activeSet)} (정리 도우미는 '@support/…' 로 불러온다)\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}${menuMapContext()}`, { job: 'code' });
+  instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(activeSet)} (정리 도우미는 '@support/…' 로 불러온다)\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}${menuMapContext()}${rulesContext(true)}`, { job: 'code' });
 }
 
 // 코드에 들어가야 하는 id와 각 테스트가 가져야 하는 태그(케이스는 시나리오에서 물려받은 것 포함)
@@ -1345,7 +1378,7 @@ function writeAppend(s) {
     return `${c.id} (${c.scenario} — ${scById.get(c.scenario)?.title || ''}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}\n  TDD describe 물려줄 태그: ${inh.join(' ') || '(없음)'}\n  케이스 태그: ${(c.tags || []).filter((t) => !inh.includes(t)).join(' ') || '(없음)'}${c.issue ? `\n  이슈: ${c.issue}` : ''}`;
   }).join('\n');
   fixLog.reset(activeSet);
-  instruct(`${APPEND_PROMPT}\n\n${codeOutline(code)}\n\n[새 BDD 시나리오]\n${sc || '(없음)'}\n\n[새 TDD 케이스]\n${tc || '(없음)'}${menuMapContext()}`, { job: 'append' });
+  instruct(`${APPEND_PROMPT}\n\n${codeOutline(code)}\n\n[새 BDD 시나리오]\n${sc || '(없음)'}\n\n[새 TDD 케이스]\n${tc || '(없음)'}${menuMapContext()}${rulesContext(true)}`, { job: 'append' });
 }
 
 async function appendCode(args) {
@@ -1736,6 +1769,7 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
   if (actor) text += `\n지금 브라우저에 로그인한 역할(koa가 마지막으로 로그인한 계정): ${actor.role || '-'} ${roleName(actor.role)} · $${actor.key}_USER`;
   text += rolePrompt(roles);
   text += menuMapContext();
+  text += rulesContext(false);
   let known = [];
   try { known = curScreen ? await graph.knownPathsFrom(curScreen) : []; } catch (e) { graphError(e); }
   // 경로 모드(탐색/재생)는 계획/작성 모드(mode)와 별개다
@@ -1945,7 +1979,8 @@ const server = http.createServer(async (req, res) => {
           ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
         // AI에게 전달되는 내용은 본문 대신 파일 경로만 준다. 프로필은 세트 화면(GET /profile/context)
         prompts: [
-          ['기본 규칙', [path.join(PROMPTS, PROMPT_FILES.system)]],
+          ['기본 규칙', [path.join(PROMPTS, PROMPT_FILES.system), path.join(PROMPTS, PROMPT_FILES.rules)]],
+          ['프로필 규칙 폴더', [rulesDir()]],
           ['지식', [path.join(d.dir, 'CLAUDE.md')]],
           ['메뉴 경로 형식', [path.join(PROMPTS, PROMPT_FILES.menuMap)]],
           ['테스트 코드 지침', [path.join(PROMPTS, PROMPT_FILES.playwright), path.join(PROMPTS, PROMPT_FILES.fix)]],
@@ -1957,6 +1992,12 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
   }
   // 릴리즈 노트: 이 설치본의 CHANGELOG.md(설치한 버전까지의 변경 내용). 사이드패널 메뉴의 '릴리즈 노트 보기'
+  // 세트 화면의 '프로필 규칙' 카드: 파일 목록과 내용
+  if (req.method === 'GET' && req.url === '/rules') {
+    res.setHeader('content-type', 'application/json');
+    if (!activeSet) return res.end(JSON.stringify({ set: null }));
+    return res.end(JSON.stringify({ set: activeSet, dir: rulesDir(), files: rules.listRules(rulesDir()) }));
+  }
   // 세트 화면의 'AI에게 전달되는 프로필': 지시마다 덧붙는 대상 서비스·역할과 계정(이름만)·사이트 지식
   if (req.method === 'GET' && req.url === '/profile/context') {
     res.setHeader('content-type', 'application/json');
@@ -2004,6 +2045,8 @@ const server = http.createServer(async (req, res) => {
       : name === 'add_tests' ? saveAdded(args)
       : name === 'append_code' ? await appendCode(args)
       : name === 'make_tests' ? queueDerive(args)
+      : name === 'read_rules' ? readRulesTool(args)
+      : name === 'save_rule' ? saveRuleTool(args)
       : await relay(name, args);
     if (timing) timing.tool += Date.now() - t;
     res.end(JSON.stringify(out));
@@ -2034,7 +2077,7 @@ const server = http.createServer(async (req, res) => {
 // 세트에 묶인 패널 메시지: 옮기기 전에는 거절한다. SET_PICK 은 세트를 고르기 전에도 받는다
 const SET_PICK = new Set(['set', 'set_receive', 'set_create_local', 'set_update_local', 'set_delete']);
 const SET_SCOPED = new Set([...SET_PICK, 'instruct', 'tests_save', 'tests_clear', 'tests_delete', 'run_code', 'write_code', 'retag_code', 'list_code', 'suggest_tags',
-  'add_tests', 'derive', 'reinforce', 'publish', 'reset', 'domain_override', 'open_logs']);
+  'add_tests', 'derive', 'reinforce', 'publish', 'reset', 'domain_override', 'open_logs', 'open_rules']);
 // 연결이 여럿이어도(패널 다시 열기, 점검용 접속) 가장 최근에 열린 것을 패널로 쓰고, 그것이 끊기면 남은 연결로 돌아간다
 const sockets = new Set();
 // 포트 오류는 http 서버의 'error' 처리(아래 listen)가 맡는다. WebSocketServer 도 같은 오류를 다시 내므로 여기서 받아 둔다
@@ -2074,6 +2117,11 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       if (!blocked) log('err', '다시 진행할 지시가 없습니다. 지시를 다시 입력하세요');
       else if (job || codeRunning) log('err', '다른 작업이 진행 중입니다. 끝난 뒤 다시 누르세요');
       else { const b = blocked; instruct(b.text, { ...b.opts, force: true }); }
+    }
+    if (m.type === 'open_rules') {
+      fs.mkdirSync(rulesDir(), { recursive: true });
+      const [cmd, ...cmdArgs] = process.platform === 'darwin' ? ['open', rulesDir()] : WIN ? ['explorer', rulesDir()] : ['xdg-open', rulesDir()];
+      spawn(cmd, cmdArgs, { detached: true, stdio: 'ignore' }).unref();
     }
     if (m.type === 'open_logs') {
       fs.mkdirSync(logsDir(), { recursive: true });

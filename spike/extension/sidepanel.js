@@ -76,6 +76,7 @@ function connect() {
     if (m.type === 'log') msg(m.kind, m.text, m.by);
     if (m.type === 'busy') setBusy(m.busy);
     if (m.type === 'menu_map_changed' && sheetMode === 'menumap') openMenuMap();
+    if (m.type === 'rules_changed' && sheetMode === 'set') loadSetRules();
     if (m.type === 'env') { claudeEnv = m.claude; renderEnvAlert(); }
     if (m.type === 'job') { onJob(m); if (m.done) flushSuite(); }
     if (m.type === 'update') onUpdate(m);

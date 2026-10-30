@@ -162,6 +162,16 @@ tool('append_code', `[테스트 추가] 새 테스트만 담은 코드 조각을
   note: z.string().optional().describe('실패를 고쳐 다시 저장할 때: 테스트마다 한 줄 "<테스트 id>: <분류> · <가설> · <바꾼 것>". 다음 실행 결과의 tries 로 돌아온다'),
 });
 
+// 프로필 규칙(세트마다 rules/*.md): 이 사이트에서 테스트를 쓸 때 지킬 것
+tool('read_rules', '프로필 규칙을 읽는다. file 없이 부르면 파일 목록(이름·첫 줄), file 을 주면 그 파일 전문', {
+  file: z.string().optional().describe('파일 이름(예: select). 없으면 목록'),
+});
+tool('save_rule', `프로필 규칙 파일 하나를 통째로 쓴다(있으면 바꾼다. 먼저 read_rules 로 읽고 고친다). 이 사이트에서 직접 확인한 조작 방식만 적는다:
+무엇을(요소·화면) · 어떻게(Playwright 코드 한두 줄) · 근거(확인한 화면). 고정 대기·검증 빼기·타임아웃 늘리기는 규칙으로 적지 않는다`, {
+  file: z.string().describe('주제별 파일 이름: 영문 소문자·숫자·하이픈(예: select, auto-complete, date-picker, table, login, loading)'),
+  content: z.string().describe('파일 전체 내용(markdown). 첫 줄은 제목'),
+});
+
 // 읽기
 tool('snapshot', '현재 화면의 조작 가능한 요소(testid·글자·라벨·값)와 표(헤더·행 수·앞쪽 행)', {});
 tool('tabs', '관리 탭 목록(#1, #2 … 라벨·제목·URL·지금 작업 탭인지). 사용자가 "#2 탭"처럼 말하면 이 라벨이다', {});

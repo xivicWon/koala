@@ -21,6 +21,31 @@ document.getElementById('sheet-body').addEventListener('toggle', async (e) => {
   if (sheetMode === 'set') renderSheet();
 }, true);
 
+// '프로필 규칙' 카드: 세트 화면을 열거나 AI가 규칙을 저장하면 호스트에서 목록을 다시 받는다
+let setRules = { set: null, dir: '', files: null, open: {} }; // open: 펼친 파일 이름
+async function loadSetRules() {
+  try {
+    const j = await (await fetch('http://127.0.0.1:8765/rules')).json();
+    setRules = { ...setRules, set: j.set, dir: j.dir || '', files: j.files || [] };
+  } catch { setRules = { ...setRules, set: activeSet, files: [], error: '호스트와 연결되어 있지 않아 불러오지 못했습니다' }; }
+  if (sheetMode === 'set') renderSheet();
+}
+// 파일 내용 펼침 상태는 다시 그려도 유지한다(닫힘 ↔ 펼침이 바뀔 때만 기록)
+document.getElementById('sheet-body').addEventListener('toggle', (e) => {
+  const f = sheetMode === 'set' && e.target.matches?.('details.set-rule') && e.target.dataset.rule;
+  if (f && !!setRules.open[f] !== e.target.open) setRules.open[f] = e.target.open;
+}, true);
+function rulesCardBody() {
+  if (setRules.set !== activeSet || setRules.files === null) return '<div class="pf-hint">불러오는 중…</div>';
+  const files = setRules.files;
+  return `${setRules.error ? `<div class="pf-alert">${esc(setRules.error)}</div>` : ''}
+    <code class="cs-code mono set-rules-dir">${esc(setRules.dir)}</code>
+    <div class="pf-actions set-map"><button type="button" class="btn sm" data-set-act="rules-open">폴더 열기</button><button type="button" class="btn sm" data-set-act="rules-reload">새로고침</button></div>
+    ${files.length ? files.map((f) => `<details class="set-rule" data-rule="${esc(f.name)}" ${setRules.open[f.name] ? 'open' : ''}><summary><span class="mono">${esc(f.name)}</span> <span class="pf-hint">${esc(f.title)}</span></summary>
+      <pre class="pf-ro pf-prompt-ro mono">${esc(f.text)}</pre></details>`).join('')
+    : '<div class="pf-hint set-map-d">아직 규칙이 없습니다. 채팅으로 "이건 규칙으로 남겨"라고 하거나, 테스트를 고치다 사이트 고유 동작이 확인되면 AI가 남깁니다. 폴더에 .md 파일을 직접 넣어도 됩니다.</div>'}`;
+}
+
 // 세트를 바꾸거나 받을 수 없는 이유(없으면 '')
 function setBlockReason() {
   if (migrationNeeded) return '기존 데이터를 세트로 옮긴 뒤 쓸 수 있습니다';
@@ -139,6 +164,8 @@ function setDetail(s, why) {
         <input class="pf-input" placeholder="비밀번호" type="password" data-acc="${esc(a.key)}" data-k="pass" value="${esc(mine.pass ?? '')}" autocomplete="new-password">
       </div></div>`;
     }).join('')}`)}
+
+    ${s.id === activeSet ? setCard('프로필 규칙', '이 PC 작업 데이터 · 세트 폴더(rules/) · AI가 남기고 지시마다 읽음', rulesCardBody()) : ''}
 
     ${s.id === activeSet ? setCard('AI에게 전달되는 프로필', '세트 정의 + 내 설정으로 만듦 · 지시마다 덧붙음', `
     <details class="set-ai" ${setAi.open ? 'open' : ''}><summary>펼쳐서 보기 <span class="pf-hint">대상 서비스 · 역할과 계정(값은 이름으로만) · 사이트 지식</span></summary>
@@ -308,6 +335,8 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
     return renderSheet();
   }
   if (act === 'map-open') return openMenuMap();
+  if (act === 'rules-open') return ws.send(JSON.stringify({ type: 'open_rules' }));
+  if (act === 'rules-reload') { setRules.files = null; renderSheet(); return loadSetRules(); }
   if (act === 'crawl' || act === 'crawl-rows') {
     if (why) return msg('err', why);
     closeSheet();
@@ -351,4 +380,4 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (act === 'acc-reset') { const p = prefOf(activeSet); const accounts = { ...p.accounts }; delete accounts[btn.dataset.accKey]; setPrefs[activeSet] = { ...p, accounts }; }
   if (act === 'pref-reset' || act === 'acc-reset') { saveSetPrefs(); sendSetToHost(); renderRoleScope(); renderSheet(); }
 });
-document.getElementById('set-chip').onclick = () => { setStep = null; setFormError = ''; openSheet('set'); };
+document.getElementById('set-chip').onclick = () => { setStep = null; setFormError = ''; openSheet('set'); loadSetRules(); };

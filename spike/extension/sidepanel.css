@@ -963,3 +963,10 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .by-script { color: #0b7a8c; border-color: color-mix(in srgb, #0b7a8c 45%, transparent); background: color-mix(in srgb, #0b7a8c 10%, transparent); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .by-ai { color: #b59cff; } :root:not([data-theme="light"]) .by-script { color: #5fd0e0; } }
 :root[data-theme="dark"] .by-ai { color: #b59cff; } :root[data-theme="dark"] .by-script { color: #5fd0e0; }
+
+/* 세트 화면: 프로필 규칙 카드 */
+.set-rules-dir { margin-top: 10px; }
+.set-rule { margin-top: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.set-rule > summary { padding: 6px 9px; cursor: pointer; font-size: 12px; }
+.set-rule > summary .pf-hint { margin-left: 4px; }
+.set-rule > pre { margin: 0 8px 8px; }
