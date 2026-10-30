@@ -54,12 +54,15 @@ function renderSetSheet(body) {
     ${migrationNeeded ? `<div class="pf-alert">${esc(migrationText())}</div>` : ''}
     ${!hostUp ? `<div class="pf-alert">호스트가 꺼져 있습니다. ${setList.length ? '마지막으로 받은 목록을 보여 줍니다. ' : ''}받기·바꾸기는 호스트에 연결되면 할 수 있습니다</div>` : ''}
     ${setWipSync ? wipSign('sync', { compact: true }) : ''}
-    <div class="set-group-h"><b>서버 세트</b><span class="pf-hint">서버에서 받아 씁니다</span></div>
-    ${server.map((x) => setRow(x, why)).join('') || '<div class="pf-hint set-none">서버 세트가 없습니다</div>'}
-    <div class="set-group-h"><b>이 PC 전용 세트</b><span class="pf-hint">서버에 없는 사이트를 시험할 때</span><span class="grow"></span>
-      <button type="button" class="btn sm" data-set-act="new-open" ${migrationNeeded || !hostUp ? 'disabled' : ''}>+ 새 세트</button></div>
-    ${local.map((x) => setRow(x, why)).join('') || (setStep === 'new' ? '' : '<div class="pf-hint set-none">없습니다</div>')}
-    ${setStep === 'new' ? setForm('new') : ''}
+    <section class="set-list" aria-label="세트 목록">
+      <div class="set-zone-h"><b>세트 목록</b><span class="pf-hint">하나를 고르면 아래에 그 세트의 정의·설정이 보입니다</span></div>
+      <div class="set-group-h"><b>서버 세트</b><span class="pf-hint">서버에서 받아 씁니다</span></div>
+      ${server.map((x) => setRow(x, why)).join('') || '<div class="pf-hint set-none">서버 세트가 없습니다</div>'}
+      <div class="set-group-h"><b>이 PC 전용 세트</b><span class="pf-hint">서버에 없는 사이트를 시험할 때</span><span class="grow"></span>
+        <button type="button" class="btn sm" data-set-act="new-open" ${migrationNeeded || !hostUp ? 'disabled' : ''}>+ 새 세트</button></div>
+      ${local.map((x) => setRow(x, why)).join('') || (setStep === 'new' ? '' : '<div class="pf-hint set-none">없습니다</div>')}
+      ${setStep === 'new' ? setForm('new') : ''}
+    </section>
     ${s ? setDetail(s, why) : `<div class="none">${setList.length ? '세트를 고르세요' : hostUp ? '받을 수 있는 세트가 없습니다' : '호스트에 연결되면 세트 목록을 불러옵니다'}</div>`}
   </div>`;
 }
@@ -67,13 +70,17 @@ function renderSetSheet(body) {
 const roBox = (v, empty = '없음') => `<div class="pf-ro mono">${v ? esc(v) : `<span class="pf-hint">${empty}</span>`}</div>`;
 const refList = (refs, ids) => (refs?.length ? refs : ids || []);
 
-// 지금 세트의 상세: 받은 정의(읽기 전용) · 새 판 · 내 설정
+// 카드 하나: 제목 + 이 정보가 어디서 오고 어디에 저장되는지(경계)
+const setCard = (title, scope, body) => `<section class="set-card"><header class="set-card-h"><b>${title}</b><span class="set-scope">${scope}</span></header><div class="set-card-b">${body}</div></section>`;
+
+// 고른 세트: 머리(이름·판·고치기) → 카드 — 세트 정의(서버에서 받음) · 내 설정(이 확장) · 메뉴 경로 지도(이 PC 작업 데이터)
 function setDetail(s, why) {
   const local = s.source === 'local';
   const pref = prefOf(s.id);
   if (local && setStep === 'edit') return `<div class="set-detail">${setForm('edit', s, why)}</div>`;
   const roles = s.roles || [];
   return `<div class="set-detail">
+    <div class="set-detail-k">${s.id === activeSet ? '지금 세트' : '고른 세트'}</div>
     <div class="set-detail-h"><b>${esc(s.name)}</b><span class="pf-status ${s.update ? 'warn' : 'ok'}">${local ? '이 PC 전용' : `서버 v${esc(s.version)}`}</span><span class="grow"></span>
       ${local ? `<button type="button" class="btn sm" data-set-act="edit-open" ${why ? 'disabled' : ''} title="${esc(why)}">고치기</button><button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why)}">지우기</button>` : ''}</div>
     ${s.update ? `<div class="set-update"><div><b>새 판 v${esc(s.update.to)}</b> <span class="pf-hint">지금 v${esc(s.update.from)} · 받기를 눌러야 바뀝니다</span></div>
@@ -82,7 +89,7 @@ function setDetail(s, why) {
     ${setStep === 'delete' && local ? `<div class="pf-confirm">이 PC 전용 세트 "${esc(s.name)}"를 지울까요? 이 세트의 테스트 목록·코드·수행 기록·로그가 모두 지워집니다.
       <div class="pf-actions"><button type="button" class="danger sm" data-set-act="delete-yes">지우기</button><button type="button" class="btn sm" data-set-act="delete-no">취소</button></div></div>` : ''}
     ${!s.received ? `<div class="pf-alert">아직 받지 않은 세트입니다. 목록에서 받기를 누르면 정의를 받아 쓸 수 있습니다</div></div>` : `
-    <div class="set-sub"><b>${local ? '세트 정의' : '받은 정의'}</b><span class="pf-hint">${local ? '이 PC에서만 씁니다 · 고치기로 바꿉니다' : '읽기 전용 · 서버에서 바꿉니다'}</span></div>
+    ${setCard('세트 정의', local ? '이 PC에서 만듦 · 고치기로 바꿉니다' : '서버에서 받음 · 읽기 전용', `
     <label class="pf-label">대상 주소 <span class="pf-hint">대상 탭이 이 도메인(${esc(domainOf(s))})이 아니면 실행 전에 묻습니다</span></label>
     ${roBox(s.base_url)}
     <label class="pf-label">배포 서버 <span class="pf-hint">테스트 목록의 서버 전송이 보내는 곳</span></label>
@@ -94,15 +101,9 @@ function setDetail(s, why) {
     <label class="pf-label">태그와 버전</label>
     <div class="set-chips">${refList(s.refs?.tags, s.tags).map((x) => `<span class="tag mono">${esc(x)}</span>`).join('') || '<span class="pf-hint">없음</span>'}</div>
     ${s.prompt ? `<details class="case-d set-prompt"><summary>사이트 지식 (AI에게 함께 전달)</summary><pre class="pf-ro pf-prompt-ro mono">${esc(s.prompt)}</pre></details>` : ''}
-    <div class="pf-hint set-when">${local ? '만든' : '받은'} 시각 ${s.received_at ? esc(new Date(s.received_at).toLocaleString()) : '-'}${s.tests ? ` · 테스트 BDD ${s.tests.scenarios} · TDD ${s.tests.cases}` : ''}</div>
+    <div class="pf-hint set-when">${local ? '만든' : '받은'} 시각 ${s.received_at ? esc(new Date(s.received_at).toLocaleString()) : '-'}${s.tests ? ` · 테스트 BDD ${s.tests.scenarios} · TDD ${s.tests.cases}` : ''}</div>`)}
 
-    ${s.id === activeSet ? `<div class="set-sub"><b>메뉴 경로 지도</b><span class="pf-hint">이 PC에서 이 세트로 지나간 메뉴와 화면 · 세트 폴더(map/)에 남습니다</span></div>
-    <div class="pf-actions set-map"><button type="button" class="btn sm" data-set-act="map-open">지도 보기</button>
-      <button type="button" class="btn sm" data-set-act="crawl" ${why ? 'disabled' : ''} title="${esc(why || 'AI 없이 작업 탭에서 보이는 메뉴를 모두 눌러 지도를 채웁니다')}">메뉴 전체 돌기</button>
-      <button type="button" class="btn sm" data-set-act="crawl-rows" ${why ? 'disabled' : ''} title="${esc(why || '메뉴마다 목록의 첫 행을 눌러 상세 화면이 어떻게 열리는지도 봅니다')}">목록 상세까지 돌기</button></div>
-    <div class="pf-hint">로그인한 작업 탭에서 시작합니다. AI를 쓰지 않고, 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다. 멈추면 다시 눌러 이어갑니다.</div>` : ''}
-
-    <div class="set-sub"><b>내 설정</b><span class="pf-hint">이 확장에만 저장되고, 세트를 고를 때 이 PC의 호스트로만 보냅니다</span></div>
+    ${setCard('내 설정', '이 확장에만 저장 · 고를 때 이 PC 호스트로만 보냄', `
     <label class="pf-label">시작 URL ${pref.start_url ? '<span class="tag ok">내 설정</span>' : '<span class="tag">세트 값</span>'}
       <span class="pf-hint">새 수행 기록은 이 주소에서 출발합니다. 비우면 ${s.start_url ? '세트 값' : '지금 탭 주소'}</span></label>
     <div class="pf-pref"><input class="pf-input mono" data-pref="start_url" placeholder="${esc(s.start_url || (s.base_url || '').replace(/\/$/, '') + (s.login_path || '/'))}" value="${esc(pref.start_url ?? '')}">
@@ -122,7 +123,13 @@ function setDetail(s, why) {
         <input class="pf-input" placeholder="${r.has_default ? '서버 기본 계정 사용' : '아이디'}" data-acc="${esc(a.key)}" data-k="user" value="${esc(mine.user ?? '')}" autocomplete="off">
         <input class="pf-input" placeholder="비밀번호" type="password" data-acc="${esc(a.key)}" data-k="pass" value="${esc(mine.pass ?? '')}" autocomplete="new-password">
       </div></div>`;
-    }).join('')}
+    }).join('')}`)}
+
+    ${s.id === activeSet ? setCard('메뉴 경로 지도', '이 PC 작업 데이터 · 세트 폴더(map/)', `
+    <div class="pf-actions set-map"><button type="button" class="btn sm" data-set-act="map-open">지도 보기</button>
+      <button type="button" class="btn sm" data-set-act="crawl" ${why ? 'disabled' : ''} title="${esc(why || 'AI 없이 작업 탭에서 보이는 메뉴를 모두 눌러 지도를 채웁니다')}">메뉴 전체 돌기</button>
+      <button type="button" class="btn sm" data-set-act="crawl-rows" ${why ? 'disabled' : ''} title="${esc(why || '메뉴마다 목록의 첫 행을 눌러 상세 화면이 어떻게 열리는지도 봅니다')}">목록 상세까지 돌기</button></div>
+    <div class="pf-hint set-map-d">지나간 메뉴와 화면을 쌓습니다. 돌기는 AI 없이 로그인한 작업 탭에서 돌고, 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다.</div>`) : ''}
   </div>`}`;
 }
 

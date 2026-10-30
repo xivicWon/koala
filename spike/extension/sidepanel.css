@@ -698,9 +698,12 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .rel-link { justify-self: center; font-size: 12px; color: var(--text-2); text-decoration: none; padding: 4px 0; }
 .rel-link:hover { color: var(--run); text-decoration: underline; }
 
-/* 세트 시트: 목록 · 상세(받은 정의 · 내 설정) */
-.set-group-h { display: flex; align-items: baseline; gap: 4px; margin: 14px 0 6px; font-size: 12px; }
-.set-group-h:first-child { margin-top: 2px; }
+/* 세트 시트: 세트 목록(회색 영역) · 고른 세트(머리 + 카드: 세트 정의 · 내 설정 · 메뉴 경로 지도) */
+.set-list { padding: 10px 12px 8px; border-radius: 12px; background: var(--bg-sunk); }
+.set-zone-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px; font-size: 13px; }
+.set-zone-h .pf-hint { margin-left: 6px; }
+.set-group-h { display: flex; align-items: baseline; gap: 4px; margin: 12px 0 6px; font-size: 11.5px; color: var(--text-2); }
+.set-group-h b { font-weight: 600; }
 .set-group-h .btn { align-self: center; }
 .set-none { margin: 0 0 4px; }
 .set-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin-bottom: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
@@ -711,15 +714,23 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .set-row-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 12.5px; }
 .set-row-meta { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 10.5px; }
 .set-row-st { flex: none; display: flex; align-items: center; gap: 4px; }
-.set-detail { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-.set-detail-h { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+.set-detail { margin-top: 18px; }
+.set-detail-k { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .02em; }
+.set-detail-h { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 2px; font-size: 16px; }
 .set-detail-h b { min-width: 0; overflow-wrap: anywhere; }
 .set-update { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: var(--run-soft); color: var(--text); font-size: 12px; }
 .set-update b { color: var(--run); }
 .set-update ul { margin: 4px 0 0; padding-left: 18px; }
 .set-update .pf-hint { margin-left: 4px; }
-.set-sub { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px; margin: 16px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
-.set-sub .pf-hint { margin-left: 6px; }
+.set-card { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); overflow: hidden; }
+.set-card-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; padding: 8px 12px; background: var(--bg-soft); border-bottom: 1px solid var(--line); font-size: 13px; }
+.set-scope { font-size: 11px; color: var(--text-3); }
+.set-card-b { padding: 2px 12px 12px; }
+.set-card-b > .pf-label:first-child { margin-top: 10px; }
+.set-card-b > .set-map { margin-top: 10px; }
+.set-map-d { margin: 6px 0 0; }
+/* 받은 값(읽기 전용)은 입력칸처럼 보이지 않게: 점선 테두리 */
+.set-card .pf-ro { background: none; border: 1px dashed var(--line); }
 .set-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .set-chips .tag.mono { font-size: 10.5px; }
 .set-prompt { margin-top: 12px; }
