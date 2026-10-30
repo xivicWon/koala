@@ -826,7 +826,9 @@ async function crawlMenus(rows) {
   send({ type: 'busy', busy: true });
   // 프로필 기준: 세트의 시작 URL(내 설정이 있으면 그것)에서 출발하고, 로그인 화면이면 기본 역할 계정으로 로그인한다
   const t = profile?.target || {};
-  const startUrl = [t.start_url, t.base_url].find((u) => u && (domain === 'default' || hostOf(u) === domain)) || '';
+  // 세트 화면과 같은 규칙: 시작 URL, 없으면 대상 주소 + 로그인 경로, 그것도 없으면 대상 주소
+  const loginUrl = t.base_url && t.login_path ? `${t.base_url.replace(/\/$/, '')}${t.login_path}` : '';
+  const startUrl = [t.start_url, loginUrl, t.base_url].find((u) => u && (domain === 'default' || hostOf(u) === domain)) || '';
   const role = defaultRole();
   const acc = accountFor(role);
   const canLogin = !!(acc && secretValue(`${acc.key}_USER`) && secretValue(`${acc.key}_PASS`));

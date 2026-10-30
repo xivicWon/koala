@@ -116,9 +116,27 @@ test('작업 탭을 읽지 못하거나 메뉴가 없으면 아무것도 누르�
   const act = async (tool, args) => { clicks.push(args); return { ok: true, result: {} }; };
   const bad = await crawl({ act, read: async () => ({ error: '작업 탭(chrome://extensions/)이 세트 사이트(a.test)가 아닙니다', items: [] }) });
   assert.deepEqual([bad.stopped, bad.why, bad.visited.length], ['tab', '작업 탭(chrome://extensions/)이 세트 사이트(a.test)가 아닙니다', 0]);
-  const none = await crawl({ act, read: async () => ({ url: 'https://a.test/', items: [] }) });
+  let reads = 0;
+  const none = await crawl({ act, read: async () => { reads += 1; return { url: 'https://a.test/', items: [] }; }, wait: async () => {} });
   assert.equal(none.stopped, 'nomenu');
+  assert.equal(reads, 11); // 처음 + 0.5초씩 10번 다시 읽고 판정
   assert.equal(clicks.length, 0);
+});
+
+test('이동 직후 화면이 늦게 그려지면(스크립트가 로그인 화면으로 넘김) 기다렸다가 로그인하고 돈다', async () => {
+  const s = site();
+  let reads = 0;
+  let loggedIn = false;
+  const read = async () => {
+    reads += 1;
+    if (reads < 3) return { url: 'https://app.test/', items: [] }; // 아직 빈 화면
+    if (!loggedIn) return { url: 'https://app.test/login', items: [], password: true };
+    return s.read();
+  };
+  const r = await crawl({ act: s.act, read, login: async () => { loggedIn = true; return true; }, wait: async () => {} });
+  assert.equal(r.stopped, null);
+  assert.equal(r.logins, 1);
+  assert.equal(r.visited.length, 4);
 });
 
 test('leavesOf: 그룹 머리·하위가 있는 항목은 잎이 아니다', () => {

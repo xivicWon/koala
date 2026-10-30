@@ -23,12 +23,16 @@ export async function crawl({ act, read, login, relogins = 2, done = new Set(), 
   const out = { visited: [], failed: [], skipped: [], details: [], noDetail: [], stopped: null, logins: 0 };
   let s = await read();
   const refresh = async () => { s = await read(); return s; };
-  // 비밀번호 입력란이 보이면 로그인해 본다. 못 하면 false
+  // 화면이 준비될 때까지 다시 읽는다(로드가 끝난 뒤 스크립트가 로그인 화면·첫 화면으로 넘기는 사이트): 0.5초씩 최대 5초
+  const settle = async (ready) => { for (let i = 0; i < 10 && !s.error && !ready(); i++) { await wait(500); await refresh(); } };
+  await settle(() => s.password || s.items.length);
+  // 비밀번호 입력란이 보이면 로그인해 본다. 로그인 뒤 메뉴가 보일 때까지 기다린다. 못 하면 false
   const relogin = async () => {
     if (!login || out.logins >= relogins) return false;
     out.logins += 1;
     if (!(await login())) return false;
     await refresh();
+    await settle(() => !s.password && s.items.length);
     return !s.password;
   };
   // 작업 탭을 읽을 수 없거나(chrome:// 등) 세트 사이트가 아니면 시작하지 않는다. 메뉴가 하나도 없으면 돌 것이 없다
