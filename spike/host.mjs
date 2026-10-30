@@ -21,6 +21,7 @@ import * as testlist from './testlist.mjs';
 import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { failDetail, createFixLog } from './fixlog.mjs';
+import * as menumap from './menumap.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 import * as sdk from './claude-sdk.mjs';
 import { startTabRelay, tabSpecSource, tabSpecFile } from './tab-relay.mjs';
@@ -459,6 +460,7 @@ async function relay(name, args) {
     send({ type: 'tool', id, name, args: real });
   });
   console.log(`[time] ${name} ${Date.now() - t0}ms`);
+  if (result.ok) trackMenu(name, result.result);
   audit('tool', { name, args: briefArgs(args), ok: !!result.ok, ms: Date.now() - t0, url: result.result?.url, tab: result.result?.tab || result.context?.tab, error: result.ok ? undefined : String(result.error || '').slice(0, 300) });
   if (result.ok && !READ_ONLY.has(name) && mode === 'plan') {
     await trackPath(name, args, result.result); // 이동 경로는 그래프에 남기고, 테스트 기록에는 넣지 않는다
@@ -793,6 +795,34 @@ async function flushSegment(to) {
   curScreen = to ?? curScreen;
 }
 
+// ---------------- 메뉴 경로 지도 ----------------
+// 도구 결과로 '어떤 메뉴를 거쳐 어느 화면에 닿는지'를 세트 폴더(map/menu.json·menu-map.md)에 쌓는다. 그래프 DB 없이 돈다
+let mapUrl = null; // 지금 주소(다음 클릭의 출발 화면)
+const menuMapFile = (id = activeSet) => path.join(setPaths(id).dir, 'map', 'menu.json');
+function trackMenu(name, r) {
+  if (!r) return;
+  const { navItems } = r;
+  delete r.navItems; // 메뉴 항목 목록은 지도에만 쓰고 AI에게 넘기지 않는다(요약은 지시문으로 준다)
+  if (!r.url) return;
+  const from = mapUrl;
+  mapUrl = r.url;
+  // 세트 도메인이 아닌 탭(승인하고 진행한 경우)은 지도에 넣지 않는다
+  if (!activeSet || !['click', 'goto', 'snapshot'].includes(name) || (domain !== 'default' && hostOf(r.url) !== domain)) return;
+  try {
+    const file = menuMapFile();
+    const map = menumap.loadMap(file);
+    if (menumap.observe(map, { tool: name, from, url: r.url, menu: r.menu, label: r.label, title: r.title, navItems }, { role: actor?.role })) menumap.saveMap(file, map);
+  } catch (e) { console.log('[menu-map]', e.message); }
+}
+// AI에게 줄 메뉴 지도 요약. 지도가 비었으면 빈 문자열
+function menuMapContext() {
+  if (!activeSet) return '';
+  let base = '';
+  try { base = new URL(profile?.target?.base_url).host; } catch {}
+  const d = menumap.describe(menumap.loadMap(menuMapFile()), { base });
+  return d ? `\n\n[메뉴 경로] 이 세트에서 지금까지 지나가며 본 메뉴와 화면이다. 화면에 갈 때는 이 경로를 먼저 쓰고, 없으면 찾는다(찾은 경로는 저절로 여기에 오른다). 미방문은 메뉴에서 보기만 한 것이다.\n${d}` : '';
+}
+
 // AI에게 줄 알려진 경로 요약: 같은 엣지는 한 번만
 function describeKnown(paths) {
   const seen = new Map();
@@ -1083,6 +1113,7 @@ const APPEND_PROMPT = `[테스트 코드 추가] 아래 '새' 테스트만 Playw
 - 조각은 기존 파일 끝에 붙는다. import 문은 쓰지 않고, 아래 기존 도우미 함수와 상수를 그대로 쓴다. 새 도우미가 필요하면 기존과 겹치지 않는 이름으로 조각 안에 둔다.
 - 구조와 태그 규칙은 기존과 같다: test.describe('BDD', …) 안에 시나리오 테스트(Given/When/Then 을 test.step 으로), test.describe('TDD', …) 안에 test.describe('<시나리오 id> …', { tag: 물려줄 태그 }) 와 케이스 테스트. 기존 시나리오에 케이스만 더할 때도 TDD 안에 그 시나리오 describe 를 다시 열어 쓴다.
 - 주소는 상대 경로, [koa] 데이터는 RUN 을 붙이고 정리한다.
+- 화면 이동: 아래 [메뉴 경로]에 대상 화면이 있으면 BDD 는 그 메뉴를 차례로 클릭해 간다. TDD 는 시작 화면에 page.goto 해도 된다.
 - 화면 크기가 결과에 영향을 주는 새 테스트는 그 describe 안에 test.use({ viewport, isMobile, hasTouch }) 를 두거나 page.setViewportSize 를 쓴다(devices 펼치기·userAgent 기대는 쓰지 않는다). 지시에 [화면 크기]가 있으면 그 크기에서 확인한 것이다.
 - 계정은 시나리오의 역할로 로그인한다. 기존 파일에 역할별 로그인(ACCOUNTS·login(page, 역할))이 있으면 그대로 쓰고, 없는 역할이 필요하면 조각 안에 process.env.<계정>_USER! 를 글자 그대로 적어 둔다.
 - 저장하면 새 테스트만 실행된다. 실패하면 아래 [실패 고치기] 순서로 조각을 고쳐 다시 저장한다(조각 전체를 다시 보내되 통과한 테스트는 그대로 둔다). 검증을 빼서 통과시키지 않는다.
@@ -1117,6 +1148,7 @@ const CODE_PROMPT = `[코드 작성] 아래 '채택된' 테스트를 Playwright 
     test(\`<시나리오 id> [\${role}] <제목>\`, { tag: [<역할 태그 말고 나머지 태그>, \`@role-\${role.toLowerCase()}\`] }, …). 허용이면 흐름을, 거부·일부면 막히는 방식(메뉴 없음, 돌려보냄, 버튼 비활성, 403)을 검증한다.
     그 시나리오의 TDD 케이스도 기대가 역할마다 다르면 같은 방식으로 역할마다 만든다(제목 '<케이스 id> [<역할>] …', 역할 태그도 그 역할 하나만).
 - 테스트마다 혼자 돌 수 있게 로그인부터 한다(공통 로그인은 함수나 beforeEach로).
+- 화면 이동: 아래 [메뉴 경로]에 대상 화면이 있으면 BDD 는 그 메뉴를 차례로 클릭해 간다(사용자 흐름). TDD 는 시작 화면에 page.goto 해도 된다.
 - 로케이터는 이 대화에서 실제로 조작·확인한 것(testid 우선)을 쓴다. 아래 녹화 기반 참고 코드의 로케이터를 그대로 가져와도 된다. 모르면 브라우저 도구로 화면을 다시 확인한다.
 - [koa] 데이터는 실행 ID를 붙여(const RUN = Date.now().toString(36)) 겹치지 않게 하고, afterEach에서 정리 도우미로 정리한다.
 - 오류 주입은 page.route(fulfill status / abort), 응답 지연은 route 안에서 기다린 뒤 continue, 탭 순서는 keyboard.press('Tab') 뒤 toBeFocused로 검증한다.
@@ -1163,7 +1195,7 @@ function writeCode(s) {
     tags.inherited(doc, c).length ? `\n  TDD describe에 물려줄 태그: ${tags.inherited(doc, c).join(' ')}` : ''}`).join('\n');
   const tc = s.cases.map((c) => `${c.id} (${c.scenario}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}${tagLine((c.tags || []).filter((t) => !inh(c).includes(t)), c.issue)}`).join('\n');
   fixLog.reset(activeSet);
-  instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(activeSet)} (정리 도우미는 '@support/…' 로 불러온다)\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}`, { job: 'code' });
+  instruct(`${CODE_PROMPT}\n\n파일 위치: ${codeFile(activeSet)} (정리 도우미는 '@support/…' 로 불러온다)\n[정리 도우미]\n${helpers || '(없음)'}\n\n[채택된 BDD 시나리오]\n${sc}\n\n[채택된 TDD 케이스]\n${tc}\n\n[녹화 기반 참고 코드]\n${String(s.spec || '').slice(0, 15000)}${menuMapContext()}`, { job: 'code' });
 }
 
 // 코드에 들어가야 하는 id와 각 테스트가 가져야 하는 태그(케이스는 시나리오에서 물려받은 것 포함)
@@ -1239,7 +1271,7 @@ function writeAppend(s) {
     return `${c.id} (${c.scenario} — ${scById.get(c.scenario)?.title || ''}, ${c.technique}) ${c.title}\n  입력: ${c.input}\n  기대: ${c.expected}\n  검증: ${c.check}\n  TDD describe 물려줄 태그: ${inh.join(' ') || '(없음)'}\n  케이스 태그: ${(c.tags || []).filter((t) => !inh.includes(t)).join(' ') || '(없음)'}${c.issue ? `\n  이슈: ${c.issue}` : ''}`;
   }).join('\n');
   fixLog.reset(activeSet);
-  instruct(`${APPEND_PROMPT}\n\n${codeOutline(code)}\n\n[새 BDD 시나리오]\n${sc || '(없음)'}\n\n[새 TDD 케이스]\n${tc || '(없음)'}`, { job: 'append' });
+  instruct(`${APPEND_PROMPT}\n\n${codeOutline(code)}\n\n[새 BDD 시나리오]\n${sc || '(없음)'}\n\n[새 TDD 케이스]\n${tc || '(없음)'}${menuMapContext()}`, { job: 'append' });
 }
 
 async function appendCode(args) {
@@ -1629,6 +1661,7 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
   // 대화를 새로 열지 않게 지식 묶음(stamp)과 따로 붙인다
   if (actor) text += `\n지금 브라우저에 로그인한 역할(koa가 마지막으로 로그인한 계정): ${actor.role || '-'} ${roleName(actor.role)} · $${actor.key}_USER`;
   text += rolePrompt(roles);
+  text += menuMapContext();
   let known = [];
   try { known = curScreen ? await graph.knownPathsFrom(curScreen) : []; } catch (e) { graphError(e); }
   // 경로 모드(탐색/재생)는 계획/작성 모드(mode)와 별개다

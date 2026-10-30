@@ -1,0 +1,53 @@
+// extension/menu.js 를 실제 Chrome 페이지에 넣어 메뉴 경로 공식(설계 문서 1·3)을 확인한다
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from '@playwright/test';
+
+const MENU_JS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'menu.js');
+let browser, page;
+before(async () => { browser = await chromium.launch({ channel: 'chrome' }); page = await browser.newPage(); });
+after(async () => { await browser?.close(); });
+
+async function load(html) {
+  await page.setContent(`<body>${html}<main><button id="save">저장</button></main></body>`);
+  await page.addScriptTag({ path: MENU_JS });
+}
+const pathOf = (sel) => page.evaluate((s) => window.__koalaMenu.path(document.querySelector(s)), sel);
+const items = () => page.evaluate(() => window.__koalaMenu.items());
+
+test('중첩 목록: 그룹 머리 이름 + 항목, 로고는 붙지 않고 아이콘 글자는 빠진다', async () => {
+  await load(`<nav><a class="logo" href="/">MyApp</a><ul>
+    <li><button aria-expanded="true">운영관리 <i class="material-icons">expand_more</i></button>
+      <ul><li><a id="u" href="/admin/users">사용자 관리</a></li><li><a href="/admin/roles">권한</a></li></ul></li>
+    <li><a id="d" href="/dash">대시보드</a></li></ul></nav>`);
+  assert.deepEqual(await pathOf('#u'), ['운영관리', '사용자 관리']);
+  assert.deepEqual(await pathOf('#d'), ['대시보드']);
+  assert.deepEqual(await pathOf('nav button'), ['운영관리']);
+  assert.equal(await pathOf('#save'), null); // 메뉴 밖
+});
+
+test('Vuetify식 그룹(__header + __items), 클릭 대상이 항목 안쪽 span 이어도 항목 이름', async () => {
+  await load(`<aside><div class="v-list"><div class="v-list-group">
+    <div class="v-list-group__header" aria-expanded="true"><span>설정</span></div>
+    <div class="v-list-group__items"><a href="/settings/alarm"><span id="s">알림</span></a></div></div></div></aside>`);
+  assert.deepEqual(await pathOf('#s'), ['설정', '알림']);
+});
+
+test('aria-controls 로 이어진 머리, 구역 제목은 바깥 목록에서도 쓴다', async () => {
+  await load(`<nav><h3>관리</h3><ul><li><button aria-controls="g1" aria-expanded="true">게시판</button>
+    <ul id="g1"><li><a id="n" href="/board/notice">공지</a></li></ul></li></ul></nav>`);
+  assert.deepEqual(await pathOf('#n'), ['관리', '게시판', '공지']);
+});
+
+test('items: 보이는 항목만, href·그룹 표시, 접힌 그룹 안은 빠진다', async () => {
+  await load(`<nav><ul>
+    <li><button aria-expanded="false">통계</button><ul style="display:none"><li><a href="/stat/day">일별</a></li></ul></li>
+    <li><a href="/dash">대시보드</a></li><li><a href="#">빈 링크</a></li></ul></nav>`);
+  const got = await items();
+  assert.deepEqual(got.map((x) => x.menu.join('›')), ['통계', '대시보드', '빈 링크']);
+  assert.equal(got[0].group, true);
+  assert.match(got[1].href, /\/dash$/);
+  assert.equal(got[2].href, undefined);
+});

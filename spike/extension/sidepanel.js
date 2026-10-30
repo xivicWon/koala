@@ -902,6 +902,8 @@ async function inPage(func, ...args) {
   const [r] = await chrome.scripting.executeScript({ target: { tabId } , func, args });
   return r.result;
 }
+// 메뉴 위치 읽기 도우미(menu.js)를 페이지에 넣는다. 이미 있으면 그대로 둔다
+const ensureMenu = () => chrome.scripting.executeScript({ target: { tabId }, files: ['menu.js'] }).catch(() => {});
 async function overlay(fn, ...args) {
   const call = () => chrome.scripting.executeScript({
     target: { tabId },
@@ -970,6 +972,8 @@ function pageResolve(l, opts) {
     buttonLike: !!btn,
     buttonText: btn ? (btn.innerText || btn.value || '').trim().replace(/\s+/g, ' ').slice(0, 60) : undefined,
     inNav: !!el.closest('nav, aside, [role=tablist], [role=menu], [role=listbox], [data-testid^="nav-"]'),
+    // 메뉴 경로 지도: 메뉴 항목이면 위쪽 그룹 이름들(클릭 전 구조로 읽는다). menu.js 가 없으면 비운다
+    menu: window.__koalaMenu?.path(el) || undefined,
     rect: { x: r.x, y: r.y, w: r.width, h: r.height }, x, y,
     hitOk: !!hit && (el === hit || el.contains(hit) || hit.contains(el)),
     hitDesc: hit ? `${hit.tagName.toLowerCase()}${hit.getAttribute('data-testid') ? `[${hit.getAttribute('data-testid')}]` : ''}` : null,
@@ -1239,7 +1243,9 @@ async function execTool(name, a) {
     case 'use_tab': { const r = await useTabFromAi(a.tab); await ensureAttached(); return { ...r, forAi: { 작업탭: `${r.tab} ${r.title}` } }; }
     case 'snapshot': {
       const snap = await inPage(pageSnapshot);
-      return { url: tab.url, title: tab.title, ...snap, forAi: { url: tab.url, elements: snap.elements.length, tables: snap.tables } };
+      await ensureMenu();
+      const navItems = await inPage(() => window.__koalaMenu?.items() || []); // 호스트가 메뉴 지도에만 쓴다
+      return { url: tab.url, title: tab.title, ...snap, navItems, forAi: { url: tab.url, elements: snap.elements.length, tables: snap.tables } };
     }
     case 'screenshot': {
       // captureVisibleTab 은 보이는 탭만 찍는다. 작업 탭이 뒤에 있어도 그 탭을 찍도록 CDP로 찍는다
@@ -1250,6 +1256,7 @@ async function execTool(name, a) {
     case 'hover':
     case 'type':
     case 'select': {
+      if (name === 'click') await ensureMenu();
       // 대상이 아직 안 그려졌을 수 있으니 Playwright처럼 나타날 때까지 짧게 반복해서 찾는다
       const found = await poll(async () => {
         const t = await inPage(pageResolve, a.locator, { scroll: true });
@@ -1303,7 +1310,8 @@ async function execTool(name, a) {
       await nap(s.post);
       await overlay('hide');
       const after = name === 'type' && !a.secret ? await inPage(pageResolve, a.locator, { anyVisibility: true }) : null;
-      return { matched: t.matched, url: (await curTab()).url, selected, value: after?.value };
+      return { matched: t.matched, url: (await curTab()).url, selected, value: after?.value,
+        ...(name === 'click' ? { menu: t.menu, label: t.menu?.at(-1) || t.buttonText || t.text.slice(0, 40) || t.testid } : {}) };
     }
     case 'press': {
       await overlay('banner', `키 입력: ${a.key}`);
