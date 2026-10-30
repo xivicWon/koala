@@ -122,11 +122,13 @@ function setDetail(s, why) {
   return `<div class="set-detail">
     <div class="set-detail-k">${s.id === activeSet ? '지금 세트' : '고른 세트'}</div>
     <div class="set-detail-h"><b>${esc(s.name)}</b><span class="pf-status ${s.update ? 'warn' : 'ok'}">${local ? '이 PC 전용' : `서버 v${esc(s.version)}`}</span><span class="grow"></span>
-      ${local ? `<button type="button" class="btn sm" data-set-act="edit-open" ${why ? 'disabled' : ''} title="${esc(why)}">고치기</button><button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why)}">지우기</button>` : ''}</div>
+      ${local ? `<button type="button" class="btn sm" data-set-act="edit-open" ${why ? 'disabled' : ''} title="${esc(why)}">고치기</button>` : ''}
+      ${local || s.received ? `<button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why || (local ? '이 PC 전용 세트를 지웁니다' : '이 PC에서 받은 사본과 작업 데이터를 지웁니다. 서버 목록에는 남습니다'))}">지우기</button>` : ''}</div>
     ${s.update ? `<div class="set-update"><div><b>새 판 v${esc(s.update.to)}</b> <span class="pf-hint">지금 v${esc(s.update.from)} · 받기를 눌러야 바뀝니다</span></div>
       <ul>${s.update.changed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
       <div class="pf-actions"><button type="button" class="primary sm" data-set-act="receive" data-set-id="${esc(s.id)}" ${why ? 'disabled' : ''} title="${esc(why || '새 판으로 받습니다. 테스트·작업 데이터는 그대로 두고, Claude 작업 폴더를 다시 만듭니다')}">받기</button></div></div>` : ''}
-    ${setStep === 'delete' && local ? `<div class="pf-confirm">이 PC 전용 세트 "${esc(s.name)}"를 지울까요? 이 세트의 테스트 목록·코드·수행 기록·로그가 모두 지워집니다.
+    ${setStep === 'delete' && (local || s.received) ? `<div class="pf-confirm">${local ? `이 PC 전용 세트 "${esc(s.name)}"를 지울까요?` : `세트 "${esc(s.name)}"를 이 PC에서 지울까요? 서버 목록에는 남아 다시 받을 수 있습니다.`}
+      이 세트의 테스트 목록·코드·수행 기록·로그·메뉴 지도·프로필 규칙과 내 설정(시작 URL·계정)이 이 PC에서 사라집니다. 데이터 폴더의 deleted/ 에 옮겨 두므로 필요하면 되살릴 수 있습니다.
       <div class="pf-actions"><button type="button" class="danger sm" data-set-act="delete-yes">지우기</button><button type="button" class="btn sm" data-set-act="delete-no">취소</button></div></div>` : ''}
     ${!s.received ? `<div class="pf-alert">아직 받지 않은 세트입니다. 목록에서 받기를 누르면 정의를 받아 쓸 수 있습니다</div></div>` : `
     ${setCard('세트 정의', local ? '이 PC에서 만듦 · 고치기로 바꿉니다' : '서버에서 받음 · 읽기 전용', `
@@ -268,9 +270,9 @@ async function onSets(m) {
   setList = Array.isArray(m.sets) ? m.sets : [];
   chrome.storage.local.set({ setsCache: setList }).catch(() => {});
   if (m.created) { setStep = null; setFormVals = {}; await switchSet(m.created); }
-  // 지금 세트가 없어졌거나(지움) 아직 고르지 않았으면 받은 세트 중 첫 번째로
+  // 지금 세트가 없어졌거나(지움) 받지 않은 상태가 됐거나(받은 서버 세트를 이 PC에서 지움) 아직 고르지 않았으면 받은 세트 중 첫 번째로
   // 예전 데이터를 옮기기 전에는 고르지 않는다(옮긴 뒤 예전 활성 프로필의 세트로 바꾼다)
-  if (!migrationNeeded && (!activeSet || !setInfo())) {
+  if (!migrationNeeded && (!activeSet || !setInfo() || !setInfo().received)) {
     const next = setList.find((s) => s.received)?.id || null;
     if (next !== activeSet) await switchSet(next);
   }
@@ -367,7 +369,7 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (act === 'delete') { setStep = 'delete'; return renderSheet(); }
   if (act === 'delete-yes') {
     const s = setInfo();
-    if (!s || s.source !== 'local') return;
+    if (!s || (s.source !== 'local' && !s.received)) return;
     if (why) return msg('err', why);
     ws.send(JSON.stringify({ type: 'set_delete', id: s.id }));
     delete setPrefs[s.id];

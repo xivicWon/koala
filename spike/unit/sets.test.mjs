@@ -100,11 +100,17 @@ test('목록: 저장소에만 있는 세트는 받지 않음, 로컬 세트 만�
   assert.equal(b.source, 'local');
   assert.equal(domainOfSet(b), 'default');
   assert.equal(checkUpdate(a.id, root), null);
-  deleteSet(a.id, root);
+  // 지우면 deleted/ 로 옮긴다(되돌릴 수 있게)
+  const gone = deleteSet(a.id, root);
   assert.equal(readSet(a.id, root), null);
+  assert.equal(gone.source, 'local');
+  assert.ok(fs.existsSync(path.join(gone.trash, 'set.json')));
+  assert.ok(gone.trash.startsWith(path.join(root, 'deleted', 'local-set-')));
+  // 받지 않은 서버 세트는 지울 것이 없다. 받은 서버 세트는 지우면 다시 '받지 않음'으로 목록에 남는다
+  assert.throws(() => deleteSet('a', root), /지울 세트가 없습니다/);
   receiveSet('a', root);
-  assert.throws(() => deleteSet('a', root));
-  assert.ok(readSet('a', root));
+  assert.equal(deleteSet('a', root).source, 'server');
+  assert.equal(listSets(root).find((s) => s.id === 'a').received, false);
 });
 
 test('예시 세트는 공용 저장소의 참조를 모두 찾는다', () => {

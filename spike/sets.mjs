@@ -202,10 +202,16 @@ export function updateLocalSet(id, patch, root = DATA) {
   return next;
 }
 
+// 세트(프로필)를 이 PC에서 지운다. 이 PC 전용 세트도, 서버에서 받은 세트(받은 사본·테스트·코드·기록·메뉴 지도·규칙)도.
+// 서버 세트는 서버 목록에 남아 다시 받을 수 있다. 되돌릴 수 있게 지우지 않고 <데이터>/deleted/<세트>-<시각>/ 으로 옮긴다
 export function deleteSet(id, root = DATA) {
   const rec = readSet(id, root);
-  if (!rec || rec.source !== 'local') throw new Error('이 PC 전용 세트만 지울 수 있습니다');
-  fs.rmSync(setPaths(id, root).dir, { recursive: true, force: true });
+  const dir = setPaths(id, root).dir;
+  if (!rec || !fs.existsSync(dir)) throw new Error('지울 세트가 없습니다(받지 않은 서버 세트는 이 PC에 지울 것이 없습니다)');
+  const trash = path.join(root, 'deleted', `${safeId(id)}-${new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-')}`);
+  fs.mkdirSync(path.dirname(trash), { recursive: true });
+  fs.renameSync(dir, trash);
+  return { source: rec.source, trash };
 }
 
 const readJsonOr = (f, v) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return v; } };

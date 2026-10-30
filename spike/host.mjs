@@ -2263,10 +2263,10 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'set_delete') {
       if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 세트를 지울 수 없습니다'); return; }
       try {
-        deleteSet(m.id);
+        const gone = deleteSet(m.id);
         if (m.id === activeSet) { stopClaude(); activeSet = null; profile = null; profileSeen = false; domain = 'default'; sessionId = null; sessionAlias = null; steps = []; actor = null; saveState(); sendSession(); }
         prefsBySet.delete(m.id);
-        log('sys', `세트 ${m.id}를 지웠습니다`);
+        log('sys', `세트 ${m.id}를 이 PC에서 지웠습니다${gone.source === 'local' ? '' : ' (서버 목록에 남아 있어 다시 받을 수 있습니다)'} · 지운 데이터는 ${gone.trash} 에 옮겨 두었습니다`);
       } catch (e) { log('err', e.message); }
       sendSets();
     }
