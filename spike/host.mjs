@@ -890,8 +890,19 @@ function menuMapContext() {
   let base = '';
   try { base = new URL(profile?.target?.base_url).host; } catch {}
   const d = menumap.describe(menumap.loadMap(menuMapFile()), { base });
-  return d ? `\n\n[메뉴 경로] 이 세트에서 지금까지 지나가며 본 메뉴와 화면이다. 화면에 갈 때는 이 경로를 먼저 쓰고, 없으면 찾는다(찾은 경로는 저절로 여기에 오른다). 미방문은 메뉴에서 보기만 한 것이다.\n${d}` : '';
+  return d ? `\n\n${MENU_MAP_HEAD}\n${d}` : '';
 }
+const MENU_MAP_HEAD = '[메뉴 경로] 이 세트에서 지금까지 지나가며 본 메뉴와 화면이다. 화면에 갈 때는 이 경로를 먼저 쓰고, 없으면 찾는다(찾은 경로는 저절로 여기에 오른다). 미방문은 메뉴에서 보기만 한 것이다.';
+// Claude 설정에 보여 줄 일반 형식(특정 서비스 내용 없이). 실제 내용은 세트마다 메뉴 경로 지도에서 만든다
+const MENU_MAP_FORMAT = `${MENU_MAP_HEAD}
+진척: 메뉴 <전체 수>개 중 <방문 수>개 방문
+- <그룹> › <메뉴> → <화면 주소> (방문 <횟수>회 · <역할>)
+  - "<누른 것>" 클릭 → <하위 화면 주소>
+- <그룹> › <메뉴> → <화면 주소> (미방문 · 메뉴에서 봄)
+- <그룹> (그룹 · 아직 펼쳐 보지 않음)
+- <화면 주소> 에서 "<누른 것>" 클릭 → <화면 주소>
+- (메뉴 경로 모름, 주소로 들어감) <화면 주소>
+(최대 80줄. 지도가 비어 있으면 붙이지 않는다)`;
 
 // AI에게 줄 알려진 경로 요약: 같은 엣지는 한 번만
 function describeKnown(paths) {
@@ -1943,7 +1954,7 @@ const server = http.createServer(async (req, res) => {
         profileContext: profileContext().trim(),
         // 테스트 코드 생성·추가 지시에만 덧붙는 지침, 지시마다 덧붙는 메뉴 경로 요약
         codeGuide: `${PW_BASICS}\n\n${FIX_GUIDE}`,
-        menuMap: menuMapContext().trim(),
+        menuMap: MENU_MAP_FORMAT,
         claude: claudeEnv,
         billing: { mode: billing, key: sdk.keyStatus() }, // 키 값은 보내지 않는다(있음·없음과 파일 위치만)
         recorded: steps.length, // '기록까지 비우기' 확인 창에 보여 줄 수행 기록 수
