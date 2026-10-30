@@ -47,6 +47,12 @@ function addVia(map, key, url, via, { role, title, at }) {
 export function observe(map, ev, { role = null, at = new Date().toISOString() } = {}) {
   const meta = { role, title: ev.title, at };
   let changed = seeItems(map, ev.navItems, { role, at });
+  // 목록 행을 눌러 같은 화면에 대화상자로 열린 상세: 그 화면 아래의 '⧉ 이름' 화면으로 남긴다
+  if (ev.tool === 'dialog' && ev.url) {
+    const a = screenKey(ev.url);
+    addVia(map, `${a} ⧉ ${ev.label}`, ev.url, { kind: 'link', from: a, action: `${ev.label} (대화상자)` }, meta);
+    return true;
+  }
   if (ev.tool === 'goto' && ev.url) { addVia(map, screenKey(ev.url), ev.url, { kind: 'direct' }, meta); return true; }
   if (ev.tool === 'click' && ev.url && ev.from) {
     const a = screenKey(ev.from), b = screenKey(ev.url);

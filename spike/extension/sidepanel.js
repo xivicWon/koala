@@ -75,6 +75,7 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.type === 'log') msg(m.kind, m.text);
     if (m.type === 'busy') setBusy(m.busy);
+    if (m.type === 'menu_map_changed' && sheetMode === 'menumap') openMenuMap();
     if (m.type === 'env') { claudeEnv = m.claude; renderEnvAlert(); }
     if (m.type === 'job') { onJob(m); if (m.done) flushSuite(); }
     if (m.type === 'update') onUpdate(m);
@@ -946,6 +947,9 @@ function pageResolve(l, opts) {
   const visible = (e) => e.offsetParent !== null || e.getClientRects().length > 0;
   let els = [];
   if (l.testid) els = [...document.querySelectorAll(`[data-testid="${CSS.escape(l.testid)}"]`)];
+  // 메뉴 경로 지도의 크롤러가 쓴다: 메뉴 경로로 찾기, 목록 첫 행(menu.js 가 먼저 들어가 있어야 한다)
+  else if (l.menu) els = window.__koalaMenu?.findAll(l.menu) || [];
+  else if (l.row) els = window.__koalaMenu?.rowTargets() || [];
   else if (l.css) {
     try { els = [...document.querySelectorAll(l.css)]; } catch {
       return { ok: false, matched: 0, total: 0, error: `브라우저가 지원하지 않는 CSS 선택자: ${l.css} (:has-text 같은 Playwright 전용 문법은 text locator를 쓴다)` };
@@ -1312,7 +1316,7 @@ async function execTool(name, a) {
       await overlay('hide');
       const after = name === 'type' && !a.secret ? await inPage(pageResolve, a.locator, { anyVisibility: true }) : null;
       return { matched: t.matched, url: (await curTab()).url, selected, value: after?.value,
-        ...(name === 'click' ? { menu: t.menu, label: t.menu?.at(-1) || t.buttonText || t.text.slice(0, 40) || t.testid, navItems: await navItems() } : {}) };
+        ...(name === 'click' ? { menu: t.menu, label: a.locator.row ? '목록 행' : t.menu?.at(-1) || t.buttonText || t.text.slice(0, 40) || t.testid, navItems: await navItems() } : {}) };
     }
     case 'press': {
       await overlay('banner', `키 입력: ${a.key}`);

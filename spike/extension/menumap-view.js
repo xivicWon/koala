@@ -71,7 +71,24 @@ function renderMenuMapSheet(body) {
     <div class="mm-tree">${draw(root) || '<div class="none">미방문 메뉴가 없습니다</div>'}</div>
     ${rest.length && !menuMapOnlyTodo ? `<div class="mm-sec">메뉴 밖에서 이어진 화면</div>${rest.map((k) => `<div class="mm-link"><span class="mono">${esc(short(k.from))}</span> 에서 "${esc(k.action)}" → <span class="mono">${esc(short(k.to))}</span></div>`).join('')}` : ''}
     ${direct.length && !menuMapOnlyTodo ? `<div class="mm-sec">주소로만 들어간 화면</div>${direct.map((k) => `<div class="mm-link mono">${esc(short(k))}</div>`).join('')}` : ''}
+    ${crawlReport(d.crawl)}
     <div class="pf-hint mm-file">파일: <span class="mono">${esc(d.file)}</span> (AI는 지시할 때 이 지도의 요약을 받습니다)</div>`;
+}
+// 마지막 메뉴 전체 돌기·목록 상세 돌기 결과
+function crawlReport(c) {
+  const r = c?.report;
+  if (!r) return '';
+  const kind = c.kind === 'rows' ? '목록 상세 돌기' : '메뉴 전체 돌기';
+  const why = { login: '로그인이 풀려 멈춤', user: '중지함', error: '오류로 멈춤' }[r.stopped] || '';
+  const rowsOf = (xs, f) => xs.map((x) => `<div class="mm-link">${f(x)}</div>`).join('');
+  const p = (m) => esc(m.join(' › '));
+  return `<div class="mm-sec">${kind} ${c.finished ? '결과' : `· ${why} · 다시 누르면 이어갑니다`} <span class="mm-meta">${esc(new Date(c.at).toLocaleString())}</span></div>
+    <div class="mm-link">방문 ${r.visited} · 실패 ${r.failed.length} · 건너뜀 ${r.skipped.length}${c.kind === 'rows' ? ` · 상세 열림 ${r.details.length} · 상세 없음 ${r.noDetail.length}` : ''}</div>
+    ${rowsOf(r.failed, (f) => `✕ ${p(f.menu)} <span class="mm-meta">${esc(f.error)}</span>`)}
+    ${rowsOf(r.skipped, (x) => `– ${p(x.menu)} <span class="mm-meta">${esc(x.why)}</span>`)}
+    ${rowsOf(r.details, (x) => `↳ ${p(x.menu)} <span class="mm-meta">${{ page: '새 화면', dialog: '대화상자', inline: '같은 화면 안' }[x.kind]}</span>`)}
+    ${rowsOf(r.noDetail, (x) => `○ ${p(x.menu)} <span class="mm-meta">${esc(x.why)}</span>`)}
+    ${r.writes?.length ? `<div class="mm-sec">화면을 여는 동안 나간 쓰기 요청 <span class="mm-meta">앱이 보낸 것 · koala 가 누른 버튼 아님</span></div>${rowsOf(r.writes, (w) => `${esc(w.req)} <span class="mm-meta">×${w.n} · 처음 ${esc(w.at)}</span>`)}` : ''}`;
 }
 $('sheet-body').addEventListener('change', (e) => {
   if (sheetMode === 'menumap' && e.target.dataset?.mm === 'todo') { menuMapOnlyTodo = e.target.checked; renderSheet(); }

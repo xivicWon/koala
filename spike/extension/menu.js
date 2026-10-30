@@ -1,6 +1,7 @@
 // 메뉴 위치 읽기(메뉴 경로 지도). overlay.js 처럼 필요할 때 페이지에 넣는다.
 // path(el): 클릭한 메뉴 항목의 위쪽 그룹 이름들 + 자기 이름. 클릭 순서가 아니라 지금 화면 구조로 정한다
-// items(): 메뉴 항목마다 { menu, href, group, hidden } (접힌 그룹 안의 숨은 항목 포함)
+// items(): 메뉴 항목마다 { menu, href, group, hidden, newTab } (접힌 그룹 안의 숨은 항목 포함)
+// findAll(menu): 메뉴 경로로 요소 찾기 · rowTargets(): 목록 첫 행에서 누를 곳 (클릭 locator { menu } · { row } 가 쓴다)
 // 공식은 docs/superpowers/specs/2026-10-30-menu-map-design.md
 if (!window.__koalaMenu) {
   const ROOT = 'nav, aside, [role=navigation], [role=menu], [role=menubar], [role=tree], [data-testid^="nav-"]';
@@ -62,33 +63,64 @@ if (!window.__koalaMenu) {
 
   // 보이는 메뉴 영역의 항목 전부. 접힌 그룹 안(숨김)도 DOM 에 있으면 함께 읽는다(펼치지 않아도 지도에 오른다).
   // 그룹 머리: 하위 목록 바로 앞의 형제(버튼·aria-expanded 가 아니어도)
-  const items = () => {
+  // 메뉴 항목 후보: [요소, 그룹 머리인지]. 그룹 머리 먼저, 그다음 항목(items·findAll 이 같은 순서로 본다)
+  const candidates = () => {
     const out = [];
-    const seen = new Set();
-    const add = (e, group) => {
-      const menu = path(e);
-      const key = menu?.join('›');
-      if (!menu?.length || seen.has(key)) return;
-      seen.add(key);
-      const href = e.matches('a[href]') && !/^(javascript:|#$)/.test(e.getAttribute('href')) ? e.href : undefined;
-      out.push({ menu, href, group: group || e.hasAttribute('aria-expanded') || e.matches('summary') || undefined, hidden: !vis(e) || undefined });
-    };
     for (const root of document.querySelectorAll(ROOT)) {
       if (rootOf(root) !== root || !vis(root)) continue; // 안쪽 메뉴 영역은 바깥에서 함께 본다
       for (const L of root.querySelectorAll(LIST)) {
         const h = L.previousElementSibling;
         const up = L.parentElement?.closest(LIST);
         if (!h || h.matches(LIST) || !head(L, !up || !root.contains(up))) continue; // 바깥 목록 앞의 로고 등은 그룹이 아니다
-        add(h.closest(ITEM) && root.contains(h.closest(ITEM)) ? h.closest(ITEM) : h, true);
+        out.push([h.closest(ITEM) && root.contains(h.closest(ITEM)) ? h.closest(ITEM) : h, true]);
       }
-      for (const e of root.querySelectorAll(ITEM)) {
-        if (e.closest('[data-koala-overlay]')) continue;
-        add(e);
-        if (out.length >= 300) return out;
-      }
+      for (const e of root.querySelectorAll(ITEM)) if (!e.closest('[data-koala-overlay]')) out.push([e, false]);
     }
     return out;
   };
 
-  window.__koalaMenu = { path, items };
+  const hostOf = (u) => { try { return new URL(u).host; } catch { return location.host; } };
+  const items = () => {
+    const out = [];
+    const seen = new Set();
+    for (const [e, group] of candidates()) {
+      const menu = path(e);
+      const key = menu?.join('›');
+      if (!menu?.length || seen.has(key)) continue;
+      seen.add(key);
+      const href = e.matches('a[href]') && !/^(javascript:|#$)/.test(e.getAttribute('href')) ? e.href : undefined;
+      out.push({ menu, href, group: group || e.hasAttribute('aria-expanded') || e.matches('summary') || undefined, hidden: !vis(e) || undefined,
+        newTab: (e.matches('a[target=_blank]') || (href && hostOf(href) !== location.host)) || undefined });
+      if (out.length >= 300) break;
+    }
+    return out;
+  };
+
+  // 메뉴 경로로 요소 찾기(locator { menu: [...] }). 같은 경로가 여럿이면 앞의 것부터
+  const findAll = (menu) => {
+    const key = menu.join('›');
+    return candidates().map(([e]) => e).filter((e, i, all) => all.indexOf(e) === i && path(e)?.join('›') === key);
+  };
+
+  // 목록(표)의 첫 데이터 행에서 누를 곳(locator { row: true }). 표마다 하나씩, 화면 위쪽 표부터.
+  // 행 안의 링크 → 버튼·입력·체크박스가 없는 첫 칸. '데이터 없음' 같은 한 칸짜리 행은 건너뛴다
+  const ROWS = 'table tbody tr, [role=grid] [role=row], [role=table] [role=row]';
+  const rowTargets = () => {
+    const out = [];
+    const tables = new Set();
+    for (const tr of document.querySelectorAll(ROWS)) {
+      const table = tr.closest('table, [role=grid], [role=table]');
+      if (tables.has(table) || !vis(tr) || tr.closest(ROOT) || tr.closest('[role=dialog]')) continue;
+      const cells = [...tr.querySelectorAll(':scope > td, :scope > [role=gridcell], :scope > [role=cell]')];
+      if (cells.length < 2) continue; // 데이터 없음·로딩 행
+      tables.add(table);
+      const link = tr.querySelector('a[href]:not([href^="javascript:"]):not([href="#"])');
+      const cell = cells.find((c) => vis(c) && norm(c.innerText) && !c.querySelector('button, input, select, textarea, [role=button], [role=checkbox], a'));
+      const t = link || cell;
+      if (t) out.push(t);
+    }
+    return out;
+  };
+
+  window.__koalaMenu = { path, items, findAll, rowTargets };
 }

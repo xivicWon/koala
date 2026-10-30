@@ -68,3 +68,19 @@ test('항목마다 nav- testid 가 붙은 메뉴(div 그룹 머리·배지·같�
   assert.deepEqual(got.map((x) => `${x.menu.join('›')}${x.group ? ' [G]' : ''}`),
     ['결재 [G]', '컴플라이언스 [G]', '대시보드', '결재›결재대기', '컴플라이언스›컴플라이언스']);
 });
+
+test('findAll: 메뉴 경로로 찾는다(그룹과 항목 이름이 같아도 경로로 구분)', async () => {
+  await load(`<nav><ul><li class="g"><div class="label">설정</div><ul class="children">
+    <li><div class="label">사용자 관리</div><ul class="children"><li><a id="u" href="/u">사용자 관리</a></li></ul></li></ul></li></ul></nav>`);
+  const tag = (m) => page.evaluate((x) => window.__koalaMenu.findAll(x).map((e) => e.id || e.className), m);
+  assert.deepEqual(await tag(['설정', '사용자 관리', '사용자 관리']), ['u']);
+  assert.deepEqual(await tag(['설정', '사용자 관리']), ['label']);
+  assert.deepEqual(await tag(['없음']), []);
+});
+
+test('rowTargets: 표마다 첫 데이터 행의 링크, 없으면 버튼·체크박스 없는 첫 칸. 데이터 없음 행은 건너뜀', async () => {
+  await load(`<table><tbody><tr><td colspan="3">데이터가 없습니다</td></tr></tbody></table>
+    <table><tbody><tr><td><input type="checkbox"></td><td id="c">홍길동</td><td><button>삭제</button></td></tr><tr><td></td><td>둘째</td></tr></tbody></table>
+    <table><tbody><tr><td>1</td><td><a id="l" href="/d/1">상세</a></td></tr></tbody></table>`);
+  assert.deepEqual(await page.evaluate(() => window.__koalaMenu.rowTargets().map((e) => e.id)), ['c', 'l']);
+});

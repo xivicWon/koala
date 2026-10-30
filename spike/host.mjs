@@ -22,6 +22,7 @@ import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
 import { failDetail, createFixLog } from './fixlog.mjs';
 import * as menumap from './menumap.mjs';
+import { crawl as crawlSite } from './crawler.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 import * as sdk from './claude-sdk.mjs';
 import { startTabRelay, tabSpecSource, tabSpecFile } from './tab-relay.mjs';
@@ -611,6 +612,8 @@ const JOBS = {
   code: { label: '테스트 코드 생성', steps: [['write', '코드 작성'], ['check', '실행 전 검사'], ['run', '로컬 실행'], ['review', '결과 확인']] },
   append: { label: '새 테스트 코드 추가', steps: [['write', '코드 작성'], ['check', '실행 전 검사'], ['run', '새 테스트 실행'], ['review', '결과 확인']] },
   localrun: { label: '테스트 실행', steps: [['run', '로컬 실행']] },
+  crawl: { label: '메뉴 전체 돌기', steps: [['visit', '메뉴 찾기·방문'], ['save', '결과 정리']] },
+  rows: { label: '목록 상세 돌기', steps: [['visit', '메뉴 방문·첫 행 열기'], ['save', '결과 정리']] },
 };
 const SAVE_TOOLS = new Set(['save_tests', 'add_tests', 'save_tags', 'save_code', 'append_code']);
 let job = null; // { kind, key, detail, started, round, bytes }
@@ -798,11 +801,13 @@ async function flushSegment(to) {
 // ---------------- 메뉴 경로 지도 ----------------
 // 도구 결과로 '어떤 메뉴를 거쳐 어느 화면에 닿는지'를 세트 폴더(map/menu.json·menu-map.md)에 쌓는다. 그래프 DB 없이 돈다
 let mapUrl = null; // 지금 주소(다음 클릭의 출발 화면)
+let lastNavItems = []; // 마지막으로 읽은 메뉴 항목 목록(크롤러가 쓴다)
 const menuMapFile = (id = activeSet) => path.join(setPaths(id).dir, 'map', 'menu.json');
 function trackMenu(name, r) {
   if (!r) return;
   const { navItems } = r;
   delete r.navItems; // 메뉴 항목 목록은 지도에만 쓰고 AI에게 넘기지 않는다(요약은 지시문으로 준다)
+  if (Array.isArray(navItems)) lastNavItems = navItems;
   if (!r.url) return;
   const from = mapUrl;
   mapUrl = r.url;
@@ -814,6 +819,71 @@ function trackMenu(name, r) {
     if (menumap.observe(map, { tool: name, from, url: r.url, menu: r.menu, label: r.label, title: r.title, navItems }, { role: actor?.role })) menumap.saveMap(file, map);
   } catch (e) { console.log('[menu-map]', e.message); }
 }
+// 메뉴 전체 돌기(rows=false)·목록 상세 돌기(rows=true): AI 없이 작업 탭에서 관측되는 메뉴를 모두 방문한다.
+// 계획 모드로 돌아 데이터를 바꾸는 버튼은 막히고, 조작은 수행 기록(테스트)에 들어가지 않는다.
+// 끝내지 못하고 멈추면(중지·로그인 풀림) 다음에 같은 종류로 시작할 때 방문하지 않은 메뉴부터 이어간다
+const crawlFile = () => path.join(setPaths(activeSet).dir, 'map', 'crawl.json');
+async function crawlMenus(rows) {
+  const kind = rows ? 'rows' : 'crawl';
+  if (setBlocked()) return log('err', setBlocked());
+  if (job || codeRunning) return log('err', '다른 작업이 진행 중입니다. 끝난 뒤 다시 누르세요');
+  if (panel?.readyState !== 1) return log('err', '사이드패널이 연결되어 있지 않습니다');
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(crawlFile(), 'utf8')); } catch {}
+  const resume = prev && prev.kind === kind && !prev.finished;
+  const done = new Set(resume ? prev.done : []);
+  const save = (extra) => { try { fs.mkdirSync(path.dirname(crawlFile()), { recursive: true }); fs.writeFileSync(crawlFile(), JSON.stringify({ kind, done: [...done], at: new Date().toISOString(), ...extra }, null, 1)); } catch (e) { console.log('[crawl]', e.message); } };
+  const prevMode = mode;
+  mode = 'plan';
+  stopRequested = false;
+  startJob(kind);
+  send({ type: 'busy', busy: true });
+  log('sys', `${JOBS[kind].label}${resume ? ` · 이어서(${done.size}개 끝냄)` : ''} · 작업 탭에서 메뉴를 차례로 누릅니다. 데이터를 바꾸는 버튼은 누르지 않습니다`);
+  const read = async () => {
+    const r = await relay('snapshot', {});
+    const els = r.result?.elements || [];
+    return { url: r.result?.url || mapUrl, items: lastNavItems, password: els.some((e) => e.type === 'password'),
+      tables: (r.result?.tables || []).some((t) => t.rows > 0), dialog: els.some((e) => e.role === 'dialog'), size: els.length };
+  };
+  // 돌리는 동안 나간 쓰기 요청(GET 이 아닌 것): 화면을 보기만 해도 나가는 읽음 처리 등. 경로의 긴 숫자는 :id 로 묶는다
+  const writes = {};
+  let where = '';
+  const act = async (tool, args) => {
+    if (args?.locator?.menu) where = args.locator.menu.join(' › ');
+    const r = await relay(tool, args);
+    for (const q of r.result?.requests || []) {
+      if (q.method === 'GET') continue;
+      const k = `${q.method} ${String(q.path || '').split('?')[0].replace(/\d{6,}/g, ':id')}`;
+      (writes[k] ||= { n: 0, at: where }).n += 1;
+    }
+    return r;
+  };
+  let out;
+  try {
+    out = await crawlSite({
+      act, read, done, rows,
+      shouldStop: () => stopRequested,
+      onProgress: ({ done: d, total, next }) => { detailJob(`${d}/${total}${next ? ` · ${next.join(' › ')}` : ''}`); save({ finished: false }); },
+      onDialog: (url, m) => { const file = menuMapFile(); const map = menumap.loadMap(file); menumap.observe(map, { tool: 'dialog', url, label: '목록 행' }, { role: actor?.role }); menumap.saveMap(file, map); log('sys', `상세가 대화상자로 열림 · ${m.join(' › ')}`); },
+    });
+  } catch (e) {
+    out = { visited: [], failed: [], skipped: [], details: [], noDetail: [], stopped: 'error', error: e.message };
+  } finally { mode = prevMode; }
+  stepJob('save');
+  const finished = !out.stopped;
+  const writeList = Object.entries(writes).map(([k, v]) => ({ req: k, ...v }));
+  save({ finished, report: { visited: out.visited.length, failed: out.failed, skipped: out.skipped, details: out.details, noDetail: out.noDetail, stopped: out.stopped, writes: writeList } });
+  const list = (xs, f) => xs.slice(0, 8).map(f).join(' · ') + (xs.length > 8 ? ` 외 ${xs.length - 8}개` : '');
+  log(out.failed.length || out.stopped ? 'err' : 'sys', `${JOBS[kind].label} ${finished ? '끝' : '멈춤'} · 방문 ${out.visited.length} · 실패 ${out.failed.length} · 건너뜀 ${out.skipped.length}${rows ? ` · 상세 ${out.details.length} · 상세 없음 ${out.noDetail.length}` : ''}`
+    + (out.stopped === 'login' ? ' — 로그인이 풀렸습니다(비밀번호 입력란이 보임). 다시 로그인한 뒤 같은 버튼을 누르면 이어갑니다' : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
+  if (out.failed.length) log('err', `누르지 못한 메뉴: ${list(out.failed, (f) => `${f.menu.join(' › ')}(${f.error.slice(0, 60)})`)}`);
+  if (out.skipped.length) log('sys', `건너뛴 메뉴: ${list(out.skipped, (x) => `${x.menu.join(' › ')}(${x.why})`)}`);
+  if (writeList.length) log('err', `화면을 여는 동안 나간 쓰기 요청(앱이 보낸 것, koala 가 누른 버튼 아님) ${writeList.length}종: ${list(writeList, (w) => `${w.req} ×${w.n}`)}`);
+  endJob(finished && !out.failed.length, `방문 ${out.visited.length} · 실패 ${out.failed.length}`);
+  send({ type: 'busy', busy: false });
+  send({ type: 'menu_map_changed' });
+}
+
 // AI에게 줄 메뉴 지도 요약. 지도가 비었으면 빈 문자열
 function menuMapContext() {
   if (!activeSet) return '';
@@ -1885,7 +1955,9 @@ const server = http.createServer(async (req, res) => {
     let base = '';
     try { base = new URL(profile?.target?.base_url).host; } catch {}
     const file = menuMapFile();
-    return res.end(JSON.stringify({ set: activeSet, base, file: path.relative(dir, path.join(path.dirname(file), 'menu-map.md')), tree: menumap.buildTree(menumap.loadMap(file)) }));
+    let crawl = null;
+    try { crawl = JSON.parse(fs.readFileSync(crawlFile(), 'utf8')); delete crawl.done; } catch {}
+    return res.end(JSON.stringify({ set: activeSet, base, file: path.relative(dir, path.join(path.dirname(file), 'menu-map.md')), tree: menumap.buildTree(menumap.loadMap(file)), crawl }));
   }
   if (req.method === 'GET' && req.url === '/changelog') {
     res.setHeader('content-type', 'text/markdown; charset=utf-8');
@@ -2011,6 +2083,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'retag_code') retagCode(m.suite);
     if (m.type === 'list_code') listCode();
     if (m.type === 'run_code') runCode(m.suite, m.ids, !!m.only);
+    if (m.type === 'crawl') crawlMenus(!!m.rows);
     if (m.type === 'add_tests') addTests(m.request, m.suite);
     if (m.type === 'set') activateSet(m.id, m.prefs || {});
     if (m.type === 'tests_save') {

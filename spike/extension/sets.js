@@ -96,6 +96,12 @@ function setDetail(s, why) {
     ${s.prompt ? `<details class="case-d set-prompt"><summary>사이트 지식 (AI에게 함께 전달)</summary><pre class="pf-ro pf-prompt-ro mono">${esc(s.prompt)}</pre></details>` : ''}
     <div class="pf-hint set-when">${local ? '만든' : '받은'} 시각 ${s.received_at ? esc(new Date(s.received_at).toLocaleString()) : '-'}${s.tests ? ` · 테스트 BDD ${s.tests.scenarios} · TDD ${s.tests.cases}` : ''}</div>
 
+    ${s.id === activeSet ? `<div class="set-sub"><b>메뉴 경로 지도</b><span class="pf-hint">이 PC에서 이 세트로 지나간 메뉴와 화면 · 세트 폴더(map/)에 남습니다</span></div>
+    <div class="pf-actions set-map"><button type="button" class="btn sm" data-set-act="map-open">지도 보기</button>
+      <button type="button" class="btn sm" data-set-act="crawl" ${why ? 'disabled' : ''} title="${esc(why || 'AI 없이 작업 탭에서 보이는 메뉴를 모두 눌러 지도를 채웁니다')}">메뉴 전체 돌기</button>
+      <button type="button" class="btn sm" data-set-act="crawl-rows" ${why ? 'disabled' : ''} title="${esc(why || '메뉴마다 목록의 첫 행을 눌러 상세 화면이 어떻게 열리는지도 봅니다')}">목록 상세까지 돌기</button></div>
+    <div class="pf-hint">로그인한 작업 탭에서 시작합니다. AI를 쓰지 않고, 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다. 멈추면 다시 눌러 이어갑니다.</div>` : ''}
+
     <div class="set-sub"><b>내 설정</b><span class="pf-hint">이 확장에만 저장되고, 세트를 고를 때 이 PC의 호스트로만 보냅니다</span></div>
     <label class="pf-label">시작 URL ${pref.start_url ? '<span class="tag ok">내 설정</span>' : '<span class="tag">세트 값</span>'}
       <span class="pf-hint">새 수행 기록은 이 주소에서 출발합니다. 비우면 ${s.start_url ? '세트 값' : '지금 탭 주소'}</span></label>
@@ -274,6 +280,12 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
     ws.send(JSON.stringify({ type: 'set_receive', id }));
     msg('sys', `세트 "${setInfo(id)?.name || id}"를 받습니다`);
     return renderSheet();
+  }
+  if (act === 'map-open') return openMenuMap();
+  if (act === 'crawl' || act === 'crawl-rows') {
+    if (why) return msg('err', why);
+    closeSheet();
+    return ws.send(JSON.stringify({ type: 'crawl', rows: act === 'crawl-rows' }));
   }
   if (act === 'new-open') { setStep = 'new'; setFormError = ''; setFormVals = {}; return renderSheet(); }
   if (act === 'edit-open') { setStep = 'edit'; setFormError = ''; setFormVals = {}; return renderSheet(); }
