@@ -135,7 +135,7 @@ $('menu').addEventListener('click', (e) => {
   if (act === 'feedback') openSheet('feedback');
   if (act === 'logs') {
     if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않아 로그 폴더를 열 수 없습니다');
-    if (!viewSet) return msg('err', '세트를 먼저 고르세요');
+    if (!viewSet) return msg('err', '프로필을 먼저 고르세요');
     ws.send(JSON.stringify({ type: 'open_logs' }));
     msg('sys', `작업 로그 폴더를 엽니다: spike/.koa/sets/${viewSet}/work/logs/ (날짜별 .jsonl)`);
   }

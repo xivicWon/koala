@@ -1,4 +1,4 @@
-// 세트 테스트 목록: <세트>/tests/tests.json (목록) · results/ (실행 결과). 패널의 suite 객체와 같은 모양에 applied, base_version을 더한다.
+// 프로필 테스트 목록: <프로필>/tests/tests.json (목록) · results/ (실행 결과). 패널의 suite 객체와 같은 모양에 applied, base_version을 더한다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { setPaths } from './sets.mjs';
@@ -38,7 +38,7 @@ const maxNum = (items, prefix) =>
     return n ? Math.max(m, Number(n)) : m;
   }, 0);
 
-// 새 항목을 세트 끝에 더한다. 새 id는 세트 안 최대+1부터 다시 매기고 케이스의 시나리오 참조도 따라 바꾼다.
+// 새 항목을 프로필 끝에 더한다. 새 id는 프로필 안 최대+1부터 다시 매기고 케이스의 시나리오 참조도 따라 바꾼다.
 export function addTests(suite, { scenarios = [], cases = [], flow = [], coverage = [] } = {}) {
   const renamed = {};
   let sc = maxNum(suite.scenarios || [], 'SC');

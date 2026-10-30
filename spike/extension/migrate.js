@@ -11,8 +11,8 @@ let hostNeedsMigration = false; // 호스트에 옮기지 않은 예전 데이�
 let migrateState = null;     // null | 'sent' | 'failed' | 'done' — 패널을 열 때마다 한 번만 보낸다
 
 const migrationText = () => (migrateState === 'failed'
-  ? '기존 작업 데이터를 세트로 옮기지 못했습니다 · 원래 데이터는 그대로 두었습니다. 패널을 다시 열면 다시 시도합니다'
-  : '기존 작업 데이터를 세트로 옮기는 중입니다 · 끝나면 세트를 쓸 수 있습니다');
+  ? '기존 작업 데이터를 프로필로 옮기지 못했습니다 · 원래 데이터는 그대로 두었습니다. 패널을 다시 열면 다시 시도합니다'
+  : '기존 작업 데이터를 프로필로 옮기는 중입니다 · 끝나면 프로필을 쓸 수 있습니다');
 const legacyDomain = (p) => { try { return new URL(p?.target?.base_url).hostname || 'default'; } catch { return 'default'; } };
 // 계정·비밀번호는 어느 깊이에 있든 뺀다(이 PC 전용 프로필의 인라인 역할 account 등)
 const noSecrets = (v) => (Array.isArray(v) ? v.map(noSecrets)
@@ -125,10 +125,10 @@ async function onMigrated(m) {
       migrationNeeded = false;
       hostNeedsMigration = false;
       legacy = null;
-      activeSet = null; // 아래에서 옮긴 세트로 바꾼다(타임라인을 불러오고 호스트에 set 을 보낸다)
+      activeSet = null; // 아래에서 옮긴 프로필로 바꾼다(타임라인을 불러오고 호스트에 set 을 보낸다)
       await switchSet(setList.find((s) => s.id === next && s.received)?.id || setList.find((s) => s.received)?.id || null);
       setSentOnOpen = !!activeSet;
-      msg('sys', `작업 데이터를 세트로 옮겼습니다 · 세트 ${new Set(Object.values(m.setByProfile || {})).size}개 · 첫 대화는 새 세션으로 시작합니다`);
+      msg('sys', `작업 데이터를 프로필로 옮겼습니다 · 프로필 ${new Set(Object.values(m.setByProfile || {})).size}개 · 첫 대화는 새 세션으로 시작합니다`);
       for (const s of m.skipped || []) msg('sys', `옮기지 않고 보관만 했습니다: ${s}`);
       if (m.skipped?.length || archived.length) {
         if (m.skipped?.length && m.archive) msg('sys', `보관 위치: ${m.archive}`);
@@ -141,11 +141,11 @@ async function onMigrated(m) {
       for (const e of m.errors || []) msg('err', e);
     } catch (e) {
       migrateState = 'failed';
-      msg('err', `작업 데이터를 세트로 옮기지 못했습니다(확장 저장소: ${e.message || e}) · 원래 데이터는 그대로 두었습니다. 패널을 다시 열면 다시 시도합니다`);
+      msg('err', `작업 데이터를 프로필로 옮기지 못했습니다(확장 저장소: ${e.message || e}) · 원래 데이터는 그대로 두었습니다. 패널을 다시 열면 다시 시도합니다`);
     }
   } else {
     migrateState = 'failed';
-    msg('err', `작업 데이터를 세트로 옮기지 못했습니다: ${(m.errors || []).join(' · ') || '알 수 없는 오류'} · 원래 데이터는 그대로 두었습니다. 패널을 다시 열면 다시 시도합니다`);
+    msg('err', `작업 데이터를 프로필로 옮기지 못했습니다: ${(m.errors || []).join(' · ') || '알 수 없는 오류'} · 원래 데이터는 그대로 두었습니다. 패널을 다시 열면 다시 시도합니다`);
   }
   renderSetChip();
   renderRoleScope();

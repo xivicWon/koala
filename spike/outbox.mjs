@@ -1,6 +1,6 @@
 // 임시 형태. 서버 데이터 형태가 정해지면 이 파일만 바꾼다.
-// 보내기: 세트의 테스트 목록(tests.json)·코드·정리 도우미로 보낼 JSON 을 만들고(buildPayload), 배포 서버로 보낸다(send).
-// 배포 서버는 임시 동기화 저장소와 같은 모양의 API를 쓴다: PUT <서버>/sync/suites/<세트 id> { base_version, data } → 문서 | 409 { current }
+// 보내기: 프로필의 테스트 목록(tests.json)·코드·정리 도우미로 보낼 JSON 을 만들고(buildPayload), 보내는 서버로 보낸다(send).
+// 보내는 서버는 임시 동기화 저장소와 같은 모양의 API를 쓴다: PUT <서버>/sync/suites/<프로필 id> { base_version, data } → 문서 | 409 { current }
 // 주소가 이 호스트(127.0.0.1:<포트>)면 이 PC의 임시 저장소(.koa/store)에 바로 쓴다.
 // 비밀값(계정 비밀번호, secrets/)은 읽지 않는다. 코드의 환경변수는 이름만 실린다.
 import fs from 'node:fs';
@@ -31,10 +31,10 @@ export async function putToServer(server, kind, id, baseVersion, data) {
 // 채택: use 가 false 가 아닌 것(패널과 같다 — 표시가 없는 항목은 채택으로 본다)
 const adopted = (x) => x.use !== false;
 const adoptedCount = (s) => [...(s.scenarios || []), ...(s.cases || [])].filter(adopted).length;
-// 세트 폴더 기준 코드 파일 경로(이 PC의 절대 경로는 보내지 않는다)
+// 프로필 폴더 기준 코드 파일 경로(이 PC의 절대 경로는 보내지 않는다)
 const codeRel = (setId) => `tests/code/${safeId(setId)}.spec.ts`;
 
-// 코드 원문: 목록에 든 것이 먼저, 없으면 세트의 코드 파일
+// 코드 원문: 목록에 든 것이 먼저, 없으면 프로필의 코드 파일
 function codeSource(setId, suite, root) {
   if (suite.code?.source) return suite.code.source;
   try { return fs.readFileSync(path.join(setPaths(setId, root).dir, codeRel(setId)), 'utf8'); } catch { return ''; }
@@ -72,7 +72,7 @@ export function buildPayload(setId, root = DATA) {
 }
 
 export async function send(setId, { server, baseVersion = 0 } = {}, root = DATA) {
-  if (!server) return { ok: false, error: '프로필에 배포 서버가 없습니다. 프로필 → 배포 서버에 주소를 넣으세요' };
+  if (!server) return { ok: false, error: '프로필에 보내는 서버가 없습니다. 프로필 → 보내는 서버에 주소를 넣으세요' };
   let suite;
   try { suite = loadTests(setId, root); } catch (e) { return { ok: false, error: `테스트 목록을 읽지 못해 보내지 않았습니다: ${e.message}` }; }
   if (!codeSource(setId, suite, root).trim()) return { ok: false, error: '테스트 코드가 없어 보낼 수 없습니다. 먼저 코드를 생성하세요' };
@@ -85,9 +85,9 @@ export async function send(setId, { server, baseVersion = 0 } = {}, root = DATA)
   const info = { where, name: payload.name, bdd: payload.scenarios.length, tdd: payload.cases.length };
   let r;
   try { r = await putToServer(server, 'suite', setId, baseVersion, payload); } catch (e) {
-    return { ok: false, error: `배포 서버(${where})에 보내지 못했습니다: ${e.message}`, ...info };
+    return { ok: false, error: `보내는 서버(${where})에 보내지 못했습니다: ${e.message}`, ...info };
   }
-  if (r.conflict) return { ok: false, conflict: true, current: r.current, error: `배포 서버(${where})에 더 새 버전(v${r.current.version ?? '?'})이 있습니다`, ...info };
+  if (r.conflict) return { ok: false, conflict: true, current: r.current, error: `보내는 서버(${where})에 더 새 버전(v${r.current.version ?? '?'})이 있습니다`, ...info };
   const version = r.doc.version;
   // 다음 보내기가 거짓 충돌이 되지 않게 기준 버전을 올린다. 방금 읽은 목록 그대로 다시 쓴다
   try {
@@ -96,7 +96,7 @@ export async function send(setId, { server, baseVersion = 0 } = {}, root = DATA)
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(`${out}/last.json`, JSON.stringify({ version, sent_at: new Date().toISOString(), format: FORMAT }, null, 2));
   } catch (e) {
-    return { ok: false, sent: true, version, error: `배포 서버(${where})에 v${version}으로 보냈지만 기준 버전을 저장하지 못했습니다(다음 보내기는 충돌로 보일 수 있습니다): ${e.message}`, ...info };
+    return { ok: false, sent: true, version, error: `보내는 서버(${where})에 v${version}으로 보냈지만 기준 버전을 저장하지 못했습니다(다음 보내기는 충돌로 보일 수 있습니다): ${e.message}`, ...info };
   }
   return { ok: true, version, ...info };
 }

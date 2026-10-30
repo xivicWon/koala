@@ -1,10 +1,10 @@
 // "Claude 설정" 시트: koa가 Claude를 실행하는 작업 폴더(지식 문서 사본)와 실제로 전달되는 내용을 보여 준다
 let claudeView = null;
-// 내가 고른 모델·effort(이 확장에 저장, 세트 설정보다 우선). 빈 값은 '기본'(세트 → Claude Code 설정)
+// 내가 고른 모델·effort(이 확장에 저장, 프로필 설정보다 우선). 빈 값은 '기본'(프로필 → Claude Code 설정)
 // billing: sub = Claude Code 구독, api = Console API 키(Agent SDK, API 크레딧에서 차감)
 let claudePrefs = { model: '', effort: '', billing: 'sub' };
 const BILLING = [['sub', 'Claude Code 구독'], ['api', 'API 키 (크레딧)']];
-const MODELS = [['', '기본(세트·Claude Code)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['fable', 'Fable']];
+const MODELS = [['', '기본(프로필·Claude Code)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['fable', 'Fable']];
 const EFFORT_OPTS = [['', '기본'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
 const claudePrefsReady = chrome.storage.local.get('claudePrefs').then((r) => { if (r?.claudePrefs) claudePrefs = { ...claudePrefs, ...r.claudePrefs }; }).catch(() => {});
 // 호스트에 알린다(연결될 때마다, 바꿀 때). 저장된 값을 읽은 뒤에 보낸다. 호스트는 바뀌었으면 대화를 이어 가며 Claude 를 다시 띄운다

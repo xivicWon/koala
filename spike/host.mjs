@@ -93,14 +93,14 @@ function checkClaude() {
 }
 checkClaude();
 const dir = fileURLToPath(new URL('.', import.meta.url)); // 끝에 경로 구분자가 붙는다
-// AI 지시문 중 세트와 상관없는 일반 규칙은 prompts/ 의 파일에서 읽는다. Claude 설정에는 이 파일 경로를 보여 준다
+// AI 지시문 중 프로필과 상관없는 일반 규칙은 prompts/ 의 파일에서 읽는다. Claude 설정에는 이 파일 경로를 보여 준다
 const PROMPTS = path.join(dir, 'prompts');
 const PROMPT_FILES = { system: 'system.md', rules: 'profile-rules.md', playwright: 'playwright-basics.md', fix: 'fix-elimination.md', menuMap: 'menu-map.md' };
 const prompt = (k) => fs.readFileSync(path.join(PROMPTS, PROMPT_FILES[k]), 'utf8').trim();
 const SYSTEM = `${prompt('system')}\n\n${prompt('rules')}`;
 const PW_BASICS = prompt('playwright');
 const FIX_GUIDE = prompt('fix');
-// 메뉴 경로: 첫 줄은 지시에 붙는 머리, 나머지는 형식(<…> 자리에 세트의 지도 요약이 들어간다)
+// 메뉴 경로: 첫 줄은 지시에 붙는 머리, 나머지는 형식(<…> 자리에 프로필의 지도 요약이 들어간다)
 const MENU_MAP_HEAD = prompt('menuMap').split('\n')[0];
 const READ_ONLY = new Set(['snapshot', 'screenshot', 'tab_order', 'tabs']);
 const TOOLS = ['run', 'snapshot', 'screenshot', 'tabs', 'use_tab', 'viewport', 'goto', 'back', 'click', 'type', 'select', 'hover', 'press', 'tab_order', 'fault', 'fault_clear',
@@ -125,7 +125,7 @@ const PLAN_SYSTEM = `
 마지막에 save_plan으로 저장하고, 시나리오·케이스 수, 우선순위 분포, 확인하지 못한 부분을 한국어로 짧게 요약한다.`;
 
 
-// 지금 세트의 프로필(대상 서버·사이트 지식·역할·계정). 세트 스냅숏 + 패널의 내 설정으로 만든다(profileOf)
+// 지금 프로필의 프로필(대상 서버·사이트 지식·역할·계정). 프로필 스냅숏 + 패널의 내 설정으로 만든다(profileOf)
 let profile = null;
 // 역할: 프로필이 정한 권한 종류(관리자·일반 사용자 등). 계정은 역할에 붙는다
 const roleOf = (key) => profile?.roles?.find((r) => r.key === key) || null;
@@ -209,8 +209,8 @@ const send = (m) => panel?.readyState === 1 && panel.send(JSON.stringify(m));
 // 채팅창에서 AI 가 한 일과 구분한다: 메뉴 지도 돌기(AI 없이 도는 스크립트) 중에는 driver = 'script'
 let driver = 'ai';
 const log = (kind, text, by = driver === 'script' ? 'script' : undefined) => { send({ type: 'log', kind, text, by }); console.log(`[${kind}]${by ? `[${by}]` : ''} ${text}`); audit('log', { kind, text, by }); };
-// 작업 기록: 세트마다 .koa/sets/<세트>/work/logs/<날짜>.jsonl 에 한 줄씩 남긴다(사용자 지시·도구 호출·테스트 실행·안내 문구).
-// 비밀값은 남기지 않는다($KOALA_* 이름만). 30일이 지난 파일은 호스트가 켜질 때 지운다. 세트를 고르기 전에는 남기지 않는다
+// 작업 기록: 프로필마다 .koa/sets/<프로필>/work/logs/<날짜>.jsonl 에 한 줄씩 남긴다(사용자 지시·도구 호출·테스트 실행·안내 문구).
+// 비밀값은 남기지 않는다($KOALA_* 이름만). 30일이 지난 파일은 호스트가 켜질 때 지운다. 프로필을 고르기 전에는 남기지 않는다
 const LOG_DAYS = 30;
 const logsDir = () => setPaths(activeSet).logs;
 function audit(ev, data = {}) {
@@ -235,34 +235,34 @@ function pruneLogs() {
 }
 // 도구 인자를 기록용으로 줄인다: 비밀은 이름만, 긴 값은 자른다, 스크린샷 같은 큰 값은 뺀다
 const briefArgs = (a = {}) => Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'guard').map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 200) : Array.isArray(v) ? `[${v.length}]` : v]));
-// ── 세트별 작업 데이터 ──
-// 수행 기록·Claude 세션·현재 화면·보관본·테스트 목록을 세트마다 따로 둔다(sets.mjs 의 setPaths).
-//   .koa/state.json                   — 전체: 지금 세트, 세션 이름 번호(kaa-N)
-//   .koa/sets/<세트>/work/state.json   — 그 세트의 대화 id·세션 이름·수행 기록·현재 화면·로그인 역할
-//   .koa/sets/<세트>/work/recording.json, recordings/, logs/ · tests/tests.json(테스트 목록 원본)
-// 어느 세트인지는 사이드패널이 정해 보낸다. 도메인은 세트 정의의 대상 주소에서 계산해 탭 확인에만 쓴다
+// ── 프로필별 작업 데이터 ──
+// 수행 기록·Claude 세션·현재 화면·보관본·테스트 목록을 프로필마다 따로 둔다(sets.mjs 의 setPaths).
+//   .koa/state.json                   — 전체: 지금 프로필, 세션 이름 번호(kaa-N)
+//   .koa/sets/<프로필>/work/state.json   — 그 프로필의 대화 id·세션 이름·수행 기록·현재 화면·로그인 역할
+//   .koa/sets/<프로필>/work/recording.json, recordings/, logs/ · tests/tests.json(테스트 목록 원본)
+// 어느 프로필인지는 사이드패널이 정해 보낸다. 도메인은 프로필 정의의 대상 주소에서 계산해 탭 확인에만 쓴다
 const STATE = path.join(DATA, 'state.json');
 let activeSet = null;
-let domain = 'default'; // 지금 세트의 대상 도메인
-const prefsBySet = new Map(); // 세트 → 패널이 보낸 내 설정(시작 URL·계정·역할 범위)
+let domain = 'default'; // 지금 프로필의 대상 도메인
+const prefsBySet = new Map(); // 프로필 → 패널이 보낸 내 설정(시작 URL·계정·역할 범위)
 const recFile = () => path.join(setPaths(activeSet).work, 'recording.json');
 const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
-// 테스트 코드는 세트 폴더에 둔다: <데이터>/sets/<세트>/tests/code/<세트>.spec.ts (절대 경로; 세트당 한 파일)
+// 테스트 코드는 프로필 폴더에 둔다: <데이터>/sets/<프로필>/tests/code/<프로필>.spec.ts (절대 경로; 프로필당 한 파일)
 function codeFile(setId) {
   return `${setPaths(setId).code}/${safeId(setId)}.spec.ts`;
 }
 const readJsonFile = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const arr = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
-// 예전 데이터(도메인 버킷 .koa/domains/, tests/suites/)가 남아 있고 아직 옮기지 않았으면 세트 작업을 받지 않는다
+// 예전 데이터(도메인 버킷 .koa/domains/, tests/suites/)가 남아 있고 아직 옮기지 않았으면 프로필 작업을 받지 않는다
 const nonEmpty = (d) => { try { return fs.readdirSync(d).length > 0; } catch { return false; } };
 // 예전 테스트 코드(tests/suites/)·공용 저장소를 찾는 spike 폴더. 시험은 KOALA_SPIKE_DIR 로 임시 폴더를 쓴다(개발 폴더의 예전 묶음을 옮기지 않게)
 const LEGACY_DIR = process.env.KOALA_SPIKE_DIR ? path.resolve(process.env.KOALA_SPIKE_DIR) : dir;
 const needsMigration = () => !fs.existsSync(path.join(DATA, 'sets', '.migrated'))
   && (nonEmpty(path.join(DATA, 'domains')) || nonEmpty(path.join(LEGACY_DIR, 'tests', 'suites')));
-const MIGRATION_MSG = '기존 데이터를 세트로 옮긴 뒤 사용할 수 있습니다. 먼저 옮기기를 진행하세요';
+const MIGRATION_MSG = '기존 데이터를 프로필로 옮긴 뒤 사용할 수 있습니다. 먼저 옮기기를 진행하세요';
 
-// 세트 스냅숏(set.json + received/ + secrets/)과 패널의 내 설정으로 지금까지의 프로필 모양을 만든다.
+// 프로필 스냅숏(set.json + received/ + secrets/)과 패널의 내 설정으로 지금까지의 프로필 모양을 만든다.
 // 계정: 내 설정에 아이디가 있으면 그것, 없으면 서버가 준 기본 계정(secrets/accounts.json)
 function profileOf(id, prefs = {}) {
   const rec = readSet(id);
@@ -317,7 +317,7 @@ function archiveRec() {
   fs.writeFileSync(file, JSON.stringify(steps, null, 2));
   log('sys', `직전 기록 ${steps.length}단계를 보관했습니다: recordings/${path.basename(file)} (${activeSet})`);
 }
-// 세트의 작업 데이터를 불러온다(없으면 빈 상태)
+// 프로필의 작업 데이터를 불러온다(없으면 빈 상태)
 function loadSet(id) {
   activeSet = id;
   domain = domainOfSet(readSet(id));
@@ -330,10 +330,10 @@ function loadSet(id) {
   actor = st.actor || null;
   return st;
 }
-// 다른 세트로 바뀌면 지금 데이터를 저장하고 그 세트의 데이터로 바꾼다. 작업 중에는 바꾸지 않는다
+// 다른 프로필로 바뀌면 지금 데이터를 저장하고 그 프로필의 데이터로 바꾼다. 작업 중에는 바꾸지 않는다
 function switchSet(id) {
   if (id === activeSet) return true;
-  if (job || codeRunning) { log('err', `AI 작업이나 테스트 실행 중에는 다른 세트(${id})로 바꿀 수 없습니다. 끝난 뒤 세트를 다시 고르세요`); return false; }
+  if (job || codeRunning) { log('err', `AI 작업이나 테스트 실행 중에는 다른 프로필(${id})로 바꿀 수 없습니다. 끝난 뒤 프로필을 다시 고르세요`); return false; }
   saveState();
   stopClaude();
   const from = activeSet;
@@ -341,12 +341,12 @@ function switchSet(id) {
   saveState();
   sendSession(); sendActor();
   console.log(`[set] ${from || '없음'} → ${activeSet} · 대화 ${sessionId ? sessionId.slice(0, 8) : '없음'} · 기록 ${steps.length}단계`);
-  log('sys', `세트 ${activeSet}의 작업 데이터로 바꿨습니다 · 세션 ${sessionAlias || '없음'} · 수행 기록 ${steps.length}단계`);
+  log('sys', `프로필 ${activeSet}의 작업 데이터로 바꿨습니다 · 세션 ${sessionAlias || '없음'} · 수행 기록 ${steps.length}단계`);
   return true;
 }
-// 패널이 세트를 골랐다(또는 내 설정이 바뀌었다): 작업 데이터를 바꾸고 프로필을 다시 만들어 알린다
+// 패널이 프로필을 골랐다(또는 내 설정이 바뀌었다): 작업 데이터를 바꾸고 프로필을 다시 만들어 알린다
 function activateSet(id, prefs) {
-  if (!readSet(id)) { log('err', `세트 ${id}를 아직 받지 않았습니다. 세트 목록에서 받기를 누르세요`); return false; }
+  if (!readSet(id)) { log('err', `프로필 ${id}를 아직 받지 않았습니다. 프로필 목록에서 받기를 누르세요`); return false; }
   if (!switchSet(id)) return false;
   if (prefs) prefsBySet.set(id, prefs);
   profile = profileOf(id, prefsBySet.get(id) || {});
@@ -355,15 +355,15 @@ function activateSet(id, prefs) {
   send({ type: 'set_active', id, domain, steps: steps.length });
   sendTests(id);
   sendActor();
-  scheduleWarm(); // 패널을 열었거나 세트가 바뀌었다. 같은 대화가 떠 있으면 그대로 둔다
+  scheduleWarm(); // 패널을 열었거나 프로필이 바뀌었다. 같은 대화가 떠 있으면 그대로 둔다
   console.log(`[set] ${profile.id} v${profile.version} · 계정 ${(profile.accounts || []).map((a) => `${a.key}${a.role ? `·${a.role}` : ''}(${secretValue(`${a.key}_USER`) && secretValue(`${a.key}_PASS`) ? '값 있음' : '값 없음'})`).join(', ')}`);
   return true;
 }
-// 세트의 테스트 목록(원본은 호스트의 tests.json). 깨진 파일이면 알리고 보내지 않는다
+// 프로필의 테스트 목록(원본은 호스트의 tests.json). 깨진 파일이면 알리고 보내지 않는다
 function sendTests(id = activeSet, extra = {}) {
   try { send({ type: 'tests', set: id, suite: testlist.loadTests(id), tag_doc: id === activeSet ? tagDoc() : null, ...extra }); return true; } catch (e) { log('err', e.message); return false; }
 }
-// 코드·실행 결과는 호스트가 세트의 tests.json 에 남긴다(패널을 다시 열어도, 보내기에도 같은 것을 쓴다)
+// 코드·실행 결과는 호스트가 프로필의 tests.json 에 남긴다(패널을 다시 열어도, 보내기에도 같은 것을 쓴다)
 function saveCodeState(id, patch) {
   try {
     const cur = testlist.loadTests(id);
@@ -378,15 +378,15 @@ const sendSets = (to, extra = {}) => {
 };
 // 받기: 스냅숏을 바꾸고 Claude 작업 폴더를 다시 만든다. AI 작업·테스트 실행 중에는 받지 않는다
 function receive(id) {
-  if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 세트를 받을 수 없습니다. 끝난 뒤 다시 누르세요'); return; }
+  if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 프로필을 받을 수 없습니다. 끝난 뒤 다시 누르세요'); return; }
   let r;
-  try { r = receiveSet(id); } catch (e) { log('err', `세트 ${id}를 받지 못했습니다: ${e.message}`); return; }
-  if (!r.ok) { log('err', `세트 ${id}를 받지 못했습니다 · 저장소에 없는 문서: ${r.missing.join(', ')}`); return; }
+  try { r = receiveSet(id); } catch (e) { log('err', `프로필 ${id}를 받지 못했습니다: ${e.message}`); return; }
+  if (!r.ok) { log('err', `프로필 ${id}를 받지 못했습니다 · 저장소에 없는 문서: ${r.missing.join(', ')}`); return; }
   const prof = profileOf(id, prefsBySet.get(id) || {});
-  // 지금 세트면 작업 폴더를 지우기 전에 떠 있는 Claude를 끝낸다. 지식 판이 같으면 다음 연결에서 같은 대화를 잇는다
+  // 지금 프로필이면 작업 폴더를 지우기 전에 떠 있는 Claude를 끝낸다. 지식 판이 같으면 다음 연결에서 같은 대화를 잇는다
   if (id === activeSet) stopClaude();
   try { fs.rmSync(path.join(setPaths(id).claude, '.koa', 'version.json'), { force: true }); workspace.prepare(prof); } catch (e) { log('err', `Claude 작업 폴더를 만들지 못했습니다: ${e.message}`); }
-  log('sys', `세트 "${r.record.name}" v${r.record.version}을 받았습니다`);
+  log('sys', `프로필 "${r.record.name}" v${r.record.version}을 받았습니다`);
   if (id === activeSet) {
     profile = prof;
     domain = domainOfSet(r.record);
@@ -398,7 +398,7 @@ function receive(id) {
 }
 
 // 업데이트 뒤 첫 연결: 패널이 예전 프로필(계정 값은 뺀 것)·활성 프로필·suite@<도메인>·timeline@<도메인> 목록을 보내면
-// 도메인 데이터를 세트로 옮긴다(migrate-sets.mjs). 성공하면 sets/.migrated 가 생겨 세트 작업을 바로 받는다.
+// 도메인 데이터를 프로필로 옮긴다(migrate-sets.mjs). 성공하면 sets/.migrated 가 생겨 프로필 작업을 바로 받는다.
 // 이미 옮겼으면 다시 옮기지 않고 그때의 대응(setByProfile·timelineKeys)으로 답한다(패널이 마무리하다 멈췄을 때)
 function migrate(ws, m) {
   const reply = (r) => ws.readyState === 1 && ws.send(JSON.stringify({ type: 'migrated', timelineKeys: {}, setByProfile: {}, skipped: [], errors: [], moved: 0, ...r }));
@@ -419,13 +419,13 @@ function migrate(ws, m) {
   }
   let { setByProfile, timelineKeys, skipped } = plan;
   if (before) {
-    // 계획 중 지금 있는 세트를 가리키는 것만 쓰고, 처음 옮길 때의 대응을 앞세운다
+    // 계획 중 지금 있는 프로필을 가리키는 것만 쓰고, 처음 옮길 때의 대응을 앞세운다
     const exists = (map) => Object.fromEntries(Object.entries(map).filter(([, id]) => readSet(id)));
     setByProfile = { ...exists(setByProfile), ...(before.setByProfile || {}) };
     timelineKeys = { ...exists(timelineKeys), ...(before.timelineKeys || {}) };
     skipped = before.skipped || [];
   }
-  console.log(`[migrate] ${before ? '이미 옮겼음' : `세트 ${plan.sets.length}개로 옮겼습니다 · 파일 ${r.moved}개 · 보관 ${plan.archive}`}${skipped.length ? ` · 건너뜀 ${skipped.length}` : ''}`);
+  console.log(`[migrate] ${before ? '이미 옮겼음' : `프로필 ${plan.sets.length}개로 옮겼습니다 · 파일 ${r.moved}개 · 보관 ${plan.archive}`}${skipped.length ? ` · 건너뜀 ${skipped.length}` : ''}`);
   for (const e of r.errors) console.log('[migrate]', e);
   for (const s of sockets) sendSets(s);
   reply({ ok: true, moved: r.moved, setByProfile, timelineKeys, skipped, errors: r.errors, archive: before?.archive || plan.archive });
@@ -511,11 +511,11 @@ const PERSIST = process.env.KOALA_PERSIST !== '0';
 let proc = null;
 let timing = null; // 지시 1건의 시간 분해: 기동 / 모델 / 브라우저
 
-// 패널에서 고른 내 설정(모델·effort). 세트 설정보다 우선한다. 비우면 세트 → Claude Code 기본값
+// 패널에서 고른 내 설정(모델·effort). 프로필 설정보다 우선한다. 비우면 프로필 → Claude Code 기본값
 let userClaude = { model: '', effort: '' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const modelFor = () => userClaude.model || profile?.claude?.model || process.env.KOALA_MODEL || '';
-// effort: 내 설정 → 세트 → 사용자 Claude Code 설정(~/.claude/settings.json 의 effortLevel) → medium
+// effort: 내 설정 → 프로필 → 사용자 Claude Code 설정(~/.claude/settings.json 의 effortLevel) → medium
 function effortFor() {
   if (EFFORTS.includes(userClaude.effort)) return userClaude.effort;
   if (profile?.claude?.effort) return profile.claude.effort;
@@ -544,7 +544,7 @@ function spawnClaude(extra, ws) {
   args.push('--effort', effortFor());
   const env = { ...process.env };
   delete env.CLAUDECODE; // 바깥 Claude Code 세션 안에서 띄울 때 중첩 방지 검사를 피한다
-  // 끝낸 프로세스(세트 전환·중지)가 늦게 내는 출력은 버린다. 받으면 다른 세트의 세션·로그에 섞인다
+  // 끝낸 프로세스(프로필 전환·중지)가 늦게 내는 출력은 버린다. 받으면 다른 프로필의 세션·로그에 섞인다
   // API 요금제에서는 'claude.ai connectors are disabled' 안내가 매번 나온다. 오류 원인으로 보이지 않게 거른다
   const onErr = (d) => { if (p.stopped || /claude\.ai connectors are disabled/.test(d)) return; p.lastErr = String(d); console.log(`[claude stderr] ${String(d).trim()}`); };
   let p;
@@ -789,7 +789,7 @@ async function flushSegment(to) {
 }
 
 // ---------------- 메뉴 경로 지도 ----------------
-// 도구 결과로 '어떤 메뉴를 거쳐 어느 화면에 닿는지'를 세트 폴더(map/menu.json·menu-map.md)에 쌓는다. 그래프 DB 없이 돈다
+// 도구 결과로 '어떤 메뉴를 거쳐 어느 화면에 닿는지'를 프로필 폴더(map/menu.json·menu-map.md)에 쌓는다. 그래프 DB 없이 돈다
 let mapUrl = null; // 지금 주소(다음 클릭의 출발 화면)
 let lastNavItems = []; // 마지막으로 읽은 메뉴 항목 목록(크롤러가 쓴다)
 const menuMapFile = (id = activeSet) => path.join(setPaths(id).dir, 'map', 'menu.json');
@@ -801,7 +801,7 @@ function trackMenu(name, r) {
   if (!r.url) return;
   const from = mapUrl;
   mapUrl = r.url;
-  // 세트 도메인이 아닌 탭(승인하고 진행한 경우)은 지도에 넣지 않는다
+  // 프로필 도메인이 아닌 탭(승인하고 진행한 경우)은 지도에 넣지 않는다
   if (!activeSet || !['click', 'goto', 'back', 'snapshot'].includes(name) || (domain !== 'default' && hostOf(r.url) !== domain)) return;
   try {
     const file = menuMapFile();
@@ -829,15 +829,15 @@ async function crawlMenus(rows) {
   stopRequested = false;
   startJob(kind);
   send({ type: 'busy', busy: true });
-  // 프로필 기준: 세트의 시작 URL(내 설정이 있으면 그것)에서 출발하고, 로그인 화면이면 기본 역할 계정으로 로그인한다
+  // 프로필 기준: 프로필의 시작 URL(내 설정이 있으면 그것)에서 출발하고, 로그인 화면이면 기본 역할 계정으로 로그인한다
   const t = profile?.target || {};
-  // 세트 화면과 같은 규칙: 시작 URL, 없으면 대상 주소 + 로그인 경로, 그것도 없으면 대상 주소
+  // 프로필 화면과 같은 규칙: 시작 URL, 없으면 대상 주소 + 로그인 경로, 그것도 없으면 대상 주소
   const loginUrl = t.base_url && t.login_path ? `${t.base_url.replace(/\/$/, '')}${t.login_path}` : '';
   const startUrl = [t.start_url, loginUrl, t.base_url].find((u) => u && (domain === 'default' || hostOf(u) === domain)) || '';
   const role = defaultRole();
   const acc = accountFor(role);
   const canLogin = !!(acc && secretValue(`${acc.key}_USER`) && secretValue(`${acc.key}_PASS`));
-  log('sys', `${JOBS[kind].label} 시작${resume ? ` · 이어서(${done.size}개 끝냄)` : ''} · 세트 "${profile?.name || activeSet}" · 시작 URL ${startUrl || '(없음: 지금 작업 탭에서 시작)'} · `
+  log('sys', `${JOBS[kind].label} 시작${resume ? ` · 이어서(${done.size}개 끝냄)` : ''} · 프로필 "${profile?.name || activeSet}" · 시작 URL ${startUrl || '(없음: 지금 작업 탭에서 시작)'} · `
     + `역할 ${roleName(role) || '-'}${acc ? `($${acc.key}_USER${canLogin ? '' : ', 값 없음 — 로그인 화면이 나오면 멈춥니다'})` : ''} · `
     + `AI 없이 메뉴를 차례로 누르고, 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다. 멈추려면 아래 중지를 누르세요(다시 누르면 이어갑니다)`);
   if (startUrl) await relay('goto', { url: startUrl });
@@ -855,7 +855,7 @@ async function crawlMenus(rows) {
     const url = r.result?.url || '';
     if (!r.ok) return { error: `작업 탭을 읽지 못했습니다(${String(r.error || '').slice(0, 80)})`, items: [] };
     if (!/^https?:/.test(url) || (domain !== 'default' && hostOf(url) !== domain)) {
-      return { error: `작업 탭(${url.slice(0, 60) || '알 수 없음'})이 세트 사이트(${domain})가 아닙니다`, items: [] };
+      return { error: `작업 탭(${url.slice(0, 60) || '알 수 없음'})이 프로필 사이트(${domain})가 아닙니다`, items: [] };
     }
     const els = r.result?.elements || [];
     return { url, items: lastNavItems, password: els.some((e) => e.type === 'password'),
@@ -894,10 +894,10 @@ async function crawlMenus(rows) {
   if (started || !['tab', 'nomenu'].includes(out.stopped)) save({ finished, report: { visited: out.visited.length, failed: out.failed, skipped: out.skipped, details: out.details, noDetail: out.noDetail, stopped: out.stopped, writes: writeList } });
   const list = (xs, f) => xs.slice(0, 8).map(f).join(' · ') + (xs.length > 8 ? ` 외 ${xs.length - 8}개` : '');
   log(out.failed.length || out.stopped ? 'err' : 'sys', `${JOBS[kind].label} ${finished ? '끝' : '멈춤'} · 방문 ${out.visited.length} · 실패 ${out.failed.length} · 건너뜀 ${out.skipped.length}${rows ? ` · 상세 ${out.details.length} · 상세 없음 ${out.noDetail.length}` : ''}`
-    + (out.stopped === 'tab' ? ` — ${out.why}. 세트 사이트 탭에서 로그인한 뒤 위쪽 '지금 탭으로'로 작업 탭을 바꾸고 다시 누르세요`
+    + (out.stopped === 'tab' ? ` — ${out.why}. 프로필 사이트 탭에서 로그인한 뒤 위쪽 '지금 탭으로'로 작업 탭을 바꾸고 다시 누르세요`
       : out.stopped === 'nomenu' ? ' — 작업 탭에서 메뉴를 찾지 못했습니다. 로그인한 뒤 메뉴가 보이는 화면에서 다시 누르세요'
       : out.stopped === 'login' ? (canLogin ? ` — 로그인 화면에서 벗어나지 못했습니다(${out.logins}번 시도). 직접 로그인한 뒤 같은 버튼을 누르면 이어갑니다`
-        : ` — 로그인 화면입니다. ${roleName(role) || '기본 역할'} 계정 값이 없어 로그인할 수 없습니다. 세트 화면의 역할과 계정에 넣거나 직접 로그인한 뒤 다시 누르세요`) : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
+        : ` — 로그인 화면입니다. ${roleName(role) || '기본 역할'} 계정 값이 없어 로그인할 수 없습니다. 프로필 화면의 역할과 계정에 넣거나 직접 로그인한 뒤 다시 누르세요`) : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
   if (out.failed.length) log('err', `누르지 못한 메뉴: ${list(out.failed, (f) => `${f.menu.join(' › ')}(${f.error.slice(0, 60)})`)}`);
   if (out.skipped.length) log('sys', `건너뛴 메뉴: ${list(out.skipped, (x) => `${x.menu.join(' › ')}(${x.why})`)}`);
   if (writeList.length) log('err', `화면을 여는 동안 나간 쓰기 요청(앱이 보낸 것, koala 가 누른 버튼 아님) ${writeList.length}종: ${list(writeList, (w) => `${w.req} ×${w.n}`)}`);
@@ -908,7 +908,7 @@ async function crawlMenus(rows) {
 }
 
 // ---------------- 프로필 규칙 ----------------
-// 세트 폴더 rules/*.md. 지시할 때마다 새로 읽어 붙인다(코드 지시는 전문, 수행 지시는 목록). 명세는 prompts/profile-rules.md
+// 프로필 폴더 rules/*.md. 지시할 때마다 새로 읽어 붙인다(코드 지시는 전문, 수행 지시는 목록). 명세는 prompts/profile-rules.md
 const rulesDir = (id = activeSet) => path.join(setPaths(id).dir, 'rules');
 function rulesContext(full) {
   if (!activeSet) return '';
@@ -921,7 +921,7 @@ function rulesContext(full) {
   return r.text ? `\n\n[프로필 규칙] 이 사이트에서 테스트를 쓸 때 지킨다\n${r.text}` : '';
 }
 function readRulesTool(args) {
-  if (!activeSet) return { ok: false, error: '세트가 정해지지 않았습니다' };
+  if (!activeSet) return { ok: false, error: '프로필이 정해지지 않았습니다' };
   const all = rules.listRules(rulesDir());
   if (!args?.file) return { ok: true, result: { files: all.map(({ name, title, size }) => ({ name, title, size })) } };
   const want = path.basename(rules.ruleFile(rulesDir(), args.file));
@@ -929,7 +929,7 @@ function readRulesTool(args) {
   return f ? { ok: true, result: { name: f.name, text: f.text } } : { ok: false, error: `규칙 파일이 없습니다: ${want} (있는 것: ${all.map((r) => r.name).join(', ') || '없음'})` };
 }
 function saveRuleTool(args) {
-  if (!activeSet) return { ok: false, error: '세트가 정해지지 않았습니다' };
+  if (!activeSet) return { ok: false, error: '프로필이 정해지지 않았습니다' };
   try {
     const r = rules.saveRule(rulesDir(), args?.file, args?.content);
     log('sys', `프로필 규칙 ${r.existed ? '고침' : '추가'}: ${r.file}`, 'ai');
@@ -975,11 +975,11 @@ const withRole = (c) => {
   return { ...c, roles: multi, as: (roleOf(c.as) && c.as) || first || actor?.role || defaultRole() || undefined };
 };
 
-// 세트 작업이 가능한지: 옮기기 전이거나 세트를 고르지 않았으면 이유를 돌려준다
-const setBlocked = () => (needsMigration() ? MIGRATION_MSG : !activeSet ? '세트를 먼저 고르세요' : null);
+// 프로필 작업이 가능한지: 옮기기 전이거나 프로필을 고르지 않았으면 이유를 돌려준다
+const setBlocked = () => (needsMigration() ? MIGRATION_MSG : !activeSet ? '프로필을 먼저 고르세요' : null);
 
-// 예외·오류 보강의 다시 저장: 세트에 이미 있는 id는 내용만 바꾸고 사용자가 정한 채택·태그·이슈는 그대로 둔다.
-// 없는 id는 세트 끝에 더한다(새 번호). 흐름·점검표는 보강한 초안 전체로 바꾼다
+// 예외·오류 보강의 다시 저장: 프로필에 이미 있는 id는 내용만 바꾸고 사용자가 정한 채택·태그·이슈는 그대로 둔다.
+// 없는 id는 프로필 끝에 더한다(새 번호). 흐름·점검표는 보강한 초안 전체로 바꾼다
 const keepUser = (old, neu) => ({ ...neu, id: old.id, use: old.use, tags: old.tags ?? neu.tags, ...(old.issue !== undefined ? { issue: old.issue } : {}) });
 function mergeById(cur, { scenarios, cases, flow, coverage }) {
   const replace = (list, items) => list.map((c) => { const n = items.find((x) => x.id === c.id); return n ? keepUser(c, n) : c; });
@@ -990,17 +990,17 @@ function mergeById(cur, { scenarios, cases, flow, coverage }) {
     flow: flow?.length ? flow : cur.flow, coverage: coverage?.length ? coverage : cur.coverage,
   };
   const r = testlist.addTests(base, { scenarios: scenarios.filter((c) => !sc.has(c.id)), cases: cases.filter((c) => !tc.has(c.id)) });
-  // 고쳐 쓴 케이스가 이번에 새로 더한 시나리오를 가리키면 새 번호로 바꾼다(renamed 의 키는 세트에 없던 id 뿐이다)
+  // 고쳐 쓴 케이스가 이번에 새로 더한 시나리오를 가리키면 새 번호로 바꾼다(renamed 의 키는 프로필에 없던 id 뿐이다)
   const fresh = new Set(Object.values(r.renamed));
   r.suite.cases = r.suite.cases.map((c) => (!fresh.has(c.id) && r.renamed[c.scenario] ? { ...c, scenario: r.renamed[c.scenario] } : c));
   return r;
 }
 
-// 같은 Claude 대화(세트+세션 이름)에서 마지막으로 저장한 초안의 id → 세트에 들어간 id
+// 같은 Claude 대화(프로필+세션 이름)에서 마지막으로 저장한 초안의 id → 프로필에 들어간 id
 const savedIds = new Map();
-// 같은 대화의 다시 저장: 앞 저장의 대응표로 세트 항목을 찾은 초안 항목은 그 항목을 고쳐 쓰고(채택·태그·이슈 유지),
-// 나머지는 세트에 같은 id가 있어도 새로 더한다(새 번호). 흐름·점검표는 더한다.
-// 대응표의 키는 AI가 초안에 적은 id다(세트 id는 초안 id와 겹치기 쉬워 같은 항목으로 보지 않는다)
+// 같은 대화의 다시 저장: 앞 저장의 대응표로 프로필 항목을 찾은 초안 항목은 그 항목을 고쳐 쓰고(채택·태그·이슈 유지),
+// 나머지는 프로필에 같은 id가 있어도 새로 더한다(새 번호). 흐름·점검표는 더한다.
+// 대응표의 키는 AI가 초안에 적은 id다(프로필 id는 초안 id와 겹치기 쉬워 같은 항목으로 보지 않는다)
 function reviseDraft(cur, draft, prev) {
   const exists = new Set([...(cur.scenarios || []), ...(cur.cases || [])].map((c) => c.id));
   const target = (id) => { const t = Object.hasOwn(prev, id) ? prev[id] : null; return t && exists.has(t) ? t : null; };
@@ -1017,7 +1017,7 @@ function reviseDraft(cur, draft, prev) {
     cases: (cur.cases || []).map((c) => (C.rev.has(c.id) ? keepUser(c, C.rev.get(c.id)) : c)),
   };
   const r = testlist.addTests(base, { scenarios: S.add, cases: C.add, flow: draft.flow, coverage: draft.coverage });
-  // 케이스의 시나리오 참조: 이번에 더한 것 → 새 번호, 고쳐 쓴 것 → 세트 id, 앞 저장의 것 → 대응표, 그 밖은 그대로
+  // 케이스의 시나리오 참조: 이번에 더한 것 → 새 번호, 고쳐 쓴 것 → 프로필 id, 앞 저장의 것 → 대응표, 그 밖은 그대로
   const ref = (x) => r.renamed[x] ?? revisedS[x] ?? target(x) ?? x;
   const n = (cur.cases || []).length;
   r.suite.cases = r.suite.cases.map((c, i) => {
@@ -1028,7 +1028,7 @@ function reviseDraft(cur, draft, prev) {
   return { suite: r.suite, renamed: r.renamed, ids, revised: S.rev.size + C.rev.size };
 }
 
-// 초안 저장(save_tests): 세트의 테스트 목록에 더한다. 새 id는 세트 안 최대 번호 다음부터 다시 매긴다(testlist.addTests).
+// 초안 저장(save_tests): 프로필의 테스트 목록에 더한다. 새 id는 프로필 안 최대 번호 다음부터 다시 매긴다(testlist.addTests).
 // 예외·오류 보강 중이면 같은 id는 고쳐 쓴다(mergeById). 보강이 아니어도 같은 대화에서 앞서 저장한 초안을 다시 저장하면
 // 앞 저장의 대응표(renamed)로 id를 바꿔 그 항목을 고쳐 쓰고, 나머지는 더한다. 새 대화의 저장은 언제나 더한다
 function saveTests(args) {
@@ -1065,7 +1065,7 @@ function saveTests(args) {
   if (key && !reinforce) savedIds.set(key, r.ids);
   const merged = reinforce || r.revised > 0;
   send({ type: 'tests', set: activeSet, suite: next, added: Object.values(renamed), tag_doc: doc });
-  log('sys', `테스트 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개를 세트 ${activeSet}의 목록에 ${merged ? '반영했습니다(같은 항목은 고쳐 씀)' : '더했습니다'} — 사용할 것을 골라 반영하세요`);
+  log('sys', `테스트 "${args.title}" · BDD ${args.scenarios.length}개 · TDD ${args.cases.length}개를 프로필 ${activeSet}의 목록에 ${merged ? '반영했습니다(같은 항목은 고쳐 씀)' : '더했습니다'} — 사용할 것을 골라 반영하세요`);
   return { ok: true, result: { set: activeSet, scenarios: args.scenarios.length, cases: args.cases.length, renamed: reinforce ? renamed : r.ids } };
 }
 
@@ -1121,7 +1121,7 @@ function reinforceTests(summary) {
   instruct(`${REINFORCE_PROMPT}\n\n[현재 초안]\n${summary || '(요약 없음)'}`, { job: 'reinforce' });
 }
 
-// 세트가 받은 태그 문서(received/tags/)만 쓴다. 받는 것이 없는 이 PC 전용 세트만 저장소에서 읽는다.
+// 프로필이 받은 태그 문서(received/tags/)만 쓴다. 받는 것이 없는 이 PC 전용 프로필만 저장소에서 읽는다.
 // 여럿이면 묶음(groups)을 이어 붙인 한 문서로 본다
 function tagDoc() {
   if (!activeSet) return null;
@@ -1163,7 +1163,7 @@ function saveTags(args) {
   }
   // AI가 빠뜨린 항목도 자동 태그는 붙인다
   for (const [id, item] of tagTarget.items) if (!out[id]) out[id] = tags.assign(doc, item, []);
-  // 태그는 세트 목록에도 바로 남긴다(작업 중에는 패널 저장을 받지 않으므로)
+  // 태그는 프로필 목록에도 바로 남긴다(작업 중에는 패널 저장을 받지 않으므로)
   if (tagTarget.id === activeSet) {
     try {
       const cur = testlist.loadTests(activeSet);
@@ -1309,7 +1309,7 @@ function writeCode(s) {
 function setCodeExpect(s) {
   const doc = tagDoc();
   const scById = new Map(s.scenarios.map((c) => [c.id, c]));
-  codeTarget = activeSet; // 묶음 id = 세트 id
+  codeTarget = activeSet; // 묶음 id = 프로필 id
   codeKey = testlist.adoptedKey(s);
   codeExpect = [...s.scenarios.map((c) => c.id), ...s.cases.map((c) => c.id)];
   codeTags = new Map([...s.scenarios.map((c) => [c.id, c.tags || []]),
@@ -1649,7 +1649,7 @@ async function runAndReport(id, file, code, { grep = null, merge = false, note =
   if (job?.kind === 'localrun') endJob(!summary.failed && !run.error, `통과 ${summary.passed} · 실패 ${summary.failed} · 보류 ${summary.skipped}`);
   else stepJob('review', `통과 ${summary.passed} · 실패 ${summary.failed} · AI가 결과를 확인하는 중`);
   const ranAt = new Date().toISOString();
-  // 실행 결과는 세트 폴더에도 남긴다(테스트별 마지막 결과·실행 이력)
+  // 실행 결과는 프로필 폴더에도 남긴다(테스트별 마지막 결과·실행 이력)
   try { testlist.recordResults(id, run.results, ranAt); } catch (e) { log('err', `실행 결과를 저장하지 못했습니다: ${e.message}`); }
   // 일부만 실행했으면(merge) 지난 결과에 이번 결과를 합친다(패널과 같은 규칙)
   // 실행 결과가 없거나(중단·오류) 읽지 못했으면 서버로 보낼 수 없게 key 를 비운다(패널과 같은 규칙)
@@ -1680,7 +1680,7 @@ function compactSession() {
   sendToClaude('/compact');
 }
 
-// 반영된 테스트 묶음을 서버로 보낸다. 만들기·보내기는 outbox.mjs 가 맡는다(임시 형태). 서버 주소는 프로필의 배포 서버(deploy.url)
+// 반영된 테스트 묶음을 서버로 보낸다. 만들기·보내기는 outbox.mjs 가 맡는다(임시 형태). 서버 주소는 프로필의 보내는 서버(deploy.url)
 async function publishSuite(setId, baseVersion) {
   let r;
   try { r = await outbox.send(setId, { server: profile?.deploy?.url, baseVersion }); } catch (e) { r = { ok: false, error: `테스트 묶음을 보내지 못했습니다: ${e.message}` }; }
@@ -1689,7 +1689,7 @@ async function publishSuite(setId, baseVersion) {
     return;
   }
   send({ type: 'suite_published', ok: true, id: setId, version: r.version, server: r.where });
-  log('sys', `테스트 묶음 "${r.name}" v${r.version}을 배포 서버(${r.where})로 보냈습니다 · BDD ${r.bdd}개 · TDD ${r.tdd}개`);
+  log('sys', `테스트 묶음 "${r.name}" v${r.version}을 보내는 서버(${r.where})로 보냈습니다 · BDD ${r.bdd}개 · TDD ${r.tdd}개`);
 }
 
 // 이번 지시를 수행할 역할(사이드패널 역할 칩). 여럿이면 차례로 수행하며 역할마다 메뉴 권한을 직접 찾는다
@@ -1732,24 +1732,24 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
     return;
   }
   // 새 수행 기록이면 프로필의 시작 URL에서 출발한다(생성 코드도 거기서 시작한다)
-  domain = domainOfSet(readSet(activeSet)); // 세트 정의의 대상 주소
+  domain = domainOfSet(readSet(activeSet)); // 프로필 정의의 대상 주소
   const startUrl = profile?.target?.start_url;
   if (steps.length === 0 && startUrl) {
-    if (domain !== 'default' && hostOf(startUrl) !== domain) log('err', `시작 URL(${startUrl})이 세트 도메인(${domain})과 달라 쓰지 않습니다`);
+    if (domain !== 'default' && hostOf(startUrl) !== domain) log('err', `시작 URL(${startUrl})이 프로필 도메인(${domain})과 달라 쓰지 않습니다`);
     else { log('sys', `시작 URL로 이동합니다: ${startUrl}`); await relay('goto', { url: startUrl }); }
   }
   const start = await relay('snapshot', {});
-  // 대상 탭이 세트 도메인이 아니면 멈추고 묻는다(다른 사이트를 조작하거나 다른 세트의 기록에 섞이지 않게).
-  // 사용자가 승인하면(force) 그대로 진행한다. 기록은 지금 세트에 남는다
+  // 대상 탭이 프로필 도메인이 아니면 멈추고 묻는다(다른 사이트를 조작하거나 다른 프로필의 기록에 섞이지 않게).
+  // 사용자가 승인하면(force) 그대로 진행한다. 기록은 지금 프로필에 남는다
   const tabHost = start.ok ? hostOf(start.result.url) : '';
   if (tabHost && domain !== 'default' && tabHost !== domain) {
-    if (force) log('err', `대상 탭(${tabHost})이 세트 도메인(${domain})이 아니지만 승인해서 진행합니다 · 기록은 세트 ${activeSet}에 남습니다`);
+    if (force) log('err', `대상 탭(${tabHost})이 프로필 도메인(${domain})이 아니지만 승인해서 진행합니다 · 기록은 프로필 ${activeSet}에 남습니다`);
     else {
       const go = startUrl && hostOf(startUrl) === domain ? startUrl : profile?.target?.base_url;
       blocked = { text, opts: { derive, job: kind, roles, tabs } };
-      log('err', `대상 탭(${tabHost})이 세트 도메인(${domain})이 아니라 멈췄습니다 · 이동하거나 그래도 진행을 고르세요`);
+      log('err', `대상 탭(${tabHost})이 프로필 도메인(${domain})이 아니라 멈췄습니다 · 이동하거나 그래도 진행을 고르세요`);
       send({ type: 'domain_mismatch', expected: domain, actual: tabHost, go, can_force: true });
-      endJob(false, '대상 탭이 세트 도메인이 아닙니다');
+      endJob(false, '대상 탭이 프로필 도메인이 아닙니다');
       send({ type: 'busy', busy: false });
       return;
     }
@@ -1902,7 +1902,7 @@ function retryWarm(reason) {
 }
 
 // ---------- 저장된 상태 불러오기 ----------
-// 예전(도메인 구분 전) 데이터는 기록된 첫 주소의 도메인 버킷으로 옮긴다. 도메인 버킷은 세트 옮기기(migrate-sets.mjs)가 세트로 옮긴다
+// 예전(도메인 구분 전) 데이터는 기록된 첫 주소의 도메인 버킷으로 옮긴다. 도메인 버킷은 프로필 옮기기(migrate-sets.mjs)가 프로필로 옮긴다
 const safeDomain = (d) => String(d || 'default').toLowerCase().replace(/[^\w.-]/g, '_');
 function migrateLegacy() {
   if (fs.existsSync(path.join(DATA, 'domains'))) return;
@@ -1926,13 +1926,13 @@ pruneLogs();
 try {
   const g = JSON.parse(fs.readFileSync(STATE, 'utf8'));
   aliasSeq = g.aliasSeq || 0;
-  // 세트를 고른 적이 있고 그 세트가 아직 있으면 이어서 쓴다(예전 state.json 의 domain 은 쓰지 않는다)
+  // 프로필을 고른 적이 있고 그 프로필이 아직 있으면 이어서 쓴다(예전 state.json 의 domain 은 쓰지 않는다)
   if (g.set && readSet(g.set) && !needsMigration()) {
     const st = loadSet(g.set);
-    console.log(`[state] 이어서 시작 · 세트 ${activeSet} · 대화 ${sessionId ? sessionId.slice(0, 8) : '없음'} · 기록 ${steps.length}단계 (${st.savedAt || '-'})`);
+    console.log(`[state] 이어서 시작 · 프로필 ${activeSet} · 대화 ${sessionId ? sessionId.slice(0, 8) : '없음'} · 기록 ${steps.length}단계 (${st.savedAt || '-'})`);
   }
 } catch { /* 처음 실행 */ }
-if (needsMigration()) console.log('[state] 옮기지 않은 예전 데이터가 있습니다. 패널에서 세트로 옮긴 뒤 쓸 수 있습니다');
+if (needsMigration()) console.log('[state] 옮기지 않은 예전 데이터가 있습니다. 패널에서 프로필로 옮긴 뒤 쓸 수 있습니다');
 
 // ── 접속 제한: 이 호스트는 사이드패널(확장)과 같은 PC의 koala 프로세스만 쓴다 ──
 // 127.0.0.1 에만 열어도 사용자가 연 아무 웹 페이지나 접속할 수 있다(WebSocket·POST는 막히지 않는다).
@@ -1962,7 +1962,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('content-type', 'application/json');
     return res.end(JSON.stringify({ ok: true, version: update.version() }));
   }
-  // 세트 목록(받은 세트·저장소의 세트, 새 판 확인 포함)
+  // 프로필 목록(받은 프로필·저장소의 프로필, 새 판 확인 포함)
   if (req.method === 'GET' && req.url === '/sets') {
     res.setHeader('content-type', 'application/json');
     try { return res.end(JSON.stringify(listSets())); } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
@@ -1970,14 +1970,14 @@ const server = http.createServer(async (req, res) => {
   // "Claude 설정 보기": 작업 폴더·파일·실제 전달 프롬프트
   if (req.method === 'GET' && req.url === '/claude/effective') {
     res.setHeader('content-type', 'application/json');
-    if (!profile) { res.statusCode = 409; return res.end(JSON.stringify({ error: '세트를 먼저 고르세요' })); }
+    if (!profile) { res.statusCode = 409; return res.end(JSON.stringify({ error: '프로필을 먼저 고르세요' })); }
     try {
-      const { files, claudeMdExpanded, ...d } = workspace.describe(profile); // 파일 본문(세트 지식)은 보내지 않는다
+      const { files, claudeMdExpanded, ...d } = workspace.describe(profile); // 파일 본문(프로필 지식)은 보내지 않는다
       return res.end(JSON.stringify({
         ...d,
         flags: ['--setting-sources project', '--strict-mcp-config', '--tools ""', `--allowedTools mcp__koala__*`,
           ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
-        // AI에게 전달되는 내용은 본문 대신 파일 경로만 준다. 프로필은 세트 화면(GET /profile/context)
+        // AI에게 전달되는 내용은 본문 대신 파일 경로만 준다. 프로필은 프로필 화면(GET /profile/context)
         prompts: [
           ['기본 규칙', [path.join(PROMPTS, PROMPT_FILES.system), path.join(PROMPTS, PROMPT_FILES.rules)]],
           ['프로필 규칙 폴더', [rulesDir()]],
@@ -1992,18 +1992,18 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
   }
   // 릴리즈 노트: 이 설치본의 CHANGELOG.md(설치한 버전까지의 변경 내용). 사이드패널 메뉴의 '릴리즈 노트 보기'
-  // 세트 화면의 '프로필 규칙' 카드: 파일 목록과 내용
+  // 프로필 화면의 '프로필 규칙' 카드: 파일 목록과 내용
   if (req.method === 'GET' && req.url === '/rules') {
     res.setHeader('content-type', 'application/json');
     if (!activeSet) return res.end(JSON.stringify({ set: null }));
     return res.end(JSON.stringify({ set: activeSet, dir: rulesDir(), files: rules.listRules(rulesDir()) }));
   }
-  // 세트 화면의 'AI에게 전달되는 프로필': 지시마다 덧붙는 대상 서비스·역할과 계정(이름만)·사이트 지식
+  // 프로필 화면의 'AI에게 전달되는 내용': 지시마다 덧붙는 대상 서비스·역할과 계정(이름만)·사이트 지식
   if (req.method === 'GET' && req.url === '/profile/context') {
     res.setHeader('content-type', 'application/json');
     return res.end(JSON.stringify({ set: activeSet, text: profileContext().trim() }));
   }
-  // 사이드패널의 메뉴 경로 지도 보기: 지금 세트의 지도(트리)
+  // 사이드패널의 메뉴 경로 지도 보기: 지금 프로필의 지도(트리)
   if (req.method === 'GET' && req.url === '/menu-map') {
     res.setHeader('content-type', 'application/json');
     if (!activeSet) return res.end(JSON.stringify({ set: null }));
@@ -2026,7 +2026,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(plans));
   }
   if (req.method === 'POST' && req.url === '/claude/open') {
-    if (!profile) { res.statusCode = 409; return res.end('세트를 먼저 고르세요'); }
+    if (!profile) { res.statusCode = 409; return res.end('프로필을 먼저 고르세요'); }
     const d = workspace.prepare(profile);
     const [cmd, ...cmdArgs] = process.platform === 'darwin' ? ['open', d.dir] : WIN ? ['explorer', d.dir] : ['xdg-open', d.dir];
     spawn(cmd, cmdArgs, { detached: true, stdio: 'ignore' }).unref();
@@ -2074,7 +2074,7 @@ const server = http.createServer(async (req, res) => {
   } else { res.statusCode = 404; res.end(); }
 });
 
-// 세트에 묶인 패널 메시지: 옮기기 전에는 거절한다. SET_PICK 은 세트를 고르기 전에도 받는다
+// 프로필에 묶인 패널 메시지: 옮기기 전에는 거절한다. SET_PICK 은 프로필을 고르기 전에도 받는다
 const SET_PICK = new Set(['set', 'set_receive', 'set_create_local', 'set_update_local', 'set_delete']);
 const SET_SCOPED = new Set([...SET_PICK, 'instruct', 'tests_save', 'tests_clear', 'tests_delete', 'run_code', 'write_code', 'retag_code', 'list_code', 'suggest_tags',
   'add_tests', 'derive', 'reinforce', 'publish', 'reset', 'domain_override', 'open_logs', 'open_rules']);
@@ -2091,7 +2091,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
   sendUsage(ws);
   sendActor();
   sendUpdate(ws);
-  sendJob(); // 진행 중인 작업이 있으면 새로 연결한 패널도 알게 한다(작업 중 저장·세트 바꾸기를 미루도록)
+  sendJob(); // 진행 중인 작업이 있으면 새로 연결한 패널도 알게 한다(작업 중 저장·프로필 바꾸기를 미루도록)
   checkUpdate(true); // 패널을 열 때마다 새로 확인한다
   if (needsMigration()) ws.send(JSON.stringify({ type: 'migration_needed' }));
   sendSets(ws);
@@ -2107,9 +2107,9 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'tool_result') { pending.get(m.id)?.(m); pending.delete(m.id); }
     // 사용자가 누른 것은 작업 기록에 남긴다(지시 원문은 instruct 에서)
     else if (!['set', 'instruct', 'list_code', 'update_check'].includes(m.type)) audit('panel', { type: m.type, id: m.suite?.id || m.id, ids: m.ids });
-    // 세트 작업은 옮기기 전에는 받지 않는다. 세트를 고르기 전에는 세트를 고르는 것만 받는다
+    // 프로필 작업은 옮기기 전에는 받지 않는다. 프로필을 고르기 전에는 프로필을 고르는 것만 받는다
     if (SET_SCOPED.has(m.type)) {
-      const why = needsMigration() ? MIGRATION_MSG : !activeSet && !SET_PICK.has(m.type) && !(m.type === 'instruct' && m.set) ? '세트를 먼저 고르세요' : null;
+      const why = needsMigration() ? MIGRATION_MSG : !activeSet && !SET_PICK.has(m.type) && !(m.type === 'instruct' && m.set) ? '프로필을 먼저 고르세요' : null;
       if (why) { log('err', why); return; }
     }
     if (m.type === 'stop') stopRun();
@@ -2159,7 +2159,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
         send({ type: 'tests', set: sid, refused: kind, error, ...(suite ? { suite, tag_doc: sid === activeSet ? tagDoc() : null } : {}) });
       };
       if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 테스트 목록 변경을 저장하지 않습니다. 끝난 뒤 다시 저장합니다'); refuse('busy'); }
-      else if (!readSet(sid)) { const error = `세트 ${sid}를 아직 받지 않아 테스트 목록을 저장하지 않았습니다`; log('err', error); refuse('error', error); }
+      else if (!readSet(sid)) { const error = `프로필 ${sid}를 아직 받지 않아 테스트 목록을 저장하지 않았습니다`; log('err', error); refuse('error', error); }
       else {
         try {
           testlist.saveTests(sid, { ...testlist.applyPanelEdits(testlist.loadTests(sid), m.suite), id: sid });
@@ -2167,7 +2167,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
         } catch (e) { const error = `테스트 목록을 저장하지 못했습니다: ${e.message}`; log('err', error); refuse('error', error); }
       }
     }
-    // 테스트 목록 지우기(BDD·TDD·흐름·전부). 지우기 전 목록은 세트의 tests/archive/ 에 남는다
+    // 테스트 목록 지우기(BDD·TDD·흐름·전부). 지우기 전 목록은 프로필의 tests/archive/ 에 남는다
     // 모델·effort 바꾸기: 대화는 그대로 두고(이어받기) Claude 만 새 설정으로 다시 띄운다. 작업 중에는 바꾸지 않는다
     if (m.type === 'claude_prefs') {
       const next = { model: String(m.model || '').trim().slice(0, 80), effort: EFFORTS.includes(m.effort) ? m.effort : '' };
@@ -2205,7 +2205,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       const what = { bdd: 'BDD 시나리오', tdd: 'TDD 케이스', flow: '흐름', all: '테스트 목록 전부' }[m.part];
       if (!what) log('err', `지울 수 없는 항목입니다: ${m.part}`);
       else if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 테스트를 지울 수 없습니다. 끝난 뒤 다시 누르세요');
-      else if (!readSet(sid)) log('err', `세트 ${sid}를 아직 받지 않았습니다`);
+      else if (!readSet(sid)) log('err', `프로필 ${sid}를 아직 받지 않았습니다`);
       else {
         try {
           const r = testlist.clearTests(sid, m.part);
@@ -2221,7 +2221,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
       const ids = Array.isArray(m.ids) ? m.ids.map(String).filter(Boolean) : [];
       if (!ids.length) log('err', '지울 항목이 없습니다');
       else if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 테스트를 지울 수 없습니다. 끝난 뒤 다시 누르세요');
-      else if (!readSet(sid)) log('err', `세트 ${sid}를 아직 받지 않았습니다`);
+      else if (!readSet(sid)) log('err', `프로필 ${sid}를 아직 받지 않았습니다`);
       else {
         try {
           const r = testlist.deleteTests(sid, ids);
@@ -2235,12 +2235,12 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'set_create_local') {
       try {
         const rec = createLocalSet(m.def || {});
-        log('sys', `이 PC 전용 세트 "${rec.name}"를 만들었습니다`);
+        log('sys', `프로필 "${rec.name}"를 만들었습니다(받는 서버 없음)`);
         sendSets(null, { created: rec.id });
-      } catch (e) { log('err', `세트를 만들지 못했습니다: ${e.message}`); }
+      } catch (e) { log('err', `프로필을 만들지 못했습니다: ${e.message}`); }
     }
     if (m.type === 'set_update_local') {
-      if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 세트를 고칠 수 없습니다. 끝난 뒤 다시 저장하세요'); return; }
+      if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 프로필을 고칠 수 없습니다. 끝난 뒤 다시 저장하세요'); return; }
       try {
         const before = readSet(m.id);
         const rec = updateLocalSet(m.id, m.patch || {});
@@ -2256,23 +2256,23 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
           }
           send({ type: 'set_active', id: m.id, domain, steps: steps.length });
         }
-        log('sys', `이 PC 전용 세트 "${rec.name}"를 고쳤습니다`);
+        log('sys', `프로필 "${rec.name}"를 고쳤습니다`);
         sendSets();
-      } catch (e) { log('err', `세트를 고치지 못했습니다: ${e.message}`); }
+      } catch (e) { log('err', `프로필을 고치지 못했습니다: ${e.message}`); }
     }
     if (m.type === 'set_delete') {
-      if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 세트를 지울 수 없습니다'); return; }
+      if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 프로필을 지울 수 없습니다'); return; }
       try {
         const gone = deleteSet(m.id);
         if (m.id === activeSet) { stopClaude(); activeSet = null; profile = null; profileSeen = false; domain = 'default'; sessionId = null; sessionAlias = null; steps = []; actor = null; saveState(); sendSession(); }
         prefsBySet.delete(m.id);
-        log('sys', `세트 ${m.id}를 이 PC에서 지웠습니다${gone.source === 'local' ? '' : ' (서버 목록에 남아 있어 다시 받을 수 있습니다)'} · 지운 데이터는 ${gone.trash} 에 옮겨 두었습니다`);
+        log('sys', `프로필 ${m.id}를 이 PC에서 지웠습니다${gone.source === 'local' ? '' : ' (받는 서버에 남아 있어 다시 받을 수 있습니다)'} · 지운 데이터는 ${gone.trash} 에 옮겨 두었습니다`);
       } catch (e) { log('err', e.message); }
       sendSets();
     }
     if (m.type === 'instruct') {
       if (m.set && (m.set !== activeSet || !profile) && !activateSet(m.set)) return;
-      if (!profile) { log('err', '세트를 먼저 고르세요'); return; }
+      if (!profile) { log('err', '프로필을 먼저 고르세요'); return; }
       if (m.mode) mode = m.mode === 'plan' ? 'plan' : 'write';
       audit('request', { text: m.text, roles: m.roles, mode, tabs: m.tabs?.map((t) => t.tab) });
       instruct(m.text, { roles: m.roles, tabs: m.tabs });
@@ -2342,5 +2342,5 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`koala host: http://127.0.0.1:${PORT} · v${update.version()}`);
   checkUpdate();
   setInterval(checkUpdate, 60 * 1000).unref(); // 1분마다. 웹 주소로 보므로 GitHub API 한도를 쓰지 않는다(update.mjs)
-  setInterval(() => sendSets(), 60 * 1000).unref(); // 세트 새 판 확인도 1분마다(listSets 가 저장소와 비교한다)
+  setInterval(() => sendSets(), 60 * 1000).unref(); // 프로필 새 판 확인도 1분마다(listSets 가 저장소와 비교한다)
 });

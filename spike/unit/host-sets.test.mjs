@@ -503,7 +503,7 @@ test('이 PC 전용 세트 고치기: 지금 세트가 작업 중이면 거절�
   await holdJob('reinforce', { type: 'reinforce', summary: '요약' });
   at = pn.mark();
   pn.send({ type: 'set_update_local', id, patch: { name: 'loc3' } });
-  await pn.waitFor((m) => m.type === 'log' && m.kind === 'err' && /지금 세트를 고칠 수 없습니다/.test(m.text), at, '작업 중 고치기 거절');
+  await pn.waitFor((m) => m.type === 'log' && m.kind === 'err' && /지금 프로필을 고칠 수 없습니다/.test(m.text), at, '작업 중 고치기 거절');
   await stopJob();
   assert.equal(readJson(setFile).name, 'loc2');
   at = pn.mark();
@@ -533,9 +533,9 @@ test('옮기지 않은 예전 데이터가 있으면 migration_needed 를 보내
       p2.send({ type: 'set_receive', id: 'a' });
       p2.send({ type: 'set', id: 'a', prefs: {} });
       p2.send({ type: 'set_update_local', id: 'a', patch: { name: 'x' } });
-      await p2.waitFor((m) => m.type === 'log' && m.text.includes('기존 데이터를 세트로 옮긴 뒤'), at, '거절 안내');
+      await p2.waitFor((m) => m.type === 'log' && m.text.includes('기존 데이터를 프로필로 옮긴 뒤'), at, '거절 안내');
       await sleep(200);
-      assert.equal(p2.msgs.slice(at).filter((m) => m.type === 'log' && m.text.includes('기존 데이터를 세트로 옮긴 뒤')).length, 3);
+      assert.equal(p2.msgs.slice(at).filter((m) => m.type === 'log' && m.text.includes('기존 데이터를 프로필로 옮긴 뒤')).length, 3);
       assert.ok(!fs.existsSync(path.join(old, 'sets', 'a', 'set.json')));
       assert.ok(!p2.msgs.slice(at).some((m) => m.type === 'tests' || m.type === 'set_active'));
     } finally { p2.ws.close(); await stopHost(h.p); }
@@ -622,7 +622,7 @@ test('migrate: 예전 데이터를 세트로 옮기고 세트 작업을 받는�
       p.send({ type: 'set', id: 'pa', prefs: {} });
       const tl = await p.waitFor((m) => m.type === 'tests' && m.set === 'pa', at, 'pa 의 tests');
       assert.equal(tl.suite.scenarios.length, 1);
-      assert.ok(!p.msgs.slice(at).some((m) => m.type === 'log' && m.text.includes('기존 데이터를 세트로 옮긴 뒤')));
+      assert.ok(!p.msgs.slice(at).some((m) => m.type === 'log' && m.text.includes('기존 데이터를 프로필로 옮긴 뒤')));
 
       // 두 번째: 옮긴 것 없이 ok, 같은 대응
       at = p.mark();

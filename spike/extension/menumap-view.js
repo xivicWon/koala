@@ -1,5 +1,5 @@
 // ── 메뉴 경로 지도 보기 ──
-// 호스트가 지금 세트의 지도(트리)를 준다(GET /menu-map). 메뉴는 그룹별로 접고 펼치며, 방문 ✓ · 미방문 ○ 로 보인다.
+// 호스트가 지금 프로필의 지도(트리)를 준다(GET /menu-map). 메뉴는 그룹별로 접고 펼치며, 방문 ✓ · 미방문 ○ 로 보인다.
 // 공식은 docs/superpowers/specs/2026-10-30-menu-map-design.md
 let menuMapData = null; // { set, base, file, tree } | { error }
 let menuMapOnlyTodo = false; // 미방문만 보기
@@ -15,7 +15,7 @@ async function openMenuMap() {
 
 $('map-btn').onclick = () => openMenuMap();
 
-// 지도 보기 위쪽의 돌기 버튼(세트 화면의 메뉴 경로 지도 칸과 같다)
+// 지도 보기 위쪽의 돌기 버튼(프로필 화면의 메뉴 경로 지도 칸과 같다)
 function crawlButtons() {
   const why = setBlockReason();
   const t = (x) => esc(why || x);
@@ -38,7 +38,7 @@ function renderMenuMapSheet(body) {
   const d = menuMapData;
   if (!d) { body.innerHTML = '<div class="none">불러오는 중…</div>'; return; }
   if (d.error) { body.innerHTML = `<div class="none">${esc(d.error)}</div>`; return; }
-  if (!d.set) { body.innerHTML = '<div class="none">세트를 먼저 고르세요</div>'; return; }
+  if (!d.set) { body.innerHTML = '<div class="none">프로필을 먼저 고르세요</div>'; return; }
   const { leaves, links, direct, progress } = d.tree;
   if (!leaves.length && !links.length && !direct.length) {
     body.innerHTML = `${crawlButtons()}<div class="none">아직 지나간 메뉴가 없습니다.<br>메뉴 전체 돌기를 누르거나 AI가 화면을 조작하면 메뉴와 화면이 여기에 쌓입니다.</div>`;

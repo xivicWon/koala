@@ -1,4 +1,4 @@
-// 세트: 서비스+버전+목적 하나(대상 사이트 하나). 서버(지금은 로컬 저장소)에서 읽기 전용으로 받아 세트 폴더에 스냅숏으로 둔다.
+// 프로필: 서비스+버전+목적 하나(대상 사이트 하나). 서버(지금은 로컬 저장소)에서 읽기 전용으로 받아 프로필 폴더에 스냅숏으로 둔다.
 //   <root>/sets/<id>/set.json · received/ · secrets/ · tests/ · work/ · outbox/
 // 저장소는 sync.mjs 와 같은 우선순위로 직접 읽는다: <root>/store 가 먼저, 없으면 공용 <spike>/store
 import fs from 'node:fs';
@@ -111,7 +111,7 @@ export function receiveSet(id, root = DATA) {
       fs.mkdirSync(path.dirname(p.dir), { recursive: true });
       fs.renameSync(tmp, p.dir);
     } else {
-      // 이미 있는 세트: 테스트·작업 데이터는 그대로 두고 받은 것만 바꿔치기한다
+      // 이미 있는 프로필: 테스트·작업 데이터는 그대로 두고 받은 것만 바꿔치기한다
       const old = `${p.dir}.old-${process.pid}`;
       fs.rmSync(old, { recursive: true, force: true });
       fs.mkdirSync(old);
@@ -145,12 +145,12 @@ export function checkUpdate(id, root = DATA) {
   if (doc === UNREADABLE) return { from: rec.version, to: rec.version, changed: [unreadable('set', rec.id)] };
   if (!doc) return null;
   const changed = [];
-  if ((doc.version ?? 1) !== rec.version) changed.push(`세트 v${rec.version} → v${doc.version ?? 1}`);
+  if ((doc.version ?? 1) !== rec.version) changed.push(`프로필 v${rec.version} → v${doc.version ?? 1}`);
   const have = (list) => new Map(arr(list).map(splitRef));
   const kinds = { roles: 'role', knowledge: 'knowledge', tags: 'tag' };
   for (const [key, kind] of Object.entries(kinds)) {
     const before = have(rec.refs?.[key]);
-    const wanted = key === 'roles' && typeof doc.roles !== 'string' ? [] : arr(doc[key]); // 인라인 역할은 세트 판으로 본다
+    const wanted = key === 'roles' && typeof doc.roles !== 'string' ? [] : arr(doc[key]); // 인라인 역할은 프로필 판으로 본다
     for (const rid of wanted) {
       const cur = tryDoc(kind, rid, root);
       if (cur === UNREADABLE) { changed.push(unreadable(kind, rid)); continue; }
@@ -163,7 +163,7 @@ export function checkUpdate(id, root = DATA) {
   return changed.length ? { from: rec.version, to: doc.version ?? 1, changed } : null;
 }
 
-// 이 PC 전용 세트 id 의 이름 부분: 이름에서 영문·숫자만 살린다. 한글 이름처럼 남는 게 없으면 fallback(예: 옛 프로필 id), 그것도 없으면 'set'
+// 이 PC 전용 프로필 id 의 이름 부분: 이름에서 영문·숫자만 살린다. 한글 이름처럼 남는 게 없으면 fallback(예: 옛 프로필 id), 그것도 없으면 'set'
 export function localSlug(name, fallback = '') {
   const s = safeId(name).replace(/_+/g, '_').replace(/^[_.-]+|[_.-]+$/g, '');
   if (/[A-Za-z0-9]/.test(s)) return s;
@@ -180,11 +180,11 @@ export function createLocalSet(def, root = DATA, fallback = '') {
   return record;
 }
 
-// 이 PC 전용 세트만 고친다. 고치기 화면이 다루는 것(이름, 대상 주소·시작 URL, 배포 서버, 사이트 지식)만 바꾸고
+// 이 PC 전용 프로필만 고친다. 고치기 화면이 다루는 것(이름, 대상 주소·시작 URL, 배포 서버, 사이트 지식)만 바꾸고
 // 나머지(역할 참조, 지식·태그, claude·cleanup, 모르는 키)는 그대로 둔다. 빈 문자열의 시작 URL 은 지운다. id·출처·만든 시각도 그대로
 export function updateLocalSet(id, patch, root = DATA) {
   const rec = readSet(id, root);
-  if (!rec || rec.source !== 'local') throw new Error('이 PC 전용 세트만 고칠 수 있습니다');
+  if (!rec || rec.source !== 'local') throw new Error('받는 서버가 없는 프로필만 이 PC에서 고칠 수 있습니다(받는 서버가 있으면 정의는 서버에서 고칩니다)');
   const def = structuredClone(rec.def || {});
   const pp = patch?.profile || {};
   const prof = (def.profile ??= {});
@@ -202,12 +202,12 @@ export function updateLocalSet(id, patch, root = DATA) {
   return next;
 }
 
-// 세트(프로필)를 이 PC에서 지운다. 이 PC 전용 세트도, 서버에서 받은 세트(받은 사본·테스트·코드·기록·메뉴 지도·규칙)도.
-// 서버 세트는 서버 목록에 남아 다시 받을 수 있다. 되돌릴 수 있게 지우지 않고 <데이터>/deleted/<세트>-<시각>/ 으로 옮긴다
+// 프로필을 이 PC에서 지운다. 이 PC 전용 프로필도, 서버에서 받은 프로필(받은 사본·테스트·코드·기록·메뉴 지도·규칙)도.
+// 서버 프로필은 서버 목록에 남아 다시 받을 수 있다. 되돌릴 수 있게 지우지 않고 <데이터>/deleted/<프로필>-<시각>/ 으로 옮긴다
 export function deleteSet(id, root = DATA) {
   const rec = readSet(id, root);
   const dir = setPaths(id, root).dir;
-  if (!rec || !fs.existsSync(dir)) throw new Error('지울 세트가 없습니다(받지 않은 서버 세트는 이 PC에 지울 것이 없습니다)');
+  if (!rec || !fs.existsSync(dir)) throw new Error('지울 프로필이 없습니다(아직 받지 않은 프로필은 이 PC에 지울 것이 없습니다)');
   const trash = path.join(root, 'deleted', `${safeId(id)}-${new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-')}`);
   fs.mkdirSync(path.dirname(trash), { recursive: true });
   fs.renameSync(dir, trash);
@@ -215,8 +215,8 @@ export function deleteSet(id, root = DATA) {
 }
 
 const readJsonOr = (f, v) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return v; } };
-// 세트의 역할 문서 { roles, default_role }. 정의에 든 인라인 역할이 먼저(앞선 옮기기가 profile 아래에 둔 것도 읽는다),
-// 역할 문서 id(문자열)면 받은 received/roles.json. 이 PC 전용 세트는 받기가 없으므로 저장소의 역할 문서(계정은 뺀다)
+// 프로필의 역할 문서 { roles, default_role }. 정의에 든 인라인 역할이 먼저(앞선 옮기기가 profile 아래에 둔 것도 읽는다),
+// 역할 문서 id(문자열)면 받은 received/roles.json. 이 PC 전용 프로필은 받기가 없으므로 저장소의 역할 문서(계정은 뺀다)
 export function roleDocOf(rec, root = DATA) {
   const def = rec?.def || {};
   if (typeof def.roles !== 'string') {
@@ -229,7 +229,7 @@ export function roleDocOf(rec, root = DATA) {
   try { doc = storeDoc('role', def.roles, root); } catch { /* 읽지 못하면 역할 없이 */ }
   return doc ? { roles: (doc.roles || []).map(({ account, accounts, ...r }) => r), default_role: def.default_role ?? doc.default_role } : null;
 }
-// 패널이 세트 상세를 그리는 데 쓰는 것. 기본 계정은 있는지만 싣고 아이디·비밀번호 값은 싣지 않는다
+// 패널이 프로필 상세를 그리는 데 쓰는 것. 기본 계정은 있는지만 싣고 아이디·비밀번호 값은 싣지 않는다
 function details(rec, root) {
   const p = setPaths(rec.id, root);
   const def = rec.def || {};
@@ -263,7 +263,7 @@ export function listSets(root = DATA, warn = (m) => console.warn(`[sets] ${m}`))
       try { rec = JSON.parse(fs.readFileSync(`${dir}/${d}/set.json`, 'utf8')); } catch { /* 받다 만 폴더 */ }
       if (!rec) continue;
       seen.add(safeId(rec.id));
-      try { out.push(summary(rec, true, checkUpdate(rec.id, root), root)); } catch (e) { warn(`세트 ${rec.id}를 읽지 못해 목록에서 뺐습니다: ${e.message}`); }
+      try { out.push(summary(rec, true, checkUpdate(rec.id, root), root)); } catch (e) { warn(`프로필 ${rec.id}를 읽지 못해 목록에서 뺐습니다: ${e.message}`); }
     }
   }
   for (const r of [path.join(root, 'store'), shared]) {
@@ -272,12 +272,12 @@ export function listSets(root = DATA, warn = (m) => console.warn(`[sets] ${m}`))
     for (const f of fs.readdirSync(sdir).filter((x) => x.endsWith('.yaml'))) {
       let doc;
       try { doc = YAML.parse(fs.readFileSync(`${sdir}/${f}`, 'utf8')); } catch (e) {
-        warn(`세트 문서 ${sdir}/${f}를 읽지 못해 건너뜁니다: ${e.message.split('\n')[0]}`);
+        warn(`프로필 문서 ${sdir}/${f}를 읽지 못해 건너뜁니다: ${e.message.split('\n')[0]}`);
         continue;
       }
       if (!doc?.id) continue;
       // 받기는 <id>.yaml 로 찾으므로 이름이 다른 문서는 받을 수 없다
-      if (`${safeId(doc.id)}.yaml` !== f) { warn(`세트 문서 ${sdir}/${f}의 id(${doc.id})가 파일 이름과 달라 건너뜁니다`); continue; }
+      if (`${safeId(doc.id)}.yaml` !== f) { warn(`프로필 문서 ${sdir}/${f}의 id(${doc.id})가 파일 이름과 달라 건너뜁니다`); continue; }
       if (seen.has(safeId(doc.id))) continue;
       seen.add(safeId(doc.id));
       out.push(summary({ id: doc.id, name: doc.name ?? doc.id, version: doc.version ?? 1, source: 'server', def: defOf(doc) }, false, null));

@@ -1,4 +1,4 @@
-// 메뉴 경로 지도: 지나간 메뉴·화면을 세트마다 쌓아 '대상 화면까지 어떤 메뉴를 거쳐 가는지'를 남긴다.
+// 메뉴 경로 지도: 지나간 메뉴·화면을 프로필마다 쌓아 '대상 화면까지 어떤 메뉴를 거쳐 가는지'를 남긴다.
 // 공식은 docs/superpowers/specs/2026-10-30-menu-map-design.md (1: 메뉴 경로는 확장 menu.js, 2~4: 여기)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -108,7 +108,7 @@ export function buildTree(map) {
   return { leaves: menuLeaves, links, direct, progress: { visited: done, total: menuLeaves.length } };
 }
 
-// AI에게 줄 요약(최대 limit 줄). base = 세트 주소의 호스트(같으면 경로만 쓴다)
+// AI에게 줄 요약(최대 limit 줄). base = 프로필 주소의 호스트(같으면 경로만 쓴다)
 export function describe(map, { base = '', limit = 80 } = {}) {
   const t = buildTree(map);
   if (!t.leaves.length && !t.links.length && !t.direct.length) return '';

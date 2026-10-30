@@ -978,3 +978,9 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .metric-btn.hist-clear::before { content: ""; width: 11px; height: 11px; background: currentColor; -webkit-mask: var(--ic) center / contain no-repeat; mask: var(--ic) center / contain no-repeat;
   --ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14'/%3E%3C/svg%3E"); }
 .metric-btn.hist-clear.arm { border-color: var(--fail); color: var(--fail); background: var(--fail-soft); }
+
+/* 프로필 목록: 받는 서버·보내는 서버 꼬리표, 새 프로필 */
+.set-io { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.io { font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-3); }
+.io.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); }
+.set-list-act { display: flex; justify-content: flex-end; margin-top: 6px; }

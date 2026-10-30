@@ -1,6 +1,6 @@
 // ── 피드백 보내기 ──
 // koala 공개 저장소의 GitHub Issues 로 보낸다. 패널에서 쓴 내용을 채운 새 이슈 화면을 열고, 올리기는 사용자가 GitHub 에서 누른다.
-// 공개 저장소라 자동으로 붙이는 정보는 버전·브라우저·OS 뿐이다(세트 이름·대상 사이트 주소·계정은 넣지 않는다)
+// 공개 저장소라 자동으로 붙이는 정보는 버전·브라우저·OS 뿐이다(프로필 이름·대상 사이트 주소·계정은 넣지 않는다)
 const FB_KINDS = [['bug', '버그', 'bug'], ['idea', '개선 제안', 'enhancement'], ['ask', '질문', 'question']];
 const FB_KEY = 'koa.feedbackDraft';
 let fb = { kind: 'bug', title: '', body: '', env: true };

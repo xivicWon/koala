@@ -35,7 +35,7 @@ export async function crawl({ act, read, login, relogins = 2, done = new Set(), 
     await settle(() => !s.password && s.items.length);
     return !s.password;
   };
-  // 작업 탭을 읽을 수 없거나(chrome:// 등) 세트 사이트가 아니면 시작하지 않는다. 메뉴가 하나도 없으면 돌 것이 없다
+  // 작업 탭을 읽을 수 없거나(chrome:// 등) 프로필 사이트가 아니면 시작하지 않는다. 메뉴가 하나도 없으면 돌 것이 없다
   if (s.error) return { ...out, stopped: 'tab', why: s.error };
   if (s.password && !(await relogin())) return { ...out, stopped: 'login' };
   if (s.error) return { ...out, stopped: 'tab', why: s.error };

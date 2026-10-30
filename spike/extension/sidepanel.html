@@ -14,7 +14,7 @@
       <span id="mode" class="pill mode" hidden></span>
     </div>
     <div class="top-ctx">
-      <button type="button" id="set-chip" class="set-chip" title="세트"></button>
+      <button type="button" id="set-chip" class="set-chip" title="프로필"></button>
       <button type="button" id="claude-btn" class="claude-btn" title="Claude 설정 보기" aria-label="Claude 설정"><span id="ai-dot" class="ai-dot off" role="status" aria-label="AI 연결 안 됨 (호스트 꺼짐)"></span><span class="claude-mark" aria-hidden="true"></span><span id="claude-model" class="claude-model" hidden></span><span id="claude-effort" class="claude-effort" hidden></span><span id="claude-session" class="claude-session" hidden></span></button>
       <button type="button" id="theme-btn" class="icon-btn theme-btn" aria-label="테마"></button>
       <div class="menu-wrap">
@@ -22,7 +22,7 @@
         <div id="menu" class="menu" role="menu" hidden>
           <button type="button" role="menuitem" data-menu="release"><span class="mi-ic release" aria-hidden="true"></span>릴리즈 노트 보기<span id="menu-release-badge" class="mi-badge" hidden>새 버전</span></button>
           <button type="button" role="menuitem" data-menu="feedback" title="버그·개선 제안·질문을 koala GitHub Issues 로 보냅니다"><span class="mi-ic feedback" aria-hidden="true"></span>피드백 보내기</button>
-          <button type="button" role="menuitem" data-menu="logs" title="지금 세트의 작업 기록(지시·도구 호출·테스트 실행)을 날짜별로 남긴 폴더를 엽니다"><span class="mi-ic logs" aria-hidden="true"></span>작업 로그 폴더 열기</button>
+          <button type="button" role="menuitem" data-menu="logs" title="지금 프로필의 작업 기록(지시·도구 호출·테스트 실행)을 날짜별로 남긴 폴더를 엽니다"><span class="mi-ic logs" aria-hidden="true"></span>작업 로그 폴더 열기</button>
           <button type="button" role="menuitem" data-menu="wip" title="아직 완성되지 않았거나 임시로 돌아가는 기능"><span class="mi-ic wip" aria-hidden="true"></span>공사 중인 기능<span id="menu-wip-count" class="mi-badge wip"></span></button>
         </div>
       </div>
@@ -31,7 +31,7 @@
 
   <section class="status">
     <div class="band-top">
-      <div class="url-row" data-tip="AI가 조작하는 작업 탭의 지금 주소입니다. 처음 지시할 때 보이던 탭이 작업 탭이 되고, 노란 탭 그룹(koala · 세트 이름)으로 묶입니다. 다른 탭을 봐도 AI는 작업 탭에서 계속합니다."><span id="s-url-k" class="url-k">대상 탭</span><span id="s-url" class="url mono">페이지 없음</span>
+      <div class="url-row" data-tip="AI가 조작하는 작업 탭의 지금 주소입니다. 처음 지시할 때 보이던 탭이 작업 탭이 되고, 노란 탭 그룹(koala · 프로필 이름)으로 묶입니다. 다른 탭을 봐도 AI는 작업 탭에서 계속합니다."><span id="s-url-k" class="url-k">대상 탭</span><span id="s-url" class="url mono">페이지 없음</span>
         <button type="button" id="work-list-btn" class="work-btn" hidden data-tip="koala가 관리하는 탭(노란 그룹) 목록. 골라서 작업 탭으로 쓰거나 그 탭으로 갑니다">탭 1</button><button type="button" id="work-take" class="work-btn">지금 탭으로</button>
         <span class="menu-wrap vp-wrap"><button type="button" id="vp-btn" class="work-btn vp-btn" aria-haspopup="menu" aria-expanded="false" data-tip="작업 탭의 화면 크기. 모바일·태블릿 등으로 바꾸면 작업 탭만 그 크기로 보이고(창·다른 탭은 그대로), AI 조작과 테스트 실행이 그 크기에서 돕니다">창 크기</button>
           <div id="vp-menu" class="menu vp-menu" role="menu" hidden></div></span></div>
@@ -70,7 +70,7 @@
       <span id="suite-hint" class="hint-text">테스트를 수행한 뒤 "지금까지 한 걸로 테스트 만들어줘"라고 하면 초안을 만듭니다</span>
       <span class="grow"></span>
       <button type="button" id="guide-btn" class="btn sm ghost guide-btn" title="어떤 순서로, 어떻게 말하면 되는지 봅니다">사용 가이드</button>
-      <button type="button" id="map-btn" class="btn sm map-btn" title="이 세트에서 지나간 메뉴와 화면: 대상 화면까지 어떤 메뉴를 거쳐 가는지">메뉴 지도</button>
+      <button type="button" id="map-btn" class="btn sm map-btn" title="이 프로필에서 지나간 메뉴와 화면: 대상 화면까지 어떤 메뉴를 거쳐 가는지">메뉴 지도</button>
       <button type="button" id="plan-btn" class="btn sm list-btn">테스트 목록</button>
     </div>
     <textarea id="q" rows="2" placeholder="예: 로그인하고 회원가입 화면의 입력란이 잘 보이는지 확인해줘"></textarea>

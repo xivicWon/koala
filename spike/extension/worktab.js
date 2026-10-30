@@ -1,11 +1,11 @@
 // ── 작업 탭 ──
-// AI는 화면에 보이는 탭이 아니라 세트마다 정해 둔 작업 탭에서만 조작한다. 처음 지시할 때 그때 보이던 탭을 작업 탭으로 정하고,
-// 탭 그룹(koala · 세트 이름)으로 묶어 어느 탭이 AI 작업 중인지 보이게 한다. 작업 탭에서 열린 새 탭도 같은 그룹에 넣고 그 탭으로 이어 간다.
+// AI는 화면에 보이는 탭이 아니라 프로필마다 정해 둔 작업 탭에서만 조작한다. 처음 지시할 때 그때 보이던 탭을 작업 탭으로 정하고,
+// 탭 그룹(koala · 프로필 이름)으로 묶어 어느 탭이 AI 작업 중인지 보이게 한다. 작업 탭에서 열린 새 탭도 같은 그룹에 넣고 그 탭으로 이어 간다.
 // 작업 탭이 뒤로 가도 ensureAttached 가 포커스를 흉내 내 화면이 계속 그려지므로, 사용자는 그동안 다른 탭을 써도 된다
-const WORK_KEY = 'workTabs'; // chrome.storage.session { [세트 id]: { tabId, groupId } }. 브라우저를 다시 켜면 탭 id가 바뀌므로 세션 저장소에 둔다
+const WORK_KEY = 'workTabs'; // chrome.storage.session { [프로필 id]: { tabId, groupId } }. 브라우저를 다시 켜면 탭 id가 바뀌므로 세션 저장소에 둔다
 let workTabs = {};
 let workTabId = null; // 지금 조작하는 탭(작업 탭, 또는 거기서 열린 새 탭)
-let workFor = null;   // workTabId 를 정한 세트
+let workFor = null;   // workTabId 를 정한 프로필
 const wkSet = () => viewSet || activeSet || '-';
 const saveWork = () => chrome.storage.session?.set({ [WORK_KEY]: workTabs }).catch(() => {});
 const workReady = (chrome.storage.session?.get(WORK_KEY) || Promise.resolve({}))
@@ -14,7 +14,7 @@ const liveTab = (id) => (id != null ? chrome.tabs.get(id).catch(() => null) : Pr
 // 도구가 지금 다루는 탭(작업 탭이 정해진 뒤에만 쓴다)
 const curTab = () => liveTab(tabId);
 
-// 지금 조작할 탭. 없으면(claim) 지금 보이는 탭을 이 세트의 작업 탭으로 정한다
+// 지금 조작할 탭. 없으면(claim) 지금 보이는 탭을 이 프로필의 작업 탭으로 정한다
 async function workTab({ claim = true } = {}) {
   await workReady;
   if (workFor !== wkSet()) { workTabId = null; workFor = wkSet(); }
@@ -42,7 +42,7 @@ async function setWorkTab(tab, { note = '작업 탭을 정했습니다' } = {}) 
   renderWorkList();
 }
 
-// 관리 탭 라벨: 세트마다 #1, #2 …(비어 있는 가장 작은 번호). 사람과 Claude 가 같은 이름으로 탭을 가리킨다
+// 관리 탭 라벨: 프로필마다 #1, #2 …(비어 있는 가장 작은 번호). 사람과 Claude 가 같은 이름으로 탭을 가리킨다
 const labelsOf = (set = wkSet()) => (workTabs[set] ||= {}).labels ||= {};
 const labelOf = (id) => (id != null && workTabs[wkSet()]?.labels?.[id] ? `#${workTabs[wkSet()].labels[id]}` : null);
 function assignLabel(id) {
@@ -56,7 +56,7 @@ function assignLabel(id) {
 function dropLabel(id) { const L = workTabs[wkSet()]?.labels; if (L?.[id]) { delete L[id]; saveWork(); } }
 const selfGrouping = new Set();
 const setGroup = () => workTabs[wkSet()]?.groupId;
-// 이 세트의 관리 탭: 노란 그룹 안의 탭들. 그룹이 없으면(지원 안 함·아직 없음) 작업 탭 하나
+// 이 프로필의 관리 탭: 노란 그룹 안의 탭들. 그룹이 없으면(지원 안 함·아직 없음) 작업 탭 하나
 async function groupTabs() {
   await mergeTabGroups();
   const gid = setGroup();
@@ -69,7 +69,7 @@ async function groupTabs() {
   return t ? [t] : [];
 }
 
-// v0.5.0 은 관리 탭마다 그룹(koala #N · 세트)을 따로 만들었다. 번호는 확장에서만 보이도록 세트 그룹 하나로 다시 모은다
+// v0.5.0 은 관리 탭마다 그룹(koala #N · 프로필)을 따로 만들었다. 번호는 확장에서만 보이도록 프로필 그룹 하나로 다시 모은다
 async function mergeTabGroups() {
   const w = workTabs[wkSet()];
   if (!w?.groups) return;
@@ -78,7 +78,7 @@ async function mergeTabGroups() {
   for (const id of ids) if (await liveTab(id)) await groupWork(id);
 }
 
-// 세트 이름의 탭 그룹에 넣는다. 탭 그룹을 지원하지 않는 브라우저면 건너뛴다
+// 프로필 이름의 탭 그룹에 넣는다. 탭 그룹을 지원하지 않는 브라우저면 건너뛴다
 async function groupWork(id) {
   if (!chrome.tabGroups || !chrome.tabs.group) return;
   const w = workTabs[wkSet()] || {};
@@ -176,7 +176,7 @@ async function renderWorkTab() {
   $('s-url-k').textContent = t ? `작업 탭 ${labelOf(t.id) || ''}`.trim() : '대상 탭';
   $('s-url-k').classList.toggle('work', !!t); // 탭 그룹과 같은 노란 점: 이 주소가 koala 가 관리하는 탭이라는 표시
   $('work-take').disabled = aiBusy;
-  $('work-take').dataset.tip = aiBusy ? 'AI 작업 중에는 작업 탭을 바꿀 수 없습니다' : '지금 보고 있는 탭을 이 세트의 작업 탭으로 정합니다(작업 탭 그룹에 넣습니다)';
+  $('work-take').dataset.tip = aiBusy ? 'AI 작업 중에는 작업 탭을 바꿀 수 없습니다' : '지금 보고 있는 탭을 이 프로필의 작업 탭으로 정합니다(작업 탭 그룹에 넣습니다)';
 }
 const showTab = async (t) => {
   await chrome.tabs.update(t.id, { active: true }).catch(() => {});
@@ -225,8 +225,8 @@ async function useTabFromAi(ref) {
   return { tab: labelOf(t.id), title: t.title, url: t.url };
 }
 
-// 패널을 처음 열 때: 세트가 골라져 있고 작업 탭이 없으면 지금 보던 탭을 작업 탭으로 정한다.
-// 세트의 사이트가 아닌 탭(메일 등)은 koala 그룹에 넣지 않고 안내만 한다
+// 패널을 처음 열 때: 프로필이 골라져 있고 작업 탭이 없으면 지금 보던 탭을 작업 탭으로 정한다.
+// 프로필의 사이트가 아닌 탭(메일 등)은 koala 그룹에 넣지 않고 안내만 한다
 async function autoClaimOnOpen() {
   if (!viewSet || !setInfo(viewSet)) return;
   if (await workTab({ claim: false })) return;
@@ -236,7 +236,7 @@ async function autoClaimOnOpen() {
   let host = '';
   try { host = new URL(t.url).hostname; } catch {}
   if (dom && dom !== 'default' && host && host !== dom) {
-    msg('sys', `지금 탭(${host})은 이 세트의 사이트(${dom})가 아니라 작업 탭으로 정하지 않았습니다. 세트 사이트 탭에서 위쪽 '지금 탭으로'를 누르세요`);
+    msg('sys', `지금 탭(${host})은 이 프로필의 사이트(${dom})가 아니라 작업 탭으로 정하지 않았습니다. 프로필 사이트 탭에서 위쪽 '지금 탭으로'를 누르세요`);
     return;
   }
   await setWorkTab(t, { note: '패널을 열 때 보던 탭을 작업 탭으로 정했습니다' });

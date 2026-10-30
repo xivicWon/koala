@@ -71,7 +71,7 @@ test('새 판 확인: 받기 전에는 스냅숏 그대로', () => {
   assert.deepEqual(checkUpdate('a', root).changed, ['태그 t v1 → v2']);
   assert.deepEqual(readSet('a', root).refs.tags, ['t@v1']);
   put('store/sets/a.yaml', { ...baseSet, version: 4 });
-  assert.deepEqual(checkUpdate('a', root).changed, ['세트 v3 → v4', '태그 t v1 → v2']);
+  assert.deepEqual(checkUpdate('a', root).changed, ['프로필 v3 → v4', '태그 t v1 → v2']);
   const l = listSets(root).find((s) => s.id === 'a');
   assert.equal(l.received, true);
   assert.equal(l.update.to, 4);
@@ -107,7 +107,7 @@ test('목록: 저장소에만 있는 세트는 받지 않음, 로컬 세트 만�
   assert.ok(fs.existsSync(path.join(gone.trash, 'set.json')));
   assert.ok(gone.trash.startsWith(path.join(root, 'deleted', 'local-set-')));
   // 받지 않은 서버 세트는 지울 것이 없다. 받은 서버 세트는 지우면 다시 '받지 않음'으로 목록에 남는다
-  assert.throws(() => deleteSet('a', root), /지울 세트가 없습니다/);
+  assert.throws(() => deleteSet('a', root), /지울 프로필이 없습니다/);
   receiveSet('a', root);
   assert.equal(deleteSet('a', root).source, 'server');
   assert.equal(listSets(root).find((s) => s.id === 'a').received, false);
