@@ -152,12 +152,57 @@ $('timeline').addEventListener('click', (e) => {
 const timelineKey = (id) => `timeline@${id}`;
 let saveTimer;
 let restoringTimeline = false; // 세트를 바꾸며 화면을 비우고 채우는 동안에는 저장하지 않는다
+// 대화 기록: 저장은 최근 HIST_KEEP 건, 열 때는 최근 HIST_SHOW 건만 그리고 나머지는 '이전 기록 더 보기'로 꺼낸다
+const HIST_KEEP = 500;
+const HIST_SHOW = 100;
+let olderHist = []; // 아직 그리지 않은 이전 기록(요소). 오래된 것이 앞
+const histItems = () => [...$('timeline').children].filter((c) => c.id !== 'empty' && !c.classList.contains('more-hist'));
 function saveTimelineNow(d = viewSet) {
   clearTimeout(saveTimer);
   if (!d || restoringTimeline) return;
+  const all = [...olderHist, ...histItems()];
+  if (all.length > HIST_KEEP) olderHist = olderHist.slice(Math.min(olderHist.length, all.length - HIST_KEEP));
+  const html = all.slice(-HIST_KEEP).map((el) => el.outerHTML).join('');
   const reqs = [...requests.values()].slice(-300).map((r) => ({ ...r, body: r.body?.slice(0, 20000) }));
-  chrome.storage.local.set({ [timelineKey(d)]: { html: $('timeline').innerHTML, stepNo, reqs, consoles: consoles.slice(-200), netErr, conErr } }).catch(() => {});
+  chrome.storage.local.set({ [timelineKey(d)]: { html, stepNo, reqs, consoles: consoles.slice(-200), netErr, conErr } }).catch(() => {});
 }
+// 맨 위의 '이전 기록 N건 더 보기': 누르면 HIST_SHOW 건씩 위에 붙이고 보던 위치는 그대로 둔다
+function renderMoreHist() {
+  const box = $('timeline');
+  let btn = box.querySelector('.more-hist');
+  if (!olderHist.length) { btn?.remove(); return; }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'more-hist';
+    btn.onclick = () => {
+      const take = olderHist.splice(-HIST_SHOW);
+      const h = box.scrollHeight;
+      restoringTimeline = true;
+      btn.after(...take);
+      for (const el of take) registerStep(el);
+      renderMoreHist();
+      box.scrollTo({ top: box.scrollTop + box.scrollHeight - h, behavior: 'instant' }); // 보던 자리 그대로
+      setTimeout(() => { restoringTimeline = false; });
+    };
+    $('empty').after(btn);
+  }
+  btn.textContent = `이전 기록 ${olderHist.length}건 더 보기`;
+}
+// 복원한 단계 카드를 다시 쓸 수 있게 등록한다(진행 중이던 것은 중단으로)
+function registerStep(el) {
+  for (const c of el.matches?.('.step[data-n]') ? [el] : el.querySelectorAll?.('.step[data-n]') || []) {
+    if (c.classList.contains('run') || c.classList.contains('pending')) { c.classList.remove('run', 'pending'); c.classList.add('skipped'); c.querySelector('.meta').textContent = '중단됨'; }
+    stepEls.set(Number(c.dataset.n), c);
+  }
+}
+// 맨 아래로 바로(부드러운 스크롤 없이). 글꼴·레이아웃이 늦게 잡혀 높이가 늘어도 따라가도록 잠깐 몇 번 더 맞춘다
+const toBottom = () => {
+  const go = () => { const box = $('timeline'); box.scrollTo({ top: box.scrollHeight, behavior: 'instant' }); };
+  requestAnimationFrame(go);
+  setTimeout(go, 150);
+  setTimeout(go, 500);
+};
 function saveTimeline() {
   if (restoringTimeline) return;
   clearTimeout(saveTimer);
@@ -171,15 +216,16 @@ async function restoreTimeline(d, label = d) {
   if (!st?.html) return;
   restoringTimeline = true;
   const empty = $('empty');
-  $('timeline').innerHTML = st.html;
-  if (!$('empty')) $('timeline').prepend(empty); // 저장본에 빈 화면 안내가 없어도 다시 둔다
-  $('empty').hidden = !!$('timeline').querySelector('.step, .me, .ai');
+  // 최근 HIST_SHOW 건만 그린다. 나머지는 olderHist 에 두고 '이전 기록 더 보기'로 꺼낸다
+  const tmp = document.createElement('div');
+  tmp.innerHTML = st.html;
+  const items = [...tmp.children].filter((c) => c.id !== 'empty' && !c.classList.contains('more-hist'));
+  olderHist = items.slice(0, -HIST_SHOW);
+  $('timeline').replaceChildren(empty, ...items.slice(-HIST_SHOW));
+  $('empty').hidden = !!items.some((c) => c.matches('.step, .me, .ai'));
   stepNo = st.stepNo || 0;
-  for (const el of $('timeline').querySelectorAll('.step[data-n]')) {
-    // 진행 중이던 카드는 중단된 것으로 표시
-    if (el.classList.contains('run') || el.classList.contains('pending')) { el.classList.remove('run', 'pending'); el.classList.add('skipped'); el.querySelector('.meta').textContent = '중단됨'; }
-    stepEls.set(Number(el.dataset.n), el);
-  }
+  for (const el of histItems()) registerStep(el);
+  renderMoreHist();
   for (const r of st.reqs || []) requests.set(r.id, r);
   consoles.push(...(st.consoles || []));
   netErr = st.netErr || 0; conErr = st.conErr || 0;
@@ -187,12 +233,14 @@ async function restoreTimeline(d, label = d) {
   await new Promise((r) => setTimeout(r)); // 위 변경으로 생긴 저장 예약을 건너뛴다
   restoringTimeline = false;
   msg('sys', `이전 기록을 불러왔습니다(${label}). 이어서 지시하면 같은 대화로 진행합니다`);
+  toBottom(); // 열면 항상 최근 대화에서 시작한다
 }
 
 // 화면만 비운다(저장된 타임라인은 그대로). 세트를 바꿀 때 쓴다
 function clearTimelineView() {
   restoringTimeline = true;
   [...$('timeline').children].forEach((c) => c.id !== 'empty' && c.remove());
+  olderHist = [];
   $('empty').hidden = false;
   requests.clear(); consoles.length = 0; stepEls.clear(); netErr = 0; conErr = 0; stepNo = 0; queue = []; renderCounts();
   setTimeout(() => { restoringTimeline = false; });
@@ -201,6 +249,20 @@ function clearView() {
   clearTimelineView();
   if (viewSet) chrome.storage.local.remove(timelineKey(viewSet)).catch(() => {});
 }
+let histClearArm = null;
+$('hist-clear').onclick = () => {
+  if (aiBusy) return msg('err', 'AI 작업이나 돌기 중에는 기록을 지울 수 없습니다. 끝난 뒤 다시 누르세요');
+  if (!histClearArm) {
+    $('hist-clear').classList.add('arm');
+    $('hist-clear').textContent = '한 번 더 누르면 지웁니다';
+    histClearArm = setTimeout(() => { histClearArm = null; $('hist-clear').classList.remove('arm'); $('hist-clear').textContent = '기록 지우기'; }, 3000);
+    return;
+  }
+  clearTimeout(histClearArm); histClearArm = null;
+  $('hist-clear').classList.remove('arm'); $('hist-clear').textContent = '기록 지우기';
+  clearView();
+  msg('sys', '채팅·요청·콘솔 기록을 지웠습니다. AI 대화(세션)와 수행 기록은 그대로라 이어서 지시할 수 있습니다');
+};
 function resetScenario() { clearView(); closeSheet(); ws.send(JSON.stringify({ type: 'reset' })); }
 $('pause').onclick = () => {
   paused = !paused;
