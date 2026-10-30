@@ -13,6 +13,26 @@ async function openMenuMap() {
   if (sheetMode === 'menumap') renderSheet();
 }
 
+$('map-btn').onclick = () => openMenuMap();
+
+// 지도 보기 위쪽의 돌기 버튼(세트 화면의 메뉴 경로 지도 칸과 같다)
+function crawlButtons() {
+  const why = setBlockReason();
+  const t = (x) => esc(why || x);
+  return `<div class="pf-actions mm-acts">
+    <button type="button" class="btn sm" data-mm-act="crawl" ${why ? 'disabled' : ''} title="${t('AI 없이 작업 탭에서 보이는 메뉴를 모두 눌러 지도를 채웁니다')}">메뉴 전체 돌기</button>
+    <button type="button" class="btn sm" data-mm-act="crawl-rows" ${why ? 'disabled' : ''} title="${t('메뉴마다 목록의 첫 행을 눌러 상세 화면이 어떻게 열리는지도 봅니다')}">목록 상세까지 돌기</button>
+    <span class="pf-hint">AI 없이 로그인한 작업 탭에서 돕니다. 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다</span></div>`;
+}
+$('sheet-body').addEventListener('click', (e) => {
+  const act = sheetMode === 'menumap' && e.target.closest('[data-mm-act]')?.dataset.mmAct;
+  if (!act) return;
+  const why = setBlockReason();
+  if (why) return msg('err', why);
+  closeSheet();
+  ws.send(JSON.stringify({ type: 'crawl', rows: act === 'crawl-rows' }));
+});
+
 function renderMenuMapSheet(body) {
   $('sheet-title').textContent = '메뉴 경로 지도';
   const d = menuMapData;
@@ -21,7 +41,7 @@ function renderMenuMapSheet(body) {
   if (!d.set) { body.innerHTML = '<div class="none">세트를 먼저 고르세요</div>'; return; }
   const { leaves, links, direct, progress } = d.tree;
   if (!leaves.length && !links.length && !direct.length) {
-    body.innerHTML = '<div class="none">아직 지나간 메뉴가 없습니다.<br>AI가 화면을 조작하면 지나간 메뉴와 화면에 있는 메뉴가 여기에 쌓입니다.</div>';
+    body.innerHTML = `${crawlButtons()}<div class="none">아직 지나간 메뉴가 없습니다.<br>메뉴 전체 돌기를 누르거나 AI가 화면을 조작하면 메뉴와 화면이 여기에 쌓입니다.</div>`;
     return;
   }
   const short = (k) => (k && d.base && k.startsWith(d.base) ? k.slice(d.base.length) || '/' : k);
@@ -62,7 +82,7 @@ function renderMenuMapSheet(body) {
 
   const seenScreens = new Set(leaves.filter((l) => l.visited).map((l) => l.screen));
   const rest = links.filter((k) => !seenScreens.has(k.from));
-  body.innerHTML = `
+  body.innerHTML = `${crawlButtons()}
     <div class="mm-head">
       <div class="mm-prog"><b>${progress.visited}</b> / ${progress.total} 메뉴 방문 <span class="mm-meta">${pct}%</span></div>
       <div class="mm-bar"><span style="width:${pct}%"></span></div>
