@@ -827,8 +827,13 @@ async function crawlMenus(rows) {
   log('sys', `${JOBS[kind].label}${resume ? ` · 이어서(${done.size}개 끝냄)` : ''} · 작업 탭에서 메뉴를 차례로 누릅니다. 데이터를 바꾸는 버튼은 누르지 않습니다`);
   const read = async () => {
     const r = await relay('snapshot', {});
+    const url = r.result?.url || '';
+    if (!r.ok) return { error: `작업 탭을 읽지 못했습니다(${String(r.error || '').slice(0, 80)})`, items: [] };
+    if (!/^https?:/.test(url) || (domain !== 'default' && hostOf(url) !== domain)) {
+      return { error: `작업 탭(${url.slice(0, 60) || '알 수 없음'})이 세트 사이트(${domain})가 아닙니다`, items: [] };
+    }
     const els = r.result?.elements || [];
-    return { url: r.result?.url || mapUrl, items: lastNavItems, password: els.some((e) => e.type === 'password'),
+    return { url, items: lastNavItems, password: els.some((e) => e.type === 'password'),
       tables: (r.result?.tables || []).some((t) => t.rows > 0), dialog: els.some((e) => e.role === 'dialog'), size: els.length };
   };
   // 돌리는 동안 나간 쓰기 요청(GET 이 아닌 것): 화면을 보기만 해도 나가는 읽음 처리 등. 경로의 긴 숫자는 :id 로 묶는다
@@ -858,10 +863,14 @@ async function crawlMenus(rows) {
   stepJob('save');
   const finished = !out.stopped;
   const writeList = Object.entries(writes).map(([k, v]) => ({ req: k, ...v }));
-  save({ finished, report: { visited: out.visited.length, failed: out.failed, skipped: out.skipped, details: out.details, noDetail: out.noDetail, stopped: out.stopped, writes: writeList } });
+  // 시작도 못 했으면(작업 탭이 사이트가 아님·메뉴 없음) 지난 결과를 덮어쓰지 않는다
+  const started = out.visited.length || out.failed.length || out.skipped.length;
+  if (started || !['tab', 'nomenu'].includes(out.stopped)) save({ finished, report: { visited: out.visited.length, failed: out.failed, skipped: out.skipped, details: out.details, noDetail: out.noDetail, stopped: out.stopped, writes: writeList } });
   const list = (xs, f) => xs.slice(0, 8).map(f).join(' · ') + (xs.length > 8 ? ` 외 ${xs.length - 8}개` : '');
   log(out.failed.length || out.stopped ? 'err' : 'sys', `${JOBS[kind].label} ${finished ? '끝' : '멈춤'} · 방문 ${out.visited.length} · 실패 ${out.failed.length} · 건너뜀 ${out.skipped.length}${rows ? ` · 상세 ${out.details.length} · 상세 없음 ${out.noDetail.length}` : ''}`
-    + (out.stopped === 'login' ? ' — 로그인이 풀렸습니다(비밀번호 입력란이 보임). 다시 로그인한 뒤 같은 버튼을 누르면 이어갑니다' : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
+    + (out.stopped === 'tab' ? ` — ${out.why}. 세트 사이트 탭에서 로그인한 뒤 위쪽 '지금 탭으로'로 작업 탭을 바꾸고 다시 누르세요`
+      : out.stopped === 'nomenu' ? ' — 작업 탭에서 메뉴를 찾지 못했습니다. 로그인한 뒤 메뉴가 보이는 화면에서 다시 누르세요'
+      : out.stopped === 'login' ? ' — 로그인이 풀렸습니다(비밀번호 입력란이 보임). 다시 로그인한 뒤 같은 버튼을 누르면 이어갑니다' : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
   if (out.failed.length) log('err', `누르지 못한 메뉴: ${list(out.failed, (f) => `${f.menu.join(' › ')}(${f.error.slice(0, 60)})`)}`);
   if (out.skipped.length) log('sys', `건너뛴 메뉴: ${list(out.skipped, (x) => `${x.menu.join(' › ')}(${x.why})`)}`);
   if (writeList.length) log('err', `화면을 여는 동안 나간 쓰기 요청(앱이 보낸 것, koala 가 누른 버튼 아님) ${writeList.length}종: ${list(writeList, (w) => `${w.req} ×${w.n}`)}`);

@@ -21,7 +21,10 @@ export const leavesOf = (items) => items.filter((i) => !i.group && !items.some((
 export async function crawl({ act, read, done = new Set(), rows = false, onDialog, onProgress, shouldStop = () => false, limit = 500, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const out = { visited: [], failed: [], skipped: [], details: [], noDetail: [], stopped: null };
   let s = await read();
+  // 작업 탭을 읽을 수 없거나(chrome:// 등) 세트 사이트가 아니면 시작하지 않는다. 메뉴가 하나도 없으면 돌 것이 없다
+  if (s.error) return { ...out, stopped: 'tab', why: s.error };
   if (s.password) return { ...out, stopped: 'login' };
+  if (!s.items.length) return { ...out, stopped: 'nomenu' };
   const refresh = async () => { s = await read(); return s; };
 
   // 조상 그룹을 차례로 펼친다: 하위 항목을 모르거나(그리기 전) 모두 숨어 있으면 머리를 누른다
@@ -66,6 +69,7 @@ export async function crawl({ act, read, done = new Set(), rows = false, onDialo
     }
     out.visited.push({ menu: next.menu, url: r.result?.url });
     await refresh();
+    if (s.error) { out.stopped = 'tab'; out.why = s.error; break; }
     if (s.password) { out.stopped = 'login'; break; }
     if (rows) await probeRows(next.menu);
   }

@@ -96,6 +96,16 @@ test('목록 상세: 행이 늦게 그려지면 다시 눌러 열고, 주소가 
   assert.equal(tries, 2);
 });
 
+test('작업 탭을 읽지 못하거나 메뉴가 없으면 아무것도 누르지 않고 이유와 함께 멈춘다', async () => {
+  const clicks = [];
+  const act = async (tool, args) => { clicks.push(args); return { ok: true, result: {} }; };
+  const bad = await crawl({ act, read: async () => ({ error: '작업 탭(chrome://extensions/)이 세트 사이트(a.test)가 아닙니다', items: [] }) });
+  assert.deepEqual([bad.stopped, bad.why, bad.visited.length], ['tab', '작업 탭(chrome://extensions/)이 세트 사이트(a.test)가 아닙니다', 0]);
+  const none = await crawl({ act, read: async () => ({ url: 'https://a.test/', items: [] }) });
+  assert.equal(none.stopped, 'nomenu');
+  assert.equal(clicks.length, 0);
+});
+
 test('leavesOf: 그룹 머리·하위가 있는 항목은 잎이 아니다', () => {
   assert.deepEqual(leavesOf([{ menu: ['a'], group: true }, { menu: ['a', 'b'] }, { menu: ['c'] }]).map((i) => i.menu.join('›')), ['a›b', 'c']);
 });

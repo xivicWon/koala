@@ -99,7 +99,7 @@ function crawlReport(c) {
   const r = c?.report;
   if (!r) return '';
   const kind = c.kind === 'rows' ? '목록 상세 돌기' : '메뉴 전체 돌기';
-  const why = { login: '로그인이 풀려 멈춤', user: '중지함', error: '오류로 멈춤' }[r.stopped] || '';
+  const why = { login: '로그인이 풀려 멈춤', user: '중지함', error: '오류로 멈춤', tab: '작업 탭을 읽지 못해 멈춤' }[r.stopped] || '';
   const rowsOf = (xs, f) => xs.map((x) => `<div class="mm-link">${f(x)}</div>`).join('');
   const p = (m) => esc(m.join(' › '));
   return `<div class="mm-sec">${kind} ${c.finished ? '결과' : `· ${why} · 다시 누르면 이어갑니다`} <span class="mm-meta">${esc(new Date(c.at).toLocaleString())}</span></div>
