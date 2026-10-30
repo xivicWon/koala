@@ -824,7 +824,25 @@ async function crawlMenus(rows) {
   stopRequested = false;
   startJob(kind);
   send({ type: 'busy', busy: true });
-  log('sys', `${JOBS[kind].label}${resume ? ` · 이어서(${done.size}개 끝냄)` : ''} · 작업 탭에서 메뉴를 차례로 누릅니다. 데이터를 바꾸는 버튼은 누르지 않습니다`);
+  // 프로필 기준: 세트의 시작 URL(내 설정이 있으면 그것)에서 출발하고, 로그인 화면이면 기본 역할 계정으로 로그인한다
+  const t = profile?.target || {};
+  const startUrl = [t.start_url, t.base_url].find((u) => u && (domain === 'default' || hostOf(u) === domain)) || '';
+  const role = defaultRole();
+  const acc = accountFor(role);
+  const canLogin = !!(acc && secretValue(`${acc.key}_USER`) && secretValue(`${acc.key}_PASS`));
+  log('sys', `${JOBS[kind].label} 시작${resume ? ` · 이어서(${done.size}개 끝냄)` : ''} · 세트 "${profile?.name || activeSet}" · 시작 URL ${startUrl || '(없음: 지금 작업 탭에서 시작)'} · `
+    + `역할 ${roleName(role) || '-'}${acc ? `($${acc.key}_USER${canLogin ? '' : ', 값 없음 — 로그인 화면이 나오면 멈춥니다'})` : ''} · `
+    + `AI 없이 메뉴를 차례로 누르고, 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다. 멈추려면 아래 중지를 누르세요(다시 누르면 이어갑니다)`);
+  if (startUrl) await relay('goto', { url: startUrl });
+  // 로그인: 비밀번호 칸 앞의 입력칸에 아이디, 비밀번호 칸에 비밀번호, Enter (사이트 지식 없이 쓰는 일반 규칙)
+  const login = canLogin ? async () => {
+    log('sys', `로그인 화면입니다 · ${roleName(role)} 계정($${acc.key}_USER)으로 로그인합니다`);
+    const u = await relay('type', { locator: { css: 'input[type=text], input[type=email], input:not([type])' }, value: `$${acc.key}_USER` });
+    const p = u.ok && await relay('type', { locator: { css: 'input[type=password]' }, value: `$${acc.key}_PASS` });
+    const e = p?.ok && await relay('press', { key: 'Enter' });
+    if (!e?.ok) log('err', `로그인하지 못했습니다: ${String((e || p || u)?.error || '').slice(0, 120)}`);
+    return !!e?.ok;
+  } : null;
   const read = async () => {
     const r = await relay('snapshot', {});
     const url = r.result?.url || '';
@@ -852,8 +870,9 @@ async function crawlMenus(rows) {
   let out;
   try {
     out = await crawlSite({
-      act, read, done, rows,
+      act, read, done, rows, login,
       shouldStop: () => stopRequested,
+      onVisit: ({ menu, n, total }) => log('sys', `메뉴 ${n}/${total} · ${menu.join(' › ')}`),
       onProgress: ({ done: d, total, next }) => { detailJob(`${d}/${total}${next ? ` · ${next.join(' › ')}` : ''}`); save({ finished: false }); },
       onDialog: (url, m) => { const file = menuMapFile(); const map = menumap.loadMap(file); menumap.observe(map, { tool: 'dialog', url, label: '목록 행' }, { role: actor?.role }); menumap.saveMap(file, map); log('sys', `상세가 대화상자로 열림 · ${m.join(' › ')}`); },
     });
@@ -870,7 +889,8 @@ async function crawlMenus(rows) {
   log(out.failed.length || out.stopped ? 'err' : 'sys', `${JOBS[kind].label} ${finished ? '끝' : '멈춤'} · 방문 ${out.visited.length} · 실패 ${out.failed.length} · 건너뜀 ${out.skipped.length}${rows ? ` · 상세 ${out.details.length} · 상세 없음 ${out.noDetail.length}` : ''}`
     + (out.stopped === 'tab' ? ` — ${out.why}. 세트 사이트 탭에서 로그인한 뒤 위쪽 '지금 탭으로'로 작업 탭을 바꾸고 다시 누르세요`
       : out.stopped === 'nomenu' ? ' — 작업 탭에서 메뉴를 찾지 못했습니다. 로그인한 뒤 메뉴가 보이는 화면에서 다시 누르세요'
-      : out.stopped === 'login' ? ' — 로그인이 풀렸습니다(비밀번호 입력란이 보임). 다시 로그인한 뒤 같은 버튼을 누르면 이어갑니다' : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
+      : out.stopped === 'login' ? (canLogin ? ` — 로그인 화면에서 벗어나지 못했습니다(${out.logins}번 시도). 직접 로그인한 뒤 같은 버튼을 누르면 이어갑니다`
+        : ` — 로그인 화면입니다. ${roleName(role) || '기본 역할'} 계정 값이 없어 로그인할 수 없습니다. 세트 화면의 역할과 계정에 넣거나 직접 로그인한 뒤 다시 누르세요`) : out.stopped === 'user' ? ' — 중지했습니다. 다시 누르면 이어갑니다' : out.stopped === 'error' ? ` — 오류: ${out.error}` : ''));
   if (out.failed.length) log('err', `누르지 못한 메뉴: ${list(out.failed, (f) => `${f.menu.join(' › ')}(${f.error.slice(0, 60)})`)}`);
   if (out.skipped.length) log('sys', `건너뛴 메뉴: ${list(out.skipped, (x) => `${x.menu.join(' › ')}(${x.why})`)}`);
   if (writeList.length) log('err', `화면을 여는 동안 나간 쓰기 요청(앱이 보낸 것, koala 가 누른 버튼 아님) ${writeList.length}종: ${list(writeList, (w) => `${w.req} ×${w.n}`)}`);

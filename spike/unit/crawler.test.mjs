@@ -53,15 +53,30 @@ test('고정점: 펼쳐야 그려지는 하위 항목도 찾아 방문한다', a
   assert.ok(r.visited.some((v) => v.menu.join('›') === '통계›일별'));
 });
 
-test('로그인이 풀리면 멈추고, 끝낸 잎을 넘기면 거기서부터 이어간다', async () => {
+test('로그인이 풀리면(로그인 수단 없음) 멈추고, 풀린 순간 연 메뉴부터 이어간다', async () => {
   const s = site({ logoutAfter: 1 });
   const done = new Set();
   const r = await crawl({ act: s.act, read: s.read, done });
   assert.equal(r.stopped, 'login');
-  assert.equal(r.visited.length, 2);
+  assert.deepEqual(r.visited.map((v) => v.menu.join('›')), ['대시보드']);
   const s2 = site();
   const r2 = await crawl({ act: s2.act, read: s2.read, done });
-  assert.deepEqual(r2.visited.map((v) => v.menu.join('›')), ['결재›결재함', '설정›사용자 관리›사용자 관리']);
+  assert.deepEqual(r2.visited.map((v) => v.menu.join('›')), ['결재›결재대기', '결재›결재함', '설정›사용자 관리›사용자 관리']);
+});
+
+test('로그인 화면에서 시작하거나 도중에 풀리면 login() 으로 다시 로그인하고 계속한다(최대 relogins 번)', async () => {
+  const s = site({ logoutAfter: 2 });
+  s.st.visits = 99; // 로그인 화면에서 시작
+  let logins = 0;
+  const login = async () => { logins += 1; s.st.visits = 0; return true; }; // 로그인하면 세션이 새로 시작된다
+  const r = await crawl({ act: s.act, read: s.read, login });
+  assert.equal(r.stopped, null);
+  assert.deepEqual(r.visited.map((v) => v.menu.join('›')), ['대시보드', '결재›결재대기', '결재›결재함', '설정›사용자 관리›사용자 관리']);
+  assert.equal(logins, 2);
+  // 로그인해도 계속 풀리면 relogins 를 다 쓰고 멈춘다
+  const s3 = site({ logoutAfter: -1 });
+  const r3 = await crawl({ act: s3.act, read: s3.read, login: async () => true, relogins: 1 });
+  assert.equal(r3.stopped, 'login');
 });
 
 test('목록 상세: 새 화면이면 돌아가고, 대화상자면 닫고, 표가 없으면 누르지 않는다', async () => {

@@ -18,14 +18,24 @@ export const leavesOf = (items) => items.filter((i) => !i.group && !items.some((
 
 // act(tool, args) → { ok, result, error } · read() → { url, items, password, tables, dialog, size(화면 요소 수) }
 // done: 이미 끝낸 잎 경로(이어하기). rows: 잎 화면마다 목록 첫 행을 눌러 상세를 연다(2차). wait: 다시 볼 때까지 쉬기
-export async function crawl({ act, read, done = new Set(), rows = false, onDialog, onProgress, shouldStop = () => false, limit = 500, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
-  const out = { visited: [], failed: [], skipped: [], details: [], noDetail: [], stopped: null };
+// login(): 로그인 화면(비밀번호 입력란)이면 프로필 계정으로 로그인하고 성공 여부를 돌려준다. 한 번 돌기에 최대 relogins 번
+export async function crawl({ act, read, login, relogins = 2, done = new Set(), rows = false, onDialog, onProgress, onVisit, shouldStop = () => false, limit = 500, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  const out = { visited: [], failed: [], skipped: [], details: [], noDetail: [], stopped: null, logins: 0 };
   let s = await read();
+  const refresh = async () => { s = await read(); return s; };
+  // 비밀번호 입력란이 보이면 로그인해 본다. 못 하면 false
+  const relogin = async () => {
+    if (!login || out.logins >= relogins) return false;
+    out.logins += 1;
+    if (!(await login())) return false;
+    await refresh();
+    return !s.password;
+  };
   // 작업 탭을 읽을 수 없거나(chrome:// 등) 세트 사이트가 아니면 시작하지 않는다. 메뉴가 하나도 없으면 돌 것이 없다
   if (s.error) return { ...out, stopped: 'tab', why: s.error };
-  if (s.password) return { ...out, stopped: 'login' };
+  if (s.password && !(await relogin())) return { ...out, stopped: 'login' };
+  if (s.error) return { ...out, stopped: 'tab', why: s.error };
   if (!s.items.length) return { ...out, stopped: 'nomenu' };
-  const refresh = async () => { s = await read(); return s; };
 
   // 조상 그룹을 차례로 펼친다: 하위 항목을 모르거나(그리기 전) 모두 숨어 있으면 머리를 누른다
   const open = async (path) => {
@@ -67,10 +77,16 @@ export async function crawl({ act, read, done = new Set(), rows = false, onDialo
       await refresh();
       continue;
     }
-    out.visited.push({ menu: next.menu, url: r.result?.url });
     await refresh();
     if (s.error) { out.stopped = 'tab'; out.why = s.error; break; }
-    if (s.password) { out.stopped = 'login'; break; }
+    // 로그인이 풀렸으면 다시 로그인하고 이 잎을 다시 연다
+    if (s.password) {
+      done.delete(key(next.menu));
+      if (!(await relogin())) { out.stopped = 'login'; break; }
+      continue;
+    }
+    out.visited.push({ menu: next.menu, url: r.result?.url });
+    onVisit?.({ menu: next.menu, n: out.visited.length, total: leaves.length });
     if (rows) await probeRows(next.menu);
   }
   return out;
