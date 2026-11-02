@@ -5,3 +5,4 @@
   · 주제별 파일 하나(select, auto-complete, date-picker, table, login, loading …). 있는 파일이면 먼저 read_rules 로 읽고 전체를 고쳐 쓴다.
   · 확인한 사실만 적는다: 무엇을(요소·화면) · 어떻게(Playwright 코드 한두 줄) · 근거(어느 화면에서 확인했는지). 추측은 적지 않는다.
   · 저장했으면 무엇을 남겼는지 한 줄로 알린다.
+- save_rule 은 프로필 폴더의 .koala/rules/ 에 쓴다. koala 기본 파일·사용자 레벨(~/.koala/)·사용자가 만든 파일은 고치지 않는다. 다르게 하고 싶은 것은 새 규칙 파일로 남긴다.

@@ -23,6 +23,13 @@ const writeJson = (file, data) => {
   fs.renameSync(tmp, file);
 };
 
+// 지우기 전 목록을 보관할 파일: 시각 이름이 겹치면(같은 밀리초에 두 번 지움) -2, -3 … 을 붙여 덮어쓰지 않는다
+function archiveFile(dir, stamp, part) {
+  let f = path.join(dir, `${stamp}-${part}.json`);
+  for (let n = 2; fs.existsSync(f); n++) f = path.join(dir, `${stamp}-${part}-${n}.json`);
+  return f;
+}
+
 export function loadTests(setId, root) {
   const saved = readJson(setPaths(setId, root).testsFile);
   return saved ? { ...emptySuite(setId), ...saved } : emptySuite(setId);
@@ -111,7 +118,7 @@ export function clearTests(setId, part, root) {
   const p = setPaths(setId, root);
   const cur = loadTests(setId, root);
   const stamp = new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-');
-  const archive = path.join(p.tests, 'archive', `${stamp}-${part}.json`);
+  const archive = archiveFile(path.join(p.tests, 'archive'), stamp, part);
   writeJson(archive, cur);
   const removed = { scenarios: 0, cases: 0, flow: 0 };
   let next = { ...cur, applied: false };
@@ -149,7 +156,7 @@ export function deleteTests(setId, ids, root) {
   const gone = [...cur.scenarios.filter((s) => goneS.has(s.id)), ...cur.cases.filter((c) => !cases.includes(c))];
   if (!gone.length) throw new Error(`지울 항목이 목록에 없습니다: ${ids.join(', ')}`);
   const stamp = new Date().toISOString().replace(/[^0-9A-Za-z]/g, '-');
-  const archive = path.join(p.tests, 'archive', `${stamp}-items.json`);
+  const archive = archiveFile(path.join(p.tests, 'archive'), stamp, 'items');
   writeJson(archive, cur);
   const next = { ...cur, scenarios, cases, applied: cur.applied && !gone.some((c) => c.use) };
   saveTests(setId, next, root);

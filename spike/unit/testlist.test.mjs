@@ -188,7 +188,7 @@ test('deleteTests: 항목 하나씩 지운다 · BDD 는 딸린 TDD 와 함께 �
     assert.deepEqual(r.ids, ['TC-3']);
     const t = loadTests('s', root);
     assert.deepEqual([t.scenarios.map((x) => x.id), t.cases.map((x) => x.id), t.applied], [['SC-1'], ['TC-1'], false]);
-    assert.equal(fs.readdirSync(path.join(root, 'sets', 's', 'tests', 'archive')).length, 2);
+    assert.equal(fs.readdirSync(path.join(root, 'profiles', 's', '.koala-work', 'tests', 'archive')).length, 2);
     assert.throws(() => deleteTests('s', ['SC-404'], root), /지울 항목이 목록에 없습니다/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

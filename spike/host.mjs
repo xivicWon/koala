@@ -15,8 +15,9 @@ import * as tags from './tags.mjs';
 import * as update from './update.mjs';
 import { hostToken, HEADER as TOKEN_HEADER } from './host-token.mjs';
 import { fileURLToPath } from 'node:url';
-import { DATA, PORT } from './paths.mjs';
-import { safeId, setPaths, readSet, listSets, receiveSet, createLocalSet, updateLocalSet, deleteSet, domainOfSet, roleDocOf } from './sets.mjs';
+import { DATA, PORT, PROFILES } from './paths.mjs';
+import { safeId, setPaths, readSet, listSets, createLocalSet, deleteSet, domainOfSet, roleDocOf, userDir, profileFiles } from './sets.mjs';
+import { migrateToFolders } from './migrate-profiles.mjs';
 import * as testlist from './testlist.mjs';
 import { planMigration, applyMigration } from './migrate-sets.mjs';
 import * as outbox from './outbox.mjs';
@@ -154,7 +155,7 @@ function profileContext() {
   const accs = (profile.accounts || []).filter((a) => !a.role).map((a) => `- ${a.label || a.key}: $${a.key}_USER / $${a.key}_PASS${a.user ? '' : ' (값 미입력)'}`).join('\n');
   return `\n\n[대상 서비스: ${profile.name} · 프로필 v${profile.version}]\n주소: ${profile.target?.base_url ?? '-'}${profile.target?.start_url ? ` · 테스트 시작 URL: ${profile.target.start_url}` : ''}\n`
     + `${roles ? `역할과 계정(값은 이름으로만 넘긴다):\n${roles}\n` : ''}${accs ? `계정(값은 이름으로만 넘긴다):\n${accs}\n` : ''}`
-    + `${profile.prompt ? `사이트 지식:\n${profile.prompt}` : ''}`;
+    + `프로필 폴더: ${profile.path || '-'} (이 폴더의 글은 CLAUDE.md 로 함께 읽힌다)`;
 }
 
 // koa가 마지막으로 로그인한 계정(아이디 입력란에 $<계정>_USER 를 넣은 것으로 안다)
@@ -209,7 +210,7 @@ const send = (m) => panel?.readyState === 1 && panel.send(JSON.stringify(m));
 // 채팅창에서 AI 가 한 일과 구분한다: 메뉴 지도 돌기(AI 없이 도는 스크립트) 중에는 driver = 'script'
 let driver = 'ai';
 const log = (kind, text, by = driver === 'script' ? 'script' : undefined) => { send({ type: 'log', kind, text, by }); console.log(`[${kind}]${by ? `[${by}]` : ''} ${text}`); audit('log', { kind, text, by }); };
-// 작업 기록: 프로필마다 .koa/sets/<프로필>/work/logs/<날짜>.jsonl 에 한 줄씩 남긴다(사용자 지시·도구 호출·테스트 실행·안내 문구).
+// 작업 기록: 프로필마다 <프로필 폴더>/.koala-work/work/logs/<날짜>.jsonl 에 한 줄씩 남긴다(사용자 지시·도구 호출·테스트 실행·안내 문구).
 // 비밀값은 남기지 않는다($KOALA_* 이름만). 30일이 지난 파일은 호스트가 켜질 때 지운다. 프로필을 고르기 전에는 남기지 않는다
 const LOG_DAYS = 30;
 const logsDir = () => setPaths(activeSet).logs;
@@ -238,8 +239,8 @@ const briefArgs = (a = {}) => Object.fromEntries(Object.entries(a).filter(([k]) 
 // ── 프로필별 작업 데이터 ──
 // 수행 기록·Claude 세션·현재 화면·보관본·테스트 목록을 프로필마다 따로 둔다(sets.mjs 의 setPaths).
 //   .koa/state.json                   — 전체: 지금 프로필, 세션 이름 번호(kaa-N)
-//   .koa/sets/<프로필>/work/state.json   — 그 프로필의 대화 id·세션 이름·수행 기록·현재 화면·로그인 역할
-//   .koa/sets/<프로필>/work/recording.json, recordings/, logs/ · tests/tests.json(테스트 목록 원본)
+//   <프로필 폴더>/.koala-work/work/state.json   — 그 프로필의 대화 id·세션 이름·수행 기록·현재 화면·로그인 역할
+//   <프로필 폴더>/.koala-work/work/recording.json, recordings/, logs/ · tests/tests.json(테스트 목록 원본)
 // 어느 프로필인지는 사이드패널이 정해 보낸다. 도메인은 프로필 정의의 대상 주소에서 계산해 탭 확인에만 쓴다
 const STATE = path.join(DATA, 'state.json');
 let activeSet = null;
@@ -285,8 +286,8 @@ function profileOf(id, prefs = {}) {
   return {
     ...base, id: safeId(id), version: rec.version, name: rec.name, local: rec.source === 'local' || undefined,
     target: { ...base.target, start_url: prefs.start_url || base.target?.start_url || undefined },
-    knowledge: arr(def.knowledge), tags: arr(def.tags),
-    roles, default_role: roleDoc?.default_role || roles[0]?.key || null, role_doc: rec.refs?.roles, accounts,
+    tags: def.tags || null, path: rec.path,
+    roles, default_role: roleDoc?.default_role || roles[0]?.key || null, accounts,
   };
 }
 
@@ -376,25 +377,9 @@ const sendSets = (to, extra = {}) => {
   const m = JSON.stringify({ type: 'sets', sets, ...extra });
   (to || panel)?.readyState === 1 && (to || panel).send(m);
 };
-// 받기: 스냅숏을 바꾸고 Claude 작업 폴더를 다시 만든다. AI 작업·테스트 실행 중에는 받지 않는다
-function receive(id) {
-  if (job || codeRunning) { log('err', 'AI 작업이나 테스트 실행 중에는 프로필을 받을 수 없습니다. 끝난 뒤 다시 누르세요'); return; }
-  let r;
-  try { r = receiveSet(id); } catch (e) { log('err', `프로필 ${id}를 받지 못했습니다: ${e.message}`); return; }
-  if (!r.ok) { log('err', `프로필 ${id}를 받지 못했습니다 · 저장소에 없는 문서: ${r.missing.join(', ')}`); return; }
-  const prof = profileOf(id, prefsBySet.get(id) || {});
-  // 지금 프로필이면 작업 폴더를 지우기 전에 떠 있는 Claude를 끝낸다. 지식 판이 같으면 다음 연결에서 같은 대화를 잇는다
-  if (id === activeSet) stopClaude();
-  try { fs.rmSync(path.join(setPaths(id).claude, '.koa', 'version.json'), { force: true }); workspace.prepare(prof); } catch (e) { log('err', `Claude 작업 폴더를 만들지 못했습니다: ${e.message}`); }
-  log('sys', `프로필 "${r.record.name}" v${r.record.version}을 받았습니다`);
-  if (id === activeSet) {
-    profile = prof;
-    domain = domainOfSet(r.record);
-    send({ type: 'set_active', id, domain, steps: steps.length });
-    sendTests(id); // 받은 태그 문서가 바뀌었을 수 있다
-    scheduleWarm();
-  }
-  sendSets();
+// 받는 서버에서 프로필 받기는 아직 없다(공사 중). 정의는 프로필 폴더의 파일을 고친다
+function receive() {
+  log('err', '받는 서버에서 프로필 받기는 아직 없습니다(공사 중). 프로필 폴더의 파일(KOALA.md·.koala/settings.json)을 직접 고치세요');
 }
 
 // 업데이트 뒤 첫 연결: 패널이 예전 프로필(계정 값은 뺀 것)·활성 프로필·suite@<도메인>·timeline@<도메인> 목록을 보내면
@@ -412,6 +397,7 @@ function migrate(ws, m) {
   try {
     plan = planMigration({ root: DATA, spikeDir: LEGACY_DIR, profiles: m.profiles || {}, activeId: m.activeId ?? null, extSuites: m.extSuites || {}, extTimelines: m.extTimelines || [] });
     r = applyMigration(plan);
+    moveLegacyProfiles(); // 옛 세대 데이터가 옛 형식으로 옮겨졌으면 이어서 프로필 폴더로
   } catch (e) { r = { ok: false, moved: 0, errors: [e.message] }; }
   if (!r.ok) {
     console.log('[migrate] 실패 · 원본은 그대로:', r.errors.join(' · '));
@@ -909,20 +895,23 @@ async function crawlMenus(rows) {
 
 // ---------------- 프로필 규칙 ----------------
 // 프로필 폴더 rules/*.md. 지시할 때마다 새로 읽어 붙인다(코드 지시는 전문, 수행 지시는 목록). 명세는 prompts/profile-rules.md
-const rulesDir = (id = activeSet) => path.join(setPaths(id).dir, 'rules');
+const rulesDir = (id = activeSet) => setPaths(id).rules; // AI 가 쓰는 곳
+const userRulesDir = () => path.join(userDir(), 'rules');
 function rulesContext(full) {
   if (!activeSet) return '';
   if (!full) {
-    const idx = rules.rulesIndex(rulesDir());
+    const idx = [rules.rulesIndex(userRulesDir()), rules.rulesIndex(rulesDir())].filter(Boolean).join('\n');
     return idx ? `\n\n[프로필 규칙 목록] 필요한 파일은 read_rules 로 읽는다\n${idx}` : '';
   }
-  const r = rules.rulesText(rulesDir());
+  const u = rules.rulesText(userRulesDir());
+  const p = rules.rulesText(rulesDir(), rules.MAX_TOTAL - u.text.length);
+  const r = { text: [u.text && `(사용자 레벨)\n${u.text}`, p.text && `(프로필)\n${p.text}`].filter(Boolean).join('\n'), cut: u.cut || p.cut };
   if (r.cut) log('err', `프로필 규칙이 ${rules.MAX_TOTAL}자를 넘어 일부만 붙였습니다(AI는 나머지를 read_rules 로 읽습니다)`);
   return r.text ? `\n\n[프로필 규칙] 이 사이트에서 테스트를 쓸 때 지킨다\n${r.text}` : '';
 }
 function readRulesTool(args) {
   if (!activeSet) return { ok: false, error: '프로필이 정해지지 않았습니다' };
-  const all = rules.listRules(rulesDir());
+  const all = [...rules.listRules(rulesDir()), ...rules.listRules(userRulesDir()).filter((u) => !rules.listRules(rulesDir()).some((p) => p.name === u.name))];
   if (!args?.file) return { ok: true, result: { files: all.map(({ name, title, size }) => ({ name, title, size })) } };
   const want = path.basename(rules.ruleFile(rulesDir(), args.file));
   const f = all.find((r) => r.name === want);
@@ -1124,13 +1113,9 @@ function reinforceTests(summary) {
 // 프로필이 받은 태그 문서(received/tags/)만 쓴다. 받는 것이 없는 이 PC 전용 프로필만 저장소에서 읽는다.
 // 여럿이면 묶음(groups)을 이어 붙인 한 문서로 본다
 function tagDoc() {
-  if (!activeSet) return null;
-  const dirT = `${setPaths(activeSet).received}/tags`;
-  const docs = arr(profile?.tags).map((id) => readJsonFile(`${dirT}/${safeId(id)}.json`) || (profile?.local ? tags.load(id) : null)).filter(Boolean);
-  if (!docs.length) return null;
-  const doc = docs.length === 1 ? docs[0]
-    : { ...docs[0], id: docs.map((d) => d.id).join('+'), version: docs.map((d) => d.version).join('+'), groups: docs.flatMap((d) => d.groups || []) };
-  return tags.withRoles(doc, profile?.roles);
+  const doc = activeSet && profile?.tags;
+  if (!doc || typeof doc !== 'object') return null;
+  return tags.withRoles({ id: 'profile', version: 1, ...doc, groups: doc.groups || [] }, profile?.roles);
 }
 
 // 이미 만든 초안에 태그를 붙인다: 자동 규칙 + AI 판단(save_tags). 사람 몫 태그는 그대로 둔다
@@ -1816,7 +1801,7 @@ function sendToClaude(text) {
   timing = { t0: Date.now(), tool: 0 };
   send({ type: 'busy', busy: true });
   const { ws, spawned } = ensureClaude();
-  log('sys', `지식 ${ws.versions.knowledge.join(' · ') || '없음'}`);
+  log('sys', `읽는 파일 ${ws.versions.files}개(koala 기본·사용자 레벨·프로필 폴더)`);
   if (PERSIST) {
     if (spawned && sessionId) log('sys', '이전 대화를 이어서 진행합니다');
     if (!spawned) timing.warm = true;
@@ -1980,8 +1965,11 @@ const server = http.createServer(async (req, res) => {
         // AI에게 전달되는 내용은 본문 대신 파일 경로만 준다. 프로필은 프로필 화면(GET /profile/context)
         prompts: [
           ['기본 규칙', [path.join(PROMPTS, PROMPT_FILES.system), path.join(PROMPTS, PROMPT_FILES.rules)]],
-          ['프로필 규칙 폴더', [rulesDir()]],
-          ['지식', [path.join(d.dir, 'CLAUDE.md')]],
+          ['규칙', [userRulesDir(), rulesDir()]],
+          ['koala 기본 글(업데이트로 바뀜)', [path.join(PROMPTS, 'qa-common.md')]],
+          ['사용자 레벨(폴더의 .md·.txt 전부)', [userDir()]],
+          ['프로필 폴더(폴더의 .md·.txt 전부)', [setPaths(activeSet).folder]],
+          ['AI 작업 폴더의 CLAUDE.md(위 파일들을 불러옴)', [path.join(d.dir, 'CLAUDE.md')]],
           ['메뉴 경로 형식', [path.join(PROMPTS, PROMPT_FILES.menuMap)]],
           ['테스트 코드 지침', [path.join(PROMPTS, PROMPT_FILES.playwright), path.join(PROMPTS, PROMPT_FILES.fix)]],
         ],
@@ -1992,6 +1980,12 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
   }
   // 릴리즈 노트: 이 설치본의 CHANGELOG.md(설치한 버전까지의 변경 내용). 사이드패널 메뉴의 '릴리즈 노트 보기'
+  // 프로필 화면의 '읽는 파일': 층별 파일 경로
+  if (req.method === 'GET' && req.url === '/profile/files') {
+    res.setHeader('content-type', 'application/json');
+    if (!activeSet) return res.end(JSON.stringify({ set: null }));
+    return res.end(JSON.stringify({ set: activeSet, folder: setPaths(activeSet).folder, user: userDir(), layers: profileFiles(activeSet) }));
+  }
   // 프로필 화면의 '프로필 규칙' 카드: 파일 목록과 내용
   if (req.method === 'GET' && req.url === '/rules') {
     res.setHeader('content-type', 'application/json');
@@ -2235,30 +2229,16 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     if (m.type === 'set_create_local') {
       try {
         const rec = createLocalSet(m.def || {});
-        log('sys', `프로필 "${rec.name}"를 만들었습니다(받는 서버 없음)`);
+        log('sys', `프로필 "${rec.name}"를 만들었습니다 · 폴더 ${rec.path} (KOALA.md·.koala/settings.json 을 고쳐 쓰세요)`);
         sendSets(null, { created: rec.id });
       } catch (e) { log('err', `프로필을 만들지 못했습니다: ${e.message}`); }
     }
-    if (m.type === 'set_update_local') {
-      if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 프로필을 고칠 수 없습니다. 끝난 뒤 다시 저장하세요'); return; }
-      try {
-        const before = readSet(m.id);
-        const rec = updateLocalSet(m.id, m.patch || {});
-        if (m.id === activeSet) {
-          profile = profileOf(m.id, prefsBySet.get(m.id) || {});
-          domain = domainOfSet(rec);
-          // 사이트 지식·지식이 바뀌었으면 받기처럼 Claude 작업 폴더를 다시 만든다(떠 있는 Claude 는 먼저 끝낸다)
-          const brain = (r) => JSON.stringify([r?.def?.profile?.prompt ?? '', r?.def?.knowledge ?? null]);
-          if (brain(before) !== brain(rec)) {
-            stopClaude();
-            try { fs.rmSync(path.join(setPaths(m.id).claude, '.koa', 'version.json'), { force: true }); workspace.prepare(profile); } catch (e) { log('err', `Claude 작업 폴더를 만들지 못했습니다: ${e.message}`); }
-            scheduleWarm();
-          }
-          send({ type: 'set_active', id: m.id, domain, steps: steps.length });
-        }
-        log('sys', `프로필 "${rec.name}"를 고쳤습니다`);
-        sendSets();
-      } catch (e) { log('err', `프로필을 고치지 못했습니다: ${e.message}`); }
+    if (m.type === 'open_profile') {
+      const dir = setPaths(m.id || activeSet).folder;
+      if (fs.existsSync(dir)) {
+        const [cmd, ...cmdArgs] = process.platform === 'darwin' ? ['open', dir] : WIN ? ['explorer', dir] : ['xdg-open', dir];
+        spawn(cmd, cmdArgs, { detached: true, stdio: 'ignore' }).unref();
+      } else log('err', `프로필 폴더가 없습니다: ${dir}`);
     }
     if (m.type === 'set_delete') {
       if (m.id === activeSet && (job || codeRunning)) { log('err', 'AI 작업이나 테스트 실행 중에는 지금 프로필을 지울 수 없습니다'); return; }
@@ -2266,7 +2246,7 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
         const gone = deleteSet(m.id);
         if (m.id === activeSet) { stopClaude(); activeSet = null; profile = null; profileSeen = false; domain = 'default'; sessionId = null; sessionAlias = null; steps = []; actor = null; saveState(); sendSession(); }
         prefsBySet.delete(m.id);
-        log('sys', `프로필 ${m.id}를 이 PC에서 지웠습니다${gone.source === 'local' ? '' : ' (받는 서버에 남아 있어 다시 받을 수 있습니다)'} · 지운 데이터는 ${gone.trash} 에 옮겨 두었습니다`);
+        log('sys', `프로필 ${m.id}를 지웠습니다 · 폴더째 ${gone.trash} 에 옮겨 두었습니다(되살리려면 ${PROFILES} 로 다시 옮기세요)`);
       } catch (e) { log('err', e.message); }
       sendSets();
     }
@@ -2338,9 +2318,18 @@ server.on('error', (e) => {
   }
   throw e;
 });
+// 옛 프로필(<데이터>/sets/<id>/)을 프로필 폴더(~/koala-profiles/<id>/)로 옮긴다. 원본은 그대로 둔다
+function moveLegacyProfiles() {
+  try {
+    const moved = migrateToFolders();
+    if (moved.length) console.log(`[profiles] 옛 프로필 ${moved.join(', ')}를 ${PROFILES} 로 옮겼습니다(원본 ${path.join(DATA, 'sets')} 는 그대로)`);
+    return moved;
+  } catch (e) { console.log('[profiles] 옛 프로필을 옮기지 못했습니다:', e.message); return []; }
+}
+moveLegacyProfiles();
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`koala host: http://127.0.0.1:${PORT} · v${update.version()}`);
   checkUpdate();
   setInterval(checkUpdate, 60 * 1000).unref(); // 1분마다. 웹 주소로 보므로 GitHub API 한도를 쓰지 않는다(update.mjs)
-  setInterval(() => sendSets(), 60 * 1000).unref(); // 프로필 새 판 확인도 1분마다(listSets 가 저장소와 비교한다)
+  setInterval(() => sendSets(), 60 * 1000).unref(); // 프로필 폴더를 직접 만들거나 지운 것도 1분마다 목록에 반영
 });

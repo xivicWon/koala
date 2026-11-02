@@ -5,8 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import { planMigration, applyMigration } from '../migrate-sets.mjs';
-import { setPaths, readSet, listSets } from '../sets.mjs';
-import { loadTests } from '../testlist.mjs';
+import { setPaths, readSet, listSets } from '../legacy-sets.mjs';
 
 let root, spikeDir;
 const put = (base, rel, body) => {
@@ -104,7 +103,7 @@ test('적용: 세트 자리로 옮기고 원본은 보관 폴더로', () => {
   assert.equal(readSet('pb', root).source, 'server');
 
   // 묶음·코드는 pa
-  const t = loadTests('pa', root);
+  const t = JSON.parse(read(pa.testsFile)); // 옛 형식 위치(이어서 migrate-profiles 가 프로필 폴더로 옮긴다)
   assert.equal(t.id, 'pa');
   assert.equal(t.applied, true);
   assert.equal(t.base_version, 0);

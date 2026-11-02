@@ -3,7 +3,6 @@
 let setStep = null;      // 시트 안의 작은 단계: null | 'new' | 'edit' | 'delete'
 let setFormError = '';
 let setFormVals = {};    // 새 프로필·고치기 입력값(검사에 걸려 다시 그려도 남게)
-let setWipSync = false;  // 받기를 눌렀으면 임시 저장소에서 받는다는 공사 표지판을 보여 준다
 let setSentOnOpen = false; // 이번 연결에서 호스트에 지금 프로필을 알렸는지
 let setAi = { open: false, set: null, text: '' }; // 'AI에게 전달되는 내용' 펼침 상태와 호스트가 준 내용
 
@@ -18,6 +17,25 @@ document.getElementById('sheet-body').addEventListener('toggle', async (e) => {
     const j = await r.json();
     setAi = { open: true, set: j.set, text: j.text };
   } catch { setAi = { open: true, set: activeSet, text: '호스트와 연결되어 있지 않아 불러오지 못했습니다' }; }
+  if (sheetMode === 'set') renderSheet();
+}, true);
+
+// '프로필 폴더' 카드의 'AI 에게 전달하는 파일': 펼칠 때 호스트에서 층별 목록을 받는다
+let setFiles = { open: false, data: null };
+function filesList() {
+  const d = setFiles.data;
+  if (!d) return '<div class="pf-hint">불러오는 중…</div>';
+  if (d.error) return `<div class="pf-alert">${esc(d.error)}</div>`;
+  const group = (title, list, empty) => `<div class="set-files-g"><b>${title}</b>${list.length ? list.map((f) => `<code class="cs-code mono">${esc(f)}</code>`).join('') : `<span class="pf-hint">${empty}</span>`}</div>`;
+  return group('koala 기본(업데이트로 바뀜, 고치지 않음)', d.layers.koala, '없음')
+    + group(`사용자 레벨 · ${esc(shortPath(d.user))}`, d.layers.user, '없음 · 이 폴더에 .md 파일을 두면 모든 프로필에 쓰입니다')
+    + group(`이 프로필 · ${esc(shortPath(d.folder))}`, d.layers.project, '없음');
+}
+document.getElementById('sheet-body').addEventListener('toggle', async (e) => {
+  if (sheetMode !== 'set' || !e.target.matches?.('details.set-files') || setFiles.open === e.target.open) return;
+  setFiles.open = e.target.open;
+  if (!setFiles.open) return;
+  try { setFiles.data = await (await fetch('http://127.0.0.1:8765/profile/files')).json(); } catch { setFiles.data = { error: '호스트와 연결되어 있지 않아 불러오지 못했습니다' }; }
   if (sheetMode === 'set') renderSheet();
 }, true);
 
@@ -62,89 +80,77 @@ function renderSetChip() {
   const upd = setList.filter((x) => x.received && x.update);
   const st = !s ? 'off' : !s.received ? 'warn' : 'ok';
   chip.innerHTML = `<span class="pdot ${st}"></span><span class="set-chip-name">${s ? esc(s.name) : '프로필 없음'}</span>${upd.length ? '<span class="set-upd" aria-label="새 판 있음"></span>' : ''}`;
-  const tip = [s ? `${s.name} · ${s.source === 'local' ? '받는 서버 없음' : `받는 서버 v${s.version}`}${s.received ? '' : ' · 받지 않음'}` : '프로필을 고르세요',
+  const tip = [s ? `${s.name} · ${s.path || ''}` : '프로필을 고르세요',
     upd.length ? `새 판 있음 · ${upd.map((x) => x.name).join(', ')}` : '', !hostUp && setList.length ? '호스트가 꺼져 있어 마지막으로 받은 목록입니다' : ''].filter(Boolean).join('\n');
   chip.title = tip;
   if (chip.dataset.tip !== undefined) chip.dataset.tip = tip; // 빠른 툴팁이 title 을 옮겨 둔 뒤에도 갱신
 }
 
-// 받는 서버(in: 프로필 정의를 받아 오는 곳)·보내는 서버(out: 테스트 묶음을 보내는 곳)가 있는지
-const serverTags = (s) => `<span class="io ${s.source === 'local' ? 'off' : 'on'}" title="${s.source === 'local' ? '받는 서버 없음: 이 PC에서 정의를 고칩니다' : '받는 서버 있음: 정의는 서버가 정합니다'}">받는 서버 ${s.source === 'local' ? '없음' : '있음'}</span>`
-  + `<span class="io ${s.deploy_url ? 'on' : 'off'}" title="${s.deploy_url ? esc(s.deploy_url) : '보내는 서버 없음'}">보내는 서버 ${s.deploy_url ? '있음' : '없음'}</span>`;
+// 보내는 서버(out: 테스트 묶음을 보내는 곳)가 있는지. 받는 서버(in)는 아직 없다(공사 중)
+const serverTags = (s) => `<span class="io ${s.deploy_url ? 'on' : 'off'}" title="${s.deploy_url ? esc(s.deploy_url) : '보내는 서버 없음(.koala/settings.json 의 deploy_url)'}">보내는 서버 ${s.deploy_url ? '있음' : '없음'}</span>`
+  + (s.receive_url ? `<span class="io on" title="${esc(s.receive_url)}">받는 서버 있음</span>` : '');
+const shortPath = (p) => String(p || '').replace(/^(\/(Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~');
 function setRow(s, why) {
   const on = s.id === activeSet;
   const n = testCount(s);
-  const recv = (!s.received || s.update) && s.source !== 'local';
-  const pickTip = !s.received ? '먼저 받기를 누르세요' : why || (on ? '지금 프로필' : '이 프로필로 바꿉니다. 타임라인·테스트 목록·세션이 이 프로필 것으로 바뀝니다');
+  const pickTip = why && !on ? why : on ? '지금 프로필' : '이 프로필로 바꿉니다. 타임라인·테스트 목록·세션이 이 프로필 것으로 바뀝니다';
   return `<div class="set-row ${on ? 'on' : ''}" data-set-row="${esc(s.id)}">
-    <button type="button" class="set-pick" data-set-act="pick" data-set-id="${esc(s.id)}" ${!s.received || (why && !on) ? 'disabled' : ''} title="${esc(pickTip)}">
+    <button type="button" class="set-pick" data-set-act="pick" data-set-id="${esc(s.id)}" ${why && !on ? 'disabled' : ''} title="${esc(pickTip)}">
       <span class="set-row-name">${esc(s.name)}</span>
-      <span class="set-row-meta mono">${esc(s.domain || '-')}${s.source === 'local' ? '' : ` · v${esc(s.version)}`}${n === null ? '' : ` · 테스트 ${n}`}</span>
+      <span class="set-row-meta mono">${esc(s.domain === 'default' ? '대상 주소 없음' : s.domain || '-')}${n === null ? '' : ` · 테스트 ${n}`} · ${esc(shortPath(s.path))}</span>
       <span class="set-io">${serverTags(s)}</span>
     </button>
-    <span class="set-row-st">${on ? '<span class="tag ok">지금</span>' : ''}${!s.received ? '<span class="tag">받지 않음</span>' : s.update ? `<span class="tag warn" title="${esc(s.update.changed.join('\n'))}">새 판 v${esc(s.update.to)}</span>` : ''}
-      ${recv ? `<button type="button" class="btn sm" data-set-act="receive" data-set-id="${esc(s.id)}" ${why ? 'disabled' : ''} title="${esc(why || (s.received ? '새 판으로 받습니다. Claude 작업 폴더를 다시 만듭니다' : '서버(지금은 이 PC의 임시 저장소)에서 받습니다'))}">받기</button>` : ''}</span>
+    <span class="set-row-st">${on ? '<span class="tag ok">지금</span>' : ''}</span>
   </div>`;
 }
 
 function renderSetSheet(body) {
   $('sheet-title').textContent = '프로필';
-  if ((setStep === 'new' || setStep === 'edit') && body.querySelector('[data-new]')) captureSetForm(body); // 작업 상태가 바뀌어 다시 그려도 입력값을 잃지 않게
+  if (setStep === 'new' && body.querySelector('[data-new]')) captureSetForm(body); // 작업 상태가 바뀌어 다시 그려도 입력값을 잃지 않게
   const why = setBlockReason();
   const s = setInfo();
   body.innerHTML = `<div class="pf set-sheet">
     ${migrationNeeded ? `<div class="pf-alert">${esc(migrationText())}</div>` : ''}
-    ${!hostUp ? `<div class="pf-alert">호스트가 꺼져 있습니다. ${setList.length ? '마지막으로 받은 목록을 보여 줍니다. ' : ''}받기·바꾸기는 호스트에 연결되면 할 수 있습니다</div>` : ''}
-    ${setWipSync ? wipSign('sync', { compact: true }) : ''}
+    ${!hostUp ? `<div class="pf-alert">호스트가 꺼져 있습니다. ${setList.length ? '마지막 목록을 보여 줍니다. ' : ''}만들기·바꾸기는 호스트에 연결되면 할 수 있습니다</div>` : ''}
     <section class="set-list" aria-label="프로필 목록">
-      <div class="set-zone-h"><b>프로필 목록</b><span class="pf-hint">하나를 고르면 아래에 그 프로필의 정의·설정이 보입니다</span></div>
+      <div class="set-zone-h"><b>프로필 목록</b><span class="pf-hint">~/koala-profiles/ 의 폴더 하나가 프로필 하나입니다</span></div>
       ${setList.map((x) => setRow(x, why)).join('') || '<div class="pf-hint set-none">프로필이 없습니다</div>'}
       <div class="set-list-act"><button type="button" class="btn sm" data-set-act="new-open" ${migrationNeeded || !hostUp ? 'disabled' : ''}>+ 새 프로필</button></div>
       ${setStep === 'new' ? setForm('new') : ''}
     </section>
-    ${s ? setDetail(s, why) : `<div class="none">${setList.length ? '프로필을 고르세요' : hostUp ? '받을 수 있는 프로필이 없습니다' : '호스트에 연결되면 프로필 목록을 불러옵니다'}</div>`}
+    ${s ? setDetail(s, why) : `<div class="none">${setList.length ? '프로필을 고르세요' : hostUp ? '프로필이 없습니다. + 새 프로필로 만드세요' : '호스트에 연결되면 프로필 목록을 불러옵니다'}</div>`}
   </div>`;
 }
 
 const roBox = (v, empty = '없음') => `<div class="pf-ro mono">${v ? esc(v) : `<span class="pf-hint">${empty}</span>`}</div>`;
-const refList = (refs, ids) => (refs?.length ? refs : ids || []);
 
 // 카드 하나: 제목 + 이 정보가 어디서 오고 어디에 저장되는지(경계)
 const setCard = (title, scope, body) => `<section class="set-card"><header class="set-card-h"><b>${title}</b><span class="set-scope">${scope}</span></header><div class="set-card-b">${body}</div></section>`;
 
-// 고른 프로필: 머리(이름·판·고치기) → 카드 — 프로필 정의(서버에서 받음) · 내 설정(이 확장) · 메뉴 경로 지도(이 PC 작업 데이터)
+// 고른 프로필: 머리(이름·폴더 열기·지우기) → 카드 — 프로필 폴더(파일에서 읽은 값·읽는 파일) · 내 설정(이 확장) · 규칙 · 메뉴 경로 지도
 function setDetail(s, why) {
-  const local = s.source === 'local';
   const pref = prefOf(s.id);
-  if (local && setStep === 'edit') return `<div class="set-detail">${setForm('edit', s, why)}</div>`;
   const roles = s.roles || [];
+  const active = s.id === activeSet;
   return `<div class="set-detail">
-    <div class="set-detail-k">${s.id === activeSet ? '지금 프로필' : '고른 프로필'}</div>
-    <div class="set-detail-h"><b>${esc(s.name)}</b><span class="pf-status ${s.update ? 'warn' : 'ok'}">${local ? '받는 서버 없음' : `받는 서버 v${esc(s.version)}`}</span><span class="grow"></span>
-      ${local ? `<button type="button" class="btn sm" data-set-act="edit-open" ${why ? 'disabled' : ''} title="${esc(why)}">고치기</button>` : ''}
-      ${local || s.received ? `<button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why || (local ? '이 PC에서 프로필을 지웁니다' : '이 PC에서 받은 사본과 작업 데이터를 지웁니다. 받는 서버에는 남습니다'))}">지우기</button>` : ''}</div>
-    ${s.update ? `<div class="set-update"><div><b>새 판 v${esc(s.update.to)}</b> <span class="pf-hint">지금 v${esc(s.update.from)} · 받기를 눌러야 바뀝니다</span></div>
-      <ul>${s.update.changed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <div class="pf-actions"><button type="button" class="primary sm" data-set-act="receive" data-set-id="${esc(s.id)}" ${why ? 'disabled' : ''} title="${esc(why || '새 판으로 받습니다. 테스트·작업 데이터는 그대로 두고, Claude 작업 폴더를 다시 만듭니다')}">받기</button></div></div>` : ''}
-    ${setStep === 'delete' && (local || s.received) ? `<div class="pf-confirm">프로필 "${esc(s.name)}"를 이 PC에서 지울까요?${local ? '' : ' 받는 서버에는 남아 다시 받을 수 있습니다.'}
-      이 프로필의 테스트 목록·코드·수행 기록·로그·메뉴 지도·프로필 규칙과 내 설정(시작 URL·계정)이 이 PC에서 사라집니다. 데이터 폴더의 deleted/ 에 옮겨 두므로 필요하면 되살릴 수 있습니다.
+    <div class="set-detail-k">${active ? '지금 프로필' : '고른 프로필'}</div>
+    <div class="set-detail-h"><b>${esc(s.name)}</b><span class="grow"></span>
+      <button type="button" class="btn sm" data-set-act="folder-open" ${hostUp ? '' : 'disabled'} title="프로필 폴더를 엽니다. 정의는 이 폴더의 파일을 고칩니다">폴더 열기</button>
+      <button type="button" class="btn sm danger-text" data-set-act="delete" ${hostUp && !why ? '' : 'disabled'} title="${esc(why || '프로필 폴더와 작업 데이터를 함께 ~/koala-profiles/.deleted/ 로 옮깁니다')}">지우기</button></div>
+    ${setStep === 'delete' ? `<div class="pf-confirm">프로필 "${esc(s.name)}"를 지울까요? 프로필 폴더(KOALA.md·설정·규칙)와 작업 데이터(테스트·수행 기록·메뉴 지도)를 함께 ~/koala-profiles/.deleted/ 로 옮깁니다. 되살리려면 그 폴더를 다시 ~/koala-profiles/ 로 옮기면 됩니다.
       <div class="pf-actions"><button type="button" class="danger sm" data-set-act="delete-yes">지우기</button><button type="button" class="btn sm" data-set-act="delete-no">취소</button></div></div>` : ''}
-    ${!s.received ? `<div class="pf-alert">아직 받지 않은 프로필입니다. 목록에서 받기를 누르면 정의를 받아 쓸 수 있습니다</div></div>` : `
-    ${setCard('프로필 정의', local ? '받는 서버 없음 · 이 PC에서 고칩니다' : '받는 서버에서 받음 · 읽기 전용', `
-    <label class="pf-label">받는 서버 <span class="pf-hint">프로필 정의를 받아 오는 곳. 있으면 정의는 서버가 정합니다</span></label>
-    ${roBox(local ? '' : '이 PC의 임시 저장소(실제 서버 연결 전)', '없음 · 이 PC에서 만든 프로필')}
-    <label class="pf-label">대상 주소 <span class="pf-hint">대상 탭이 이 도메인(${esc(domainOf(s))})이 아니면 실행 전에 묻습니다</span></label>
-    ${roBox(s.base_url)}
-    <label class="pf-label">보내는 서버 <span class="pf-hint">테스트 목록의 서버 전송이 보내는 곳</span></label>
-    ${roBox(s.deploy_url, local ? '없음 · 고치기에서 넣습니다' : '없음 · 서버에서 설정합니다')}
-    <label class="pf-label">역할 ${s.refs?.roles ? `<span class="pf-hint mono">${esc(s.refs.roles)}</span>` : ''}</label>
-    <div class="set-chips">${roles.map((r) => `<span class="role-tag" title="${esc(r.desc)}">${esc(r.label)}${r.key === s.default_role ? ' · 기본' : ''}</span>`).join('') || '<span class="pf-hint">역할 정보가 없습니다</span>'}</div>
-    <label class="pf-label">지식</label>
-    <div class="set-chips">${refList(s.refs?.knowledge, s.knowledge).map((x) => `<span class="tag mono">${esc(x)}</span>`).join('') || '<span class="pf-hint">없음</span>'}</div>
-    <label class="pf-label">태그와 버전</label>
-    <div class="set-chips">${refList(s.refs?.tags, s.tags).map((x) => `<span class="tag mono">${esc(x)}</span>`).join('') || '<span class="pf-hint">없음</span>'}</div>
-    ${s.prompt ? `<details class="case-d set-prompt"><summary>사이트 지식 (AI에게 함께 전달)</summary><pre class="pf-ro pf-prompt-ro mono">${esc(s.prompt)}</pre></details>` : ''}
-    <div class="pf-hint set-when">${local ? '만든' : '받은'} 시각 ${s.received_at ? esc(new Date(s.received_at).toLocaleString()) : '-'}${s.tests ? ` · 테스트 BDD ${s.tests.scenarios} · TDD ${s.tests.cases}` : ''}</div>`)}
+    ${setCard('프로필 폴더', '정의는 이 폴더의 파일 · 고치려면 폴더 열기', `
+    <code class="cs-code mono set-rules-dir">${esc(s.path || '')}</code>
+    <label class="pf-label">대상 주소 <span class="pf-hint">.koala/settings.json 의 base_url · 대상 탭이 이 도메인(${esc(domainOf(s))})이 아니면 실행 전에 묻습니다</span></label>
+    ${roBox(s.base_url, '없음 · .koala/settings.json 의 base_url 에 넣으세요')}
+    <label class="pf-label">시작 <span class="pf-hint">.koala/settings.json 의 start_path</span></label>
+    ${roBox(s.start_url || s.login_path, '/')}
+    <label class="pf-label">보내는 서버 <span class="pf-hint">.koala/settings.json 의 deploy_url</span></label>
+    ${roBox(s.deploy_url, '없음')}
+    <label class="pf-label">역할 <span class="pf-hint">.koala/settings.json 의 roles</span></label>
+    <div class="set-chips">${roles.map((r) => `<span class="role-tag" title="${esc(r.desc)}">${esc(r.label)}${r.key === s.default_role ? ' · 기본' : ''}</span>`).join('') || '<span class="pf-hint">역할이 없습니다</span>'}</div>
+    ${active ? `<details class="set-files" ${setFiles.open ? 'open' : ''}><summary>AI 에게 전달하는 파일 <span class="pf-hint">koala 기본 · 사용자 레벨 · 이 프로필 폴더</span></summary>${filesList()}</details>` : ''}
+    <div class="pf-hint set-when">테스트 BDD ${s.tests?.scenarios ?? 0} · TDD ${s.tests?.cases ?? 0}</div>`)}
 
     ${setCard('내 설정', '이 확장에만 저장 · 고를 때 이 PC 호스트로만 보냄', `
     <label class="pf-label">시작 URL ${pref.start_url ? '<span class="tag ok">내 설정</span>' : '<span class="tag">프로필 값</span>'}
@@ -168,18 +174,18 @@ function setDetail(s, why) {
       </div></div>`;
     }).join('')}`)}
 
-    ${s.id === activeSet ? setCard('프로필 규칙', '이 PC 작업 데이터 · 프로필 폴더(rules/) · AI가 남기고 지시마다 읽음', rulesCardBody()) : ''}
+    ${s.id === activeSet ? setCard('프로필 규칙', '프로필 폴더 .koala/rules/ · AI 가 새 파일로 남기고 지시마다 읽음', rulesCardBody()) : ''}
 
-    ${s.id === activeSet ? setCard('AI에게 전달되는 내용', '프로필 정의 + 내 설정으로 만듦 · 지시마다 덧붙음', `
-    <details class="set-ai" ${setAi.open ? 'open' : ''}><summary>펼쳐서 보기 <span class="pf-hint">대상 서비스 · 역할과 계정(값은 이름으로만) · 사이트 지식</span></summary>
+    ${s.id === activeSet ? setCard('지시마다 붙는 내용', '프로필 폴더의 값 + 내 설정으로 만듦', `
+    <details class="set-ai" ${setAi.open ? 'open' : ''}><summary>펼쳐서 보기 <span class="pf-hint">대상 서비스 · 역할과 계정(값은 이름으로만)</span></summary>
       <pre class="pf-ro pf-prompt-ro mono">${esc(setAi.set === s.id ? setAi.text || '(없음)' : '불러오는 중…')}</pre></details>`) : ''}
 
-    ${s.id === activeSet ? setCard('메뉴 경로 지도', '이 PC 작업 데이터 · 프로필 폴더(map/)', `
+    ${s.id === activeSet ? setCard('메뉴 경로 지도', '작업 데이터 · 프로필 폴더 .koala-work/map/', `
     <div class="pf-actions set-map"><button type="button" class="btn sm" data-set-act="map-open">지도 보기</button>
       <button type="button" class="btn sm" data-set-act="crawl" ${why ? 'disabled' : ''} title="${esc(why || 'AI 없이 작업 탭에서 보이는 메뉴를 모두 눌러 지도를 채웁니다')}">메뉴 전체 돌기</button>
       <button type="button" class="btn sm" data-set-act="crawl-rows" ${why ? 'disabled' : ''} title="${esc(why || '메뉴마다 목록의 첫 행을 눌러 상세 화면이 어떻게 열리는지도 봅니다')}">목록 상세까지 돌기</button></div>
     <div class="pf-hint set-map-d">지나간 메뉴와 화면을 쌓습니다. 돌기는 AI 없이 로그인한 작업 탭에서 돌고, 데이터를 바꾸는 버튼·로그아웃은 누르지 않습니다.</div>`) : ''}
-  </div>`}`;
+  </div>`;
 }
 
 // 시작 URL은 대상 주소와 같은 도메인이어야 한다(다른 도메인이면 호스트가 쓰지 않는다)
@@ -193,62 +199,28 @@ function startUrlWarning(u, s) {
 // 새 프로필·고치기 입력(이 PC 전용 프로필)
 function setForm(kind, s = null, why = '') {
   const v = (k, d = '') => esc(setFormVals[k] ?? d);
-  const cur = setInfo();
   return `<div class="pf-new">
-    <div class="pf-new-h"><b>${kind === 'new' ? '새 프로필' : '프로필 고치기'}</b><span class="pf-hint">이 PC에서만 쓰는 프로필입니다</span></div>
+    <div class="pf-new-h"><b>새 프로필</b><span class="pf-hint">~/koala-profiles/ 에 폴더와 기본 파일을 만듭니다</span></div>
     <label class="pf-label">이름</label>
-    <input class="pf-input" data-new="name" placeholder="예: 서비스A 2.0 poc-1" autocomplete="off" value="${v('name', s?.name)}">
-    <label class="pf-label">대상 주소</label>
-    <input class="pf-input mono" data-new="base_url" placeholder="https://svc-a.example" autocomplete="off" value="${v('base_url', s?.base_url)}">
-    <label class="pf-label">시작 URL <span class="pf-hint">선택. 대상 주소와 같은 도메인</span></label>
-    <input class="pf-input mono" data-new="start_url" placeholder="https://svc-a.example/login" autocomplete="off" value="${v('start_url', s?.start_url)}">
-    ${kind === 'edit' ? `<label class="pf-label">보내는 서버 <span class="pf-hint">선택. 이 PC의 임시 서버: http://127.0.0.1:8765</span></label>
-    <input class="pf-input mono" data-new="deploy_url" placeholder="https://qa-server.example" autocomplete="off" value="${v('deploy_url', s?.deploy_url)}">
-    <label class="pf-label">사이트 지식 <span class="pf-hint">AI에게 함께 전달</span></label>
-    <textarea class="pf-input pf-prompt mono" data-new="prompt" rows="8">${v('prompt', s?.prompt)}</textarea>` : ''}
-    ${kind === 'new' && cur?.received ? `<label class="pf-check"><input type="checkbox" data-new="copy" ${setFormVals.copy === false ? '' : 'checked'}> 지금 프로필(${esc(cur.name)})의 설정으로 시작 <span class="pf-hint">역할·지식·태그·보내는 서버·사이트 지식을 복사합니다(계정은 복사하지 않음)</span></label>` : ''}
-    <div class="pf-hint">팀과 함께 쓰려면 서버 관리자에게 프로필 등록을 요청하세요. 받는 서버가 있는 프로필은 정의를 서버가 정하고 이 PC에서는 받아 쓰기만 합니다.</div>
+    <input class="pf-input" data-new="name" placeholder="예: shop-staging" autocomplete="off" value="${v('name')}">
+    <label class="pf-label">대상 주소 <span class="pf-hint">선택 · 나중에 .koala/settings.json 에서 고쳐도 됩니다</span></label>
+    <input class="pf-input mono" data-new="base_url" placeholder="https://svc-a.example" autocomplete="off" value="${v('base_url')}">
     ${setFormError ? `<div class="pf-alert">${esc(setFormError)}</div>` : ''}
     <div class="pf-actions">
-      <button type="button" class="primary sm" data-set-act="${kind}-save" ${why ? 'disabled' : ''} title="${esc(why)}">${kind === 'new' ? '만들기' : '저장'}</button>
-      <button type="button" class="btn sm" data-set-act="${kind}-cancel">취소</button>
+      <button type="button" class="primary sm" data-set-act="new-save" ${why ? 'disabled' : ''} title="${esc(why)}">만들기</button>
+      <button type="button" class="btn sm" data-set-act="new-cancel">취소</button>
     </div>
   </div>`;
 }
-// 새 프로필의 정의(호스트 createLocalSet 이 받는 모양). 역할은 정의 안에 직접 둔다(이 PC 전용 프로필은 역할 문서를 받지 않는다)
-function localDef(vals, from) {
-  const roles = (from?.roles || []).map(({ key, label, desc }) => ({ key, label, desc }));
-  return {
-    name: vals.name,
-    profile: {
-      target: { base_url: vals.base_url, ...(vals.start_url ? { start_url: vals.start_url } : {}), ...(from?.login_path ? { login_path: from.login_path } : {}) },
-      deploy: { url: vals.deploy_url ?? from?.deploy_url ?? '' },
-      prompt: vals.prompt ?? from?.prompt ?? '',
-    },
-    ...(roles.length ? { roles, default_role: from.default_role } : {}),
-    knowledge: from?.knowledge?.length ? from.knowledge : ['qa-common'],
-    tags: from?.tags?.length ? from.tags : ['qa-tags'],
-  };
-}
-// 입력 중인 값을 setFormVals 에 담는다(다시 그려도 남게)
 function captureSetForm(body) {
   const v = (k) => body.querySelector(`[data-new="${k}"]`)?.value.trim();
-  const vals = { name: v('name') || '', base_url: v('base_url') || '', start_url: v('start_url') || '' };
-  if (body.querySelector('[data-new="deploy_url"]')) vals.deploy_url = v('deploy_url') || '';
-  if (body.querySelector('[data-new="prompt"]')) vals.prompt = body.querySelector('[data-new="prompt"]').value;
-  const copy = body.querySelector('[data-new="copy"]');
-  if (copy) vals.copy = copy.checked;
-  setFormVals = vals;
-  return vals;
+  setFormVals = { name: v('name') || '', base_url: v('base_url') || '' };
+  return setFormVals;
 }
 function readSetForm(body) {
   const vals = captureSetForm(body);
-  let host = '';
-  try { host = new URL(vals.base_url).hostname; } catch {}
   setFormError = !vals.name ? '이름을 적어 주세요'
-    : !host ? '대상 주소를 http:// 또는 https://로 시작하는 주소로 적어 주세요'
-    : vals.start_url && (() => { try { return new URL(vals.start_url).hostname !== host; } catch { return true; } })() ? '시작 URL은 대상 주소와 같은 도메인이어야 합니다'
-    : vals.deploy_url && (() => { try { return !/^https?:$/.test(new URL(vals.deploy_url).protocol); } catch { return true; } })() ? '보내는 서버 주소는 http:// 또는 https://로 시작해야 합니다'
+    : vals.base_url && (() => { try { return !/^https?:$/.test(new URL(vals.base_url).protocol); } catch { return true; } })() ? '대상 주소는 http:// 또는 https://로 시작해야 합니다'
     : '';
   return setFormError ? null : vals;
 }
@@ -330,13 +302,6 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
     if (why) return msg('err', why);
     return switchSet(id);
   }
-  if (act === 'receive') {
-    if (why) return msg('err', why);
-    setWipSync = true;
-    ws.send(JSON.stringify({ type: 'set_receive', id }));
-    msg('sys', `프로필 "${setInfo(id)?.name || id}"를 받습니다`);
-    return renderSheet();
-  }
   if (act === 'map-open') return openMenuMap();
   if (act === 'rules-open') return ws.send(JSON.stringify({ type: 'open_rules' }));
   if (act === 'rules-reload') { setRules.files = null; renderSheet(); return loadSetRules(); }
@@ -346,31 +311,19 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
     return ws.send(JSON.stringify({ type: 'crawl', rows: act === 'crawl-rows' }));
   }
   if (act === 'new-open') { setStep = 'new'; setFormError = ''; setFormVals = {}; return renderSheet(); }
-  if (act === 'edit-open') { setStep = 'edit'; setFormError = ''; setFormVals = {}; return renderSheet(); }
-  if (act === 'new-cancel' || act === 'edit-cancel' || act === 'delete-no') { setStep = null; setFormError = ''; setFormVals = {}; return renderSheet(); }
+  if (act === 'new-cancel' || act === 'delete-no') { setStep = null; setFormError = ''; setFormVals = {}; return renderSheet(); }
   if (act === 'new-save') {
     const vals = readSetForm(body);
     if (!vals) return renderSheet();
     if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않습니다');
-    ws.send(JSON.stringify({ type: 'set_create_local', def: localDef(vals, vals.copy === false ? null : setInfo()?.received ? setInfo() : null) }));
+    ws.send(JSON.stringify({ type: 'set_create_local', def: { name: vals.name, base_url: vals.base_url } }));
     return; // 호스트가 sets{created} 로 답하면 그 프로필로 바꾼다
   }
-  if (act === 'edit-save') {
-    const s = setInfo();
-    const vals = readSetForm(body);
-    if (!vals || !s) return renderSheet();
-    if (ws?.readyState !== 1) return msg('err', '호스트와 연결되어 있지 않습니다');
-    if (why) return msg('err', why);
-    // 고친 칸만 보낸다. 호스트는 나머지 정의(역할 참조·지식·태그·claude·cleanup·모르는 키)를 그대로 둔다
-    const patch = { name: vals.name, profile: { target: { base_url: vals.base_url, start_url: vals.start_url }, deploy: { url: vals.deploy_url ?? '' }, prompt: vals.prompt ?? '' } };
-    ws.send(JSON.stringify({ type: 'set_update_local', id: s.id, patch }));
-    setStep = null; setFormVals = {};
-    return renderSheet();
-  }
+  if (act === 'folder-open') return ws.send(JSON.stringify({ type: 'open_profile', id: setInfo()?.id }));
   if (act === 'delete') { setStep = 'delete'; return renderSheet(); }
   if (act === 'delete-yes') {
     const s = setInfo();
-    if (!s || (s.source !== 'local' && !s.received)) return;
+    if (!s) return;
     if (why) return msg('err', why);
     ws.send(JSON.stringify({ type: 'set_delete', id: s.id }));
     delete setPrefs[s.id];

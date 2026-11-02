@@ -1,0 +1,9 @@
+{
+  "base_url": "",
+  "start_path": "/",
+  "deploy_url": "",
+  "roles": [],
+  "default_role": null,
+  "tags": null,
+  "cleanup": []
+}

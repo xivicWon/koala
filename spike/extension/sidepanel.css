@@ -984,3 +984,10 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
 .io { font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-3); }
 .io.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); }
 .set-list-act { display: flex; justify-content: flex-end; margin-top: 6px; }
+
+/* 프로필 폴더 카드: AI 에게 전달하는 파일(층별) */
+.set-files { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.set-files > summary { padding: 7px 10px; cursor: pointer; font-size: 12px; }
+.set-files > summary .pf-hint { margin-left: 4px; }
+.set-files-g { display: grid; gap: 4px; padding: 6px 10px 10px; font-size: 11.5px; }
+.set-files-g b { font-size: 11.5px; color: var(--text-2); }

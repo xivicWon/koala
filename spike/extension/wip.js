@@ -10,11 +10,11 @@ const WIP = {
     next: '데이터 형태 정의 → 보내기 모듈 교체 → 보내는 서버 인증',
   },
   sync: {
-    title: '서버에서 프로필 받기',
-    now: '실제 서버가 아니라 <b>이 PC의 임시 저장소</b>(<span class="mono">spike/.koa/store/</span>)를 서버처럼 읽어 프로필을 받습니다.',
-    missing: ['실제 서버에서 받지 않습니다', '서버 API·인증이 없습니다'],
-    impact: '다른 PC나 팀원이 바꾼 프로필 정의·역할·지식·태그는 오지 않습니다.',
-    next: '서버 API 연결 → 받는 쪽(sets.mjs)만 바꾸기',
+    title: '받는 서버에서 프로필 받기',
+    now: '프로필은 이 PC의 <b>~/koala-profiles/&lt;이름&gt;/</b> 폴더입니다. 받는 서버(<span class="mono">.koala/settings.json</span> 의 receive_url)에서 받아 오는 기능은 아직 없습니다.',
+    missing: ['실제 서버에서 프로필 폴더를 받지 않습니다', '서버 API·인증이 없습니다'],
+    impact: '다른 PC나 팀원이 바꾼 KOALA.md·설정·규칙은 오지 않습니다. 같이 쓰려면 프로필 폴더를 git 등으로 공유하세요(.koala-work/ 는 .gitignore 로 빠집니다).',
+    next: '서버 API 연결 → 받은 파일을 프로필 폴더에 쓰기(바뀌는 파일 목록을 보여 주고 확인)',
   },
   conflict: {
     title: '서버 전송 충돌',

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
-import { safeId, setPaths, readSet, listSets, receiveSet, checkUpdate, createLocalSet, updateLocalSet, deleteSet, domainOfSet } from '../sets.mjs';
+import { safeId, setPaths, readSet, listSets, receiveSet, checkUpdate, createLocalSet, updateLocalSet, deleteSet, domainOfSet } from '../legacy-sets.mjs';
 
 let root;
 const put = (rel, doc) => {

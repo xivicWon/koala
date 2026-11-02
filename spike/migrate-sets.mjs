@@ -8,8 +8,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { fileURLToPath } from 'node:url';
-import { safeId, setPaths, readSet, receiveSet, createLocalSet, localSlug } from './sets.mjs';
-import { saveTests } from './testlist.mjs';
+import { safeId, setPaths, readSet, receiveSet, createLocalSet, localSlug } from './legacy-sets.mjs';
+// 옛 형식 위치(<데이터>/sets/<id>/tests/tests.json)에 쓴다. 이어서 migrate-profiles 가 프로필 폴더로 옮긴다
+const saveTests = (id, suite, root) => { const f = setPaths(id, root).testsFile; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(suite, null, 2)); };
 
 const META = ['id', 'kind', 'name', 'version', 'updated_at', 'hash'];
 // host.mjs 의 도메인 폴더·코드 파일 이름 규칙과 같다

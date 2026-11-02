@@ -3,7 +3,10 @@ import 'dotenv/config';
 import path from 'node:path';
 
 // paths.mjs 와 같게: 상대 경로는 실행 위치(cwd) 기준
-const dataDir = process.env.KOALA_DATA_DIR ? path.resolve(process.env.KOALA_DATA_DIR) : '.koa';
+// 프로필 폴더들: paths.mjs 와 같게(KOALA_PROFILES, 시험의 데이터 폴더면 그 안의 profiles/, 아니면 ~/koala-profiles)
+const profilesDir = process.env.KOALA_PROFILES ? path.resolve(process.env.KOALA_PROFILES)
+  : process.env.KOALA_DATA_DIR ? path.join(path.resolve(process.env.KOALA_DATA_DIR), 'profiles')
+  : path.join(process.env.HOME || process.env.USERPROFILE || '', 'koala-profiles');
 // 사이드패널에서 고른 화면 크기(없으면 작업 탭의 지금 크기). 새 브라우저 실행이 작업 탭과 같은 크기로 돈다. 서버·CI 에서는 비어 있어 기본값
 const vp = /^(\d+)x(\d+)$/.exec(process.env.KOALA_VIEWPORT || '');
 // 작업 탭 실행은 탭에 걸린 크기를 그대로 쓴다(viewport: null). 테스트 코드의 test.use({ viewport }) 만 pw-tab.ts 가 탭에 건다
@@ -25,8 +28,8 @@ export default defineConfig({
     screenshot: 'on',
   },
   projects: [
-    // 사이드패널에서 채택한 테스트로 만든 코드: <데이터 폴더>/sets/<세트>/tests/code/*.spec.ts. 같은 계정을 쓰므로 순차 실행
-    { name: 'suites', testDir: dataDir, testMatch: /sets[\\/][^\\/]+[\\/]tests[\\/]code[\\/].*\.spec\.ts/, fullyParallel: false },
+    // 사이드패널에서 채택한 테스트로 만든 코드: <프로필>/.koala-work/tests/code/*.spec.ts. 같은 계정을 쓰므로 순차 실행
+    { name: 'suites', testDir: profilesDir, testMatch: /\.koala-work[\\/]tests[\\/]code[\\/].*\.spec\.ts/, fullyParallel: false },
     // tests/ 아래 직접 둔 테스트
     { name: 'local', testIgnore: /suites\//, fullyParallel: false },
   ],
