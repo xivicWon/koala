@@ -365,6 +365,13 @@ input[type=radio]:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var
   -webkit-mask: var(--spark) center / contain no-repeat; mask: var(--spark) center / contain no-repeat;
   --spark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg stroke='black' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M12 2.5v6M12 15.5v6M2.5 12h6M15.5 12h6M5.3 5.3l4.2 4.2M14.5 14.5l4.2 4.2M18.7 5.3l-4.2 4.2M9.5 14.5l-4.2 4.2'/%3E%3C/g%3E%3C/svg%3E");
 }
+/* Codex(로컬 CLI)로 돌 때: GPT 처럼 꽃잎 6개가 맞물린 매듭 모양(공식 로고 파일 아님), 글자색. 강조색은 청록 */
+.claude-btn.codex .claude-mark {
+  width: 14px; height: 14px; background: var(--text);
+  --spark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='black' stroke-width='1.7'%3E%3Crect x='8.6' y='2' width='6.8' height='13' rx='3.4'/%3E%3Crect x='8.6' y='2' width='6.8' height='13' rx='3.4' transform='rotate(60 12 12)'/%3E%3Crect x='8.6' y='2' width='6.8' height='13' rx='3.4' transform='rotate(120 12 12)'/%3E%3Crect x='8.6' y='2' width='6.8' height='13' rx='3.4' transform='rotate(180 12 12)'/%3E%3Crect x='8.6' y='2' width='6.8' height='13' rx='3.4' transform='rotate(240 12 12)'/%3E%3Crect x='8.6' y='2' width='6.8' height='13' rx='3.4' transform='rotate(300 12 12)'/%3E%3C/g%3E%3C/svg%3E");
+}
+.claude-btn.codex:hover { border-color: color-mix(in srgb, #10a37f 55%, var(--line)); background: color-mix(in srgb, #10a37f 7%, var(--bg)); }
+.claude-btn.codex:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, #10a37f 30%, transparent); }
 
 .claude-model { font-weight: 500; color: var(--text-2); }
 .claude-effort { display: inline-flex; align-items: center; margin-left: 2px; color: var(--text-3); }

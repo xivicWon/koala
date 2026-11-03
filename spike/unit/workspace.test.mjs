@@ -50,3 +50,22 @@ test('작업 폴더는 프로필 폴더의 .koala-work/work/claude, CLAUDE.md �
   assert.equal(again.rebuilt, true);
   assert.equal(again.versions.files, 5);
 });
+
+test('AGENTS.md(Codex)는 CLAUDE.md 와 같은 파일들의 내용을 같은 순서로 합친다', (t) => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'koala-ws-'));
+  t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+  const folder = path.join(data, 'profiles', ID);
+  const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
+  put(path.join(folder, 'KOALA.md'), '# 사이트\n주소는 example.test');
+  put(path.join(data, 'user', 'KOALA.md'), '# 나\n짧게 답한다');
+  const out = run({ KOALA_DATA_DIR: data });
+  const md = fs.readFileSync(path.join(out.dir, 'AGENTS.md'), 'utf8');
+  const at = (s) => md.indexOf(s);
+  assert.ok(at(`${path.join(data, 'user', 'KOALA.md')} -->\n# 나\n짧게 답한다`) > 0);
+  assert.ok(at('주소는 example.test') > at('짧게 답한다'));
+  assert.ok(at(path.join(spike, 'prompts', 'qa-common.md')) < at('짧게 답한다'));
+  // 내용만 바꿔도(파일 목록 그대로) 다음 준비 때 반영된다
+  put(path.join(folder, 'KOALA.md'), '# 사이트\n주소는 changed.test');
+  run({ KOALA_DATA_DIR: data });
+  assert.match(fs.readFileSync(path.join(out.dir, 'AGENTS.md'), 'utf8'), /changed\.test/);
+});

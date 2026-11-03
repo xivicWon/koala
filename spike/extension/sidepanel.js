@@ -388,6 +388,8 @@ function renderEnvAlert() {
       not_logged_in: `<b>Claude Code에 로그인되어 있지 않습니다.</b> 터미널에서 <code>claude auth login</code>을 실행해 로그인하세요. API 키로 쓰려면 Claude 설정에서 요금제를 <b>API 키</b>로 바꾸세요.`,
       no_api_key: `<b>API 요금제에 쓸 키가 없습니다.</b> 헤더의 Claude 버튼 › 요금제에서 Console API 키를 저장하세요.`,
       bad_api_key: `<b>저장된 API 키가 올바르지 않습니다.</b> 헤더의 Claude 버튼 › 요금제에서 키를 다시 저장하세요.`,
+      codex_not_installed: `<b>이 PC에서 Codex를 찾을 수 없습니다.</b> Codex CLI를 설치한 뒤(<code>brew install --cask codex</code> 또는 <code>npm i -g @openai/codex</code>) 다시 고르세요. 다른 위치에 설치했다면 <code>CODEX_BIN</code> 환경변수로 경로를 알려 주세요.`,
+      codex_not_logged_in: `<b>Codex에 로그인되어 있지 않습니다.</b> 터미널에서 <code>codex login</code>을 실행해 ChatGPT 계정으로 로그인하세요. Claude 로 쓰려면 AI 설정에서 실행을 바꾸세요.`,
     }[claudeEnv.reason] || `<b>Claude Code 상태를 확인하지 못했습니다.</b> ${esc(claudeEnv.detail || '')}`;
   }
   if (hostUp) hostSeen = true;

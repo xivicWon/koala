@@ -27,6 +27,7 @@ import * as rules from './rules.mjs';
 import { crawl as crawlSite } from './crawler.mjs';
 import { playwrightArgs } from './pw-args.mjs';
 import * as sdk from './claude-sdk.mjs';
+import * as codex from './codex-cli.mjs';
 import { startTabRelay, tabSpecSource, tabSpecFile } from './tab-relay.mjs';
 
 // 브라우저(Native Messaging)가 켠 호스트는 PATH가 짧아 npx·npm·node 를 못 찾는다. 지금 도는 node 의 폴더를 앞에 붙인다
@@ -54,8 +55,12 @@ function findClaude() {
 }
 let CLAUDE = null;
 let claudeEnv = { ok: false, reason: 'unchecked' };
-// 요금제: sub = Claude Code 구독(claude 로그인), api = Console API 키(Agent SDK 로 실행, API 크레딧에서 차감). 패널에서 고른다
+// 요금제(AI 엔진): sub = Claude Code 구독(claude 로그인), api = Console API 키(Agent SDK 로 실행, API 크레딧에서 차감),
+// codex = 이 PC 의 Codex CLI(ChatGPT 로그인, codex-cli.mjs). 패널에서 고른다
 let billing = 'sub';
+let CODEX = null;
+const isCodex = () => billing === 'codex';
+const aiName = () => (isCodex() ? 'Codex' : 'Claude');
 // CLAUDE_BIN 이 .mjs/.js 면(시험용 가짜 Claude) 이 node 로 돌린다
 const claudeCmd = (args) => (/\.m?js$/.test(CLAUDE) ? [process.execPath, [CLAUDE, ...args]] : [CLAUDE, args]);
 function claudeExec(args) {
@@ -66,6 +71,14 @@ function claudeExec(args) {
 }
 let lastClaudeLine = '';
 function checkClaude() {
+  if (isCodex()) {
+    CODEX = codex.findCodex();
+    claudeEnv = codex.checkCodex(CODEX);
+    const line = `[codex] ${claudeEnv.ok ? `사용 가능 · ${claudeEnv.version}` : `문제: ${claudeEnv.reason}`} · ${CODEX ?? '경로 없음'}`;
+    if (line !== lastClaudeLine) console.log(line);
+    lastClaudeLine = line;
+    return claudeEnv;
+  }
   CLAUDE = findClaude();
   if (!CLAUDE) {
     claudeEnv = { ok: false, reason: 'not_installed' };
@@ -500,10 +513,13 @@ let timing = null; // 지시 1건의 시간 분해: 기동 / 모델 / 브라우�
 // 패널에서 고른 내 설정(모델·effort). 프로필 설정보다 우선한다. 비우면 프로필 → Claude Code 기본값
 let userClaude = { model: '', effort: '' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const modelFor = () => userClaude.model || profile?.claude?.model || process.env.KOALA_MODEL || '';
+// Codex 는 프로필의 claude 설정(Claude 모델 이름)을 쓰지 않고, 내 설정 → 사용자 Codex 설정(~/.codex/config.toml)을 따른다
+const claudeModelName = (m) => /^(opus|sonnet|haiku|fable|claude)/i.test(m || '');
+const modelFor = () => (isCodex() ? (claudeModelName(userClaude.model) ? '' : userClaude.model) || codex.userDefaults().model : userClaude.model || profile?.claude?.model || process.env.KOALA_MODEL || '');
 // effort: 내 설정 → 프로필 → 사용자 Claude Code 설정(~/.claude/settings.json 의 effortLevel) → medium
 function effortFor() {
   if (EFFORTS.includes(userClaude.effort)) return userClaude.effort;
+  if (isCodex()) { const e = codex.userDefaults().effort; return EFFORTS.includes(e) ? e : 'medium'; }
   if (profile?.claude?.effort) return profile.claude.effort;
   try {
     const v = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).effortLevel;
@@ -534,7 +550,15 @@ function spawnClaude(extra, ws) {
   // API 요금제에서는 'claude.ai connectors are disabled' 안내가 매번 나온다. 오류 원인으로 보이지 않게 거른다
   const onErr = (d) => { if (p.stopped || /claude\.ai connectors are disabled/.test(d)) return; p.lastErr = String(d); console.log(`[claude stderr] ${String(d).trim()}`); };
   let p;
-  if (billing === 'api') {
+  if (isCodex()) {
+    // Codex: 같은 인자에서 MCP 설정·지시·이어받을 대화를 꺼내 codex exec 로 돌린다. 도구 제한은 MCP 의 enabled_tools 로
+    const { options, prompt } = sdk.optionsFromArgs(args);
+    p = codex.runCodex({ bin: CODEX, cwd: ws.dir, env, prompt, resume: options.resume || null, mcpServers: options.mcpServers,
+      tools: toolsFor(), instructions: options.systemPrompt?.append || '', model, effort: effortFor() });
+    p.on('event', (ev) => { if (!p.stopped) handleEvent(ev); });
+    p.on('stderr', onErr);
+    p.on('exit', () => children.delete(p));
+  } else if (billing === 'api') {
     // API 요금제: 같은 인자로 Agent SDK 를 돌린다. 메시지는 CLI 출력과 같은 모양이다
     p = sdk.runSdk(args, { cwd: ws.dir, env, claudeBin: CLAUDE, key: sdk.readKey() });
     p.on('event', (ev) => { if (!p.stopped) handleEvent(ev); });
@@ -565,12 +589,12 @@ function spawnClaude(extra, ws) {
     if (!PERSIST) send({ type: 'busy', busy: false });
     // 새 시나리오로 일부러 끝낸 경우(p.stopped)는 오류가 아니다
     // 미리 연결 중의 실패는 warmFailed 가 알린다. 작업 중에 끝났으면 원인(마지막 stderr 한 줄)과 함께 알린다
-    if (code && !p.stopped && warming?.proc !== p) log('err', `Claude가 끝났습니다(종료 코드 ${code})${lastLine(p.lastErr) ? ` · ${lastLine(p.lastErr)}` : ''}`);
+    if (code && !p.stopped && warming?.proc !== p) log('err', `${aiName()}가 끝났습니다(종료 코드 ${code})${lastLine(p.lastErr) ? ` · ${lastLine(p.lastErr)}` : ''}`);
     if (!p.stopped) {
       endJob(false, 'AI 프로세스가 끝났습니다');
       if (PERSIST) {
         if (warming?.proc === p) warmFailed(`claude 종료 코드 ${code}`);
-        else { send({ type: 'busy', busy: false }); retryWarm(`Claude가 끝났습니다(종료 코드 ${code})`); }
+        else { send({ type: 'busy', busy: false }); retryWarm(`${aiName()}가 끝났습니다(종료 코드 ${code})`); }
       }
     }
   });
@@ -1076,6 +1100,8 @@ const DERIVE_PROMPT = `[테스트 생성] 방금 이 대화에서 실제로 수�
 let pendingDerive = null; // { note }
 function queueDerive(args) {
   if (!steps.length) return { ok: false, error: '아직 수행 기록이 없다. 먼저 테스트를 수행해야 한다고 사용자에게 알린다' };
+  // 이미 초안을 만드는 중이면 다시 예약하지 않는다(예약하면 같은 지시가 되풀이된다). 지금 지시대로 save_tests 로 저장하게 돌려보낸다
+  if (job?.kind === 'derive') return { ok: false, error: '지금이 바로 테스트 초안을 만드는 단계다. make_tests 를 다시 부르지 말고, 지시에 따라 시나리오·케이스를 직접 작성해 save_tests 로 저장한다' };
   pendingDerive = { note: String(args?.note || '').trim() };
   return { ok: true, result: { queued: true, steps: steps.length, message: '이 응답이 끝나면 테스트 초안 만들기를 시작한다. 한 줄로 알리고 응답을 끝낸다' } };
 }
@@ -1661,6 +1687,7 @@ function clearSession() {
 // 압축: Claude Code의 /compact로 지금까지 대화를 요약해 토큰을 줄인다. 같은 kaa-N이 유지된다
 function compactSession() {
   if (!sessionId && !proc) { log('err', '압축할 대화가 없습니다'); return; }
+  if (isCodex()) { log('err', 'Codex 는 대화 압축을 지원하지 않습니다(필요하면 Codex 가 스스로 줄입니다). 새로 시작하려면 세션 비우기를 누르세요'); return; }
   log('sys', `세션 ${sessionAlias || ''} 압축을 시작합니다`);
   sendToClaude('/compact');
 }
@@ -1712,8 +1739,8 @@ async function instruct(text, { derive = false, job: kind = 'run', roles = null,
   // Claude Code가 없거나 로그인이 안 됐으면 실행하지 않고 다시 확인해 알린다
   if (!claudeEnv.ok && !checkClaude().ok) {
     send({ type: 'env', claude: claudeEnv });
-    log('err', 'Claude Code를 쓸 수 없어 실행하지 못했습니다. 사이드패널 상단 안내를 확인하세요.');
-    endJob(false, 'Claude Code를 쓸 수 없습니다');
+    log('err', `${isCodex() ? 'Codex' : 'Claude Code'}를 쓸 수 없어 실행하지 못했습니다. 사이드패널 상단 안내를 확인하세요.`);
+    endJob(false, `${isCodex() ? 'Codex' : 'Claude Code'}를 쓸 수 없습니다`);
     return;
   }
   // 새 수행 기록이면 프로필의 시작 URL에서 출발한다(생성 코드도 거기서 시작한다)
@@ -1781,6 +1808,7 @@ function ensureClaude() {
   // 지식·프로필 버전이 바뀌면 작업 폴더가 다시 만들어진다. 이전 대화는 이어 갈 수 없으니 새 세션으로 시작한다
   const ws = workspace.prepare(profile);
   ws.stamp += `|${mode}`; // 모드가 바뀌면 도구와 지시가 달라지므로 새 대화로 시작한다
+  if (isCodex()) ws.stamp += '|codex'; // Claude 와 Codex 는 대화를 서로 이어받을 수 없다
   if (lastStamp && lastStamp !== ws.stamp) {
     stopClaude();
     sessionId = null;
@@ -1836,14 +1864,15 @@ function warmClaude() {
   if (proc) { if (claudeConn !== 'ready') sendConn('ready'); return; }
   if (!claudeEnv.ok && !checkClaude().ok) {
     send({ type: 'env', claude: claudeEnv });
-    return sendConn('failed', 'Claude Code를 쓸 수 없습니다');
+    return sendConn('failed', `${isCodex() ? 'Codex' : 'Claude Code'}를 쓸 수 없습니다`);
   }
   try { ensureClaude(); } catch (e) {
     // 타이머 안의 예외는 호스트를 끝내 버린다. 연결 실패로 알리고 다음 지시 때 다시 시도한다
     stopClaude();
-    log('err', `Claude를 띄우지 못했습니다: ${e.message}`);
+    log('err', `${aiName()}를 띄우지 못했습니다: ${e.message}`);
     return sendConn('failed', e.message.slice(0, 120));
   }
+  // Codex 도 같은 확인 응답을 한 번 받는다: 대화(세션 id)가 열리고 실제 모델이 패널에 보이며, 로그인·옵션 문제를 첫 지시 전에 알 수 있다
   warming = { proc, t0: Date.now(), resumed: !!sessionId };
   warming.timer = setTimeout(() => warmFailed(`${WARM_TIMEOUT / 1000}초 동안 응답이 없습니다`), WARM_TIMEOUT);
   sendConn('connecting');
@@ -1855,7 +1884,7 @@ function warmDone() {
   clearTimeout(timer);
   warming = null; warmFails = 0;
   sendConn('ready');
-  log('sys', `Claude 연결됨 · 세션 ${sessionAlias || ''} ${resumed ? '이어서 사용' : '새로 열었습니다'} (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
+  log('sys', `${aiName()} 연결됨 · 세션 ${sessionAlias || ''} ${resumed ? '이어서 사용' : '새로 열었습니다'} (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
 }
 function warmFailed(reason) {
   if (!warming) return;
@@ -1877,12 +1906,12 @@ function retryWarm(reason) {
   const why = reason;
   if (again) {
     sendConn('connecting');
-    log('sys', `Claude 연결을 다시 시도합니다(${warmFails}/3)`);
+    log('sys', `${aiName()} 연결을 다시 시도합니다(${warmFails}/3)`);
     console.log(`[claude] 연결 실패 ${warmFails}/3: ${why}`);
     scheduleWarm(5000 * warmFails);
   } else {
     sendConn('failed', why);
-    log('err', `Claude에 연결하지 못했습니다: ${why} · 다음 지시 때 다시 연결합니다`);
+    log('err', `${aiName()}에 연결하지 못했습니다: ${why} · 다음 지시 때 다시 연결합니다`);
   }
 }
 
@@ -1960,8 +1989,11 @@ const server = http.createServer(async (req, res) => {
       const { files, claudeMdExpanded, ...d } = workspace.describe(profile); // 파일 본문(프로필 지식)은 보내지 않는다
       return res.end(JSON.stringify({
         ...d,
-        flags: ['--setting-sources project', '--strict-mcp-config', '--tools ""', `--allowedTools mcp__koala__*`,
-          ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
+        flags: isCodex()
+          ? ['codex exec --json', `CODEX_HOME=${codex.koalaHome()}`, '--disable shell_tool,apps,plugins,hooks,memories', '-s read-only', 'approval_policy=never',
+            'mcp_servers.koala.enabled_tools=[koala 도구]', ...(modelFor() ? [`-m ${modelFor()}`] : []), `model_reasoning_effort=${effortFor()}`]
+          : ['--setting-sources project', '--strict-mcp-config', '--tools ""', `--allowedTools mcp__koala__*`,
+            ...(modelFor() ? [`--model ${modelFor()}`] : []), `--effort ${effortFor()}`],
         // AI에게 전달되는 내용은 본문 대신 파일 경로만 준다. 프로필은 프로필 화면(GET /profile/context)
         prompts: [
           ['기본 규칙', [path.join(PROMPTS, PROMPT_FILES.system), path.join(PROMPTS, PROMPT_FILES.rules)]],
@@ -1969,12 +2001,16 @@ const server = http.createServer(async (req, res) => {
           ['koala 기본 글(업데이트로 바뀜)', [path.join(PROMPTS, 'qa-common.md')]],
           ['사용자 레벨(폴더의 .md·.txt 전부)', [userDir()]],
           ['프로필 폴더(폴더의 .md·.txt 전부)', [setPaths(activeSet).folder]],
-          ['AI 작업 폴더의 CLAUDE.md(위 파일들을 불러옴)', [path.join(d.dir, 'CLAUDE.md')]],
+          isCodex()
+            ? ['AI 작업 폴더의 AGENTS.md(위 파일들의 내용을 합침)', [path.join(d.dir, 'AGENTS.md')]]
+            : ['AI 작업 폴더의 CLAUDE.md(위 파일들을 불러옴)', [path.join(d.dir, 'CLAUDE.md')]],
           ['메뉴 경로 형식', [path.join(PROMPTS, PROMPT_FILES.menuMap)]],
           ['테스트 코드 지침', [path.join(PROMPTS, PROMPT_FILES.playwright), path.join(PROMPTS, PROMPT_FILES.fix)]],
         ],
         claude: claudeEnv,
         billing: { mode: billing, key: sdk.keyStatus() }, // 키 값은 보내지 않는다(있음·없음과 파일 위치만)
+        // Codex 로 고를 수 있는 모델과 사용자 Codex 설정의 기본값(엔진을 Codex 로 바꿀 때 모델 목록에 쓴다)
+        codex: { models: codex.listModels(), defaults: codex.userDefaults(), home: codex.koalaHome() },
         recorded: steps.length, // '기록까지 비우기' 확인 창에 보여 줄 수행 기록 수
       }));
     } catch (e) { res.statusCode = 500; return res.end(JSON.stringify({ error: e.message })); }
@@ -2165,18 +2201,22 @@ new WebSocketServer({ server, verifyClient: ({ req }) => allowed(req) || (denied
     // 모델·effort 바꾸기: 대화는 그대로 두고(이어받기) Claude 만 새 설정으로 다시 띄운다. 작업 중에는 바꾸지 않는다
     if (m.type === 'claude_prefs') {
       const next = { model: String(m.model || '').trim().slice(0, 80), effort: EFFORTS.includes(m.effort) ? m.effort : '' };
-      const nextBilling = m.billing === 'api' ? 'api' : 'sub';
+      const nextBilling = ['api', 'codex'].includes(m.billing) ? m.billing : 'sub';
       if (next.model && !/^[\w.\-[\]]+$/.test(next.model)) log('err', `모델 이름이 올바르지 않습니다: ${next.model}`);
       else if (next.model !== userClaude.model || next.effort !== userClaude.effort || nextBilling !== billing) {
         if (job || codeRunning) log('err', 'AI 작업이나 테스트 실행 중에는 모델·effort·요금제를 바꿀 수 없습니다. 끝난 뒤 다시 고르세요');
         else {
           const billingChanged = nextBilling !== billing;
+          const engineChanged = (nextBilling === 'codex') !== isCodex(); // Claude ↔ Codex 는 대화를 이을 수 없어 새 대화(ensureClaude)
           userClaude = next;
           billing = nextBilling;
           if (billingChanged) { send({ type: 'env', claude: checkClaude() }); sendUsage(); }
+          // 엔진이 바뀌면 이전 엔진의 모델 표시를 지운다(새 엔진이 시작하면 실제 모델로 다시 알린다)
+          if (engineChanged) send({ type: 'claude_run', model: modelFor() || null, effort: effortFor() });
           // 이미 떠 있거나 띄우는 중이면 새 설정으로 다시 띄운다(패널이 연결될 때 저장된 값이 늦게 와도 맞춰진다)
           if (proc || warming) {
-            log('sys', `Claude 를 ${billingChanged ? `${billing === 'api' ? 'API 요금제(Agent SDK)' : 'Claude Code 구독'} · ` : ''}${modelFor() || 'Claude Code 기본 모델'} · effort ${effortFor()} 로 바꿉니다(대화는 이어서)`);
+            const how = { api: 'API 요금제(Agent SDK)', codex: 'Codex(로컬)', sub: 'Claude Code 구독' }[billing];
+            log('sys', `AI 를 ${billingChanged ? `${how} · ` : ''}${modelFor() || `${aiName()} 기본 모델`} · effort ${effortFor()} 로 바꿉니다${engineChanged ? '(새 대화로 시작)' : '(대화는 이어서)'}`);
             stopClaude();
           }
           if (billingChanged && claudeConn !== 'off') sendConn('off');

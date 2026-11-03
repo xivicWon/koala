@@ -1,12 +1,23 @@
 // "Claude 설정" 시트: koa가 Claude를 실행하는 작업 폴더(지식 문서 사본)와 실제로 전달되는 내용을 보여 준다
 let claudeView = null;
 // 내가 고른 모델·effort(이 확장에 저장, 프로필 설정보다 우선). 빈 값은 '기본'(프로필 → Claude Code 설정)
-// billing: sub = Claude Code 구독, api = Console API 키(Agent SDK, API 크레딧에서 차감)
+// billing: sub = Claude Code 구독, api = Console API 키(Agent SDK, API 크레딧에서 차감), codex = 이 PC 의 Codex CLI(ChatGPT 로그인)
 let claudePrefs = { model: '', effort: '', billing: 'sub' };
-const BILLING = [['sub', 'Claude Code 구독'], ['api', 'API 키 (크레딧)']];
+const BILLING = [['sub', 'Claude Code 구독'], ['api', 'API 키 (크레딧)'], ['codex', 'Codex (로컬)']];
 const MODELS = [['', '기본(프로필·Claude Code)'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['fable', 'Fable']];
+const isCodexPick = () => claudePrefs.billing === 'codex';
+// Codex 모델은 호스트가 알려 준 목록(Codex 가 받아 둔 모델)에서 고른다. 기본은 사용자 Codex 설정의 모델
+function modelOpts(v) {
+  if (!isCodexPick()) return MODELS;
+  const c = v.codex || {};
+  return [['', `기본(${c.defaults?.model || 'Codex 설정'})`], ...(c.models || []).map((m) => [m.id, m.name])];
+}
 const EFFORT_OPTS = [['', '기본'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
-const claudePrefsReady = chrome.storage.local.get('claudePrefs').then((r) => { if (r?.claudePrefs) claudePrefs = { ...claudePrefs, ...r.claudePrefs }; }).catch(() => {});
+const claudePrefsReady = chrome.storage.local.get('claudePrefs').then((r) => { if (r?.claudePrefs) claudePrefs = { ...claudePrefs, ...r.claudePrefs }; renderEngineMark(); }).catch(() => {});
+// 헤더 AI 버튼의 아이콘: 호스트가 알려 준 실행 방식(없으면 내가 고른 값)이 Codex 면 터미널 모양
+function renderEngineMark() {
+  document.getElementById('claude-btn')?.classList.toggle('codex', (claudeUsage?.billing ?? claudePrefs.billing) === 'codex');
+}
 // 호스트에 알린다(연결될 때마다, 바꿀 때). 저장된 값을 읽은 뒤에 보낸다. 호스트는 바뀌었으면 대화를 이어 가며 Claude 를 다시 띄운다
 function sendClaudePrefs() { claudePrefsReady.then(() => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'claude_prefs', ...claudePrefs })); }); }
 
@@ -21,7 +32,7 @@ async function loadClaudeView() {
 }
 
 function renderClaudeSheet(body) {
-  $('sheet-title').textContent = 'Claude 설정';
+  $('sheet-title').textContent = 'AI 설정';
   const v = claudeView;
   if (!v) { body.innerHTML = '<div class="none">불러오는 중…</div>'; return; }
   if (v.error) { body.innerHTML = `<div class="none">${esc(v.error)}</div>`; return; }
@@ -29,26 +40,27 @@ function renderClaudeSheet(body) {
   const field = (label, codes) => `<div class="cs-field"><span class="cs-label">${esc(label)}</span>${codes.map((c) => `<code class="cs-code mono">${esc(c)}</code>`).join('')}</div>`;
   const busy = aiBusy;
   const ver = v.claude?.version ? String(v.claude.version).replace(/\s*\(Claude Code\)/, '') : '사용 불가';
+  const codexOn = v.billing?.mode === 'codex';
   body.innerHTML = `<div class="cs">
     ${billingHtml(v, busy)}
     <section class="cs-block">
       <div class="cs-block-h"><b>실행 설정</b><span class="pf-hint">${busy ? 'AI 작업 중에는 바꿀 수 없습니다' : '바꾸면 대화를 이어서 새 설정으로 다시 연결합니다'}</span></div>
       <div class="cs-pick">
-        <label><span class="cs-label">모델</span><select data-cp="model" ${busy ? 'disabled' : ''}>${MODELS.map(([v, t]) => `<option value="${v}" ${claudePrefs.model === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label><span class="cs-label">모델</span><select data-cp="model" ${busy ? 'disabled' : ''}>${modelOpts(v).map(([v, t]) => `<option value="${v}" ${claudePrefs.model === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <label><span class="cs-label">effort</span><select data-cp="effort" ${busy ? 'disabled' : ''}>${EFFORT_OPTS.map(([v, t]) => `<option value="${v}" ${claudePrefs.effort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       </div>
       <dl class="cs-kv">
         <div><dt>지금 모델</dt><dd>${esc(claudeRun.model || '아직 실행 전')}</dd></div>
         <div><dt>effort</dt><dd>${esc(claudeRun.effort || '-')}</dd></div>
-        <div><dt>Claude Code</dt><dd>${esc(ver)}</dd></div>
-        <div><dt>실행</dt><dd>${claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</dd></div>
+        <div><dt>${codexOn ? 'Codex' : 'Claude Code'}</dt><dd>${esc(ver)}</dd></div>
+        <div><dt>실행</dt><dd>${codexOn ? 'codex exec' : claudeUsage?.billing === 'api' ? 'Agent SDK' : 'claude -p'}</dd></div>
       </dl>
     </section>
     ${usageHtml()}
     <section class="cs-block">
       <div class="cs-block-h"><b>세션</b><code class="cs-tag mono">${esc(sessionAlias || '없음')}</code></div>
       <div class="cs-actions">
-        <button type="button" class="btn" data-cs="compact" ${sessionAlias && !busy ? '' : 'disabled'} title="지금까지 대화를 요약해 토큰을 줄입니다(같은 세션 유지)">압축</button>
+        <button type="button" class="btn" data-cs="compact" ${sessionAlias && !busy && !codexOn ? '' : 'disabled'} title="${codexOn ? 'Codex 는 대화 압축을 지원하지 않습니다' : '지금까지 대화를 요약해 토큰을 줄입니다(같은 세션 유지)'}">압축</button>
         <button type="button" class="btn" data-cs="clear" ${sessionAlias && !busy ? '' : 'disabled'} title="대화 맥락만 지우고 새 세션으로 시작합니다(수행 기록은 유지)">세션 비우기</button>
         <button type="button" class="btn danger-line" data-cs="reset" ${(sessionAlias || v.recorded) && !busy ? '' : 'disabled'} title="세션과 수행 기록·타임라인까지 비우고 처음부터 시작합니다">기록까지 비우기</button>
       </div>
@@ -81,13 +93,17 @@ function billingHtml(v, busy) {
        </div>`
     : '';
   return `<section class="cs-block cs-billing">
-    <div class="cs-bill-h"><b>요금제</b>
+    <div class="cs-bill-h"><b>AI 실행</b>
       <div class="seg" role="radiogroup">${BILLING.map(([b, t]) => `<button type="button" data-cs-bill="${b}" class="${claudePrefs.billing === b ? 'on' : ''}" ${busy ? 'disabled' : ''}>${t}</button>`).join('')}</div>
     </div>
     ${api ? `<div class="cs-key-row">${keyLine}</div>${form}
       <div class="pf-hint">Anthropic Console 의 API 크레딧(프로모션 크레딧 포함)에서 차감됩니다. Agent SDK 로 실행해 요청이 Agent SDK 사용으로 기록됩니다.
         키는 호스트가 이 PC 파일(본인만 읽기)에만 저장하며 화면·기록·서버로 보내지 않습니다.</div>`
-    : '<div class="pf-hint">이 PC 에 로그인한 Claude Code 구독 한도 안에서 실행합니다.</div>'}
+    : claudePrefs.billing === 'codex'
+      ? `<div class="pf-hint">이 PC 에 설치·로그인한 Codex(ChatGPT 계정)로 실행합니다. API 키는 쓰지 않습니다.
+          개인 Codex 설정(MCP 서버·AGENTS.md·플러그인)은 섞지 않고 koala 전용 폴더${v.codex?.home ? ` <code class="mono">${esc(String(v.codex.home).replace(/^(\/(Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~'))}</code>` : ''}에서 koala 도구만으로 돕니다. 로그인 정보만 함께 씁니다.
+          Claude 와 대화를 이어받을 수 없어 바꾸면 새 대화로 시작합니다.</div>`
+      : '<div class="pf-hint">이 PC 에 로그인한 Claude Code 구독 한도 안에서 실행합니다.</div>'}
   </section>`;
 }
 let keyEditing = false;
@@ -128,6 +144,11 @@ function usageRow(label, w) {
 function usageHtml() {
   const l = claudeUsage?.limits;
   const se = claudeUsage?.session;
+  // Codex 는 사용 한도를 알려 주지 않는다. 이 세션의 토큰만 보여 준다
+  if (claudeUsage?.billing === 'codex') {
+    const sess = se?.turns ? `<div class="cs-meta"><span>이 세션 <b>지시 ${se.turns}회</b></span><span>입력 <b>${fmtTok(se.input)}</b> 토큰</span><span>출력 <b>${fmtTok(se.output)}</b> 토큰</span></div>` : '<div class="pf-hint">토큰 수는 AI가 한 번 응답하면 표시됩니다.</div>';
+    return `<div class="cs-usage"><div class="cs-block-h"><b>사용량</b><span class="pf-hint">Codex 는 남은 한도를 알려 주지 않습니다</span></div>${sess}</div>`;
+  }
   // API 요금제는 구독 한도 대신 이 대화의 비용(추정)을 보여 준다
   if (claudeUsage?.billing === 'api') {
     const cost = se?.cost != null
@@ -144,6 +165,7 @@ function usageHtml() {
 }
 function onClaudeUsage(m) {
   claudeUsage = m;
+  renderEngineMark();
   updateClaudeTip();
   if (sheetMode === 'claude') renderSheet();
 }
@@ -158,10 +180,14 @@ document.getElementById('sheet-body').addEventListener('click', async (e) => {
   if (act === 'reload') { claudeView = null; renderSheet(); loadClaudeView(); }
   const bill = e.target.closest('[data-cs-bill]')?.dataset.csBill;
   if (bill && !aiBusy && bill !== claudePrefs.billing) {
-    claudePrefs = { ...claudePrefs, billing: bill };
+    // Claude ↔ Codex 는 모델 이름이 달라 모델을 기본으로 되돌린다
+    const engineChanged = (bill === 'codex') !== isCodexPick();
+    claudePrefs = { ...claudePrefs, billing: bill, ...(engineChanged ? { model: '' } : {}) };
+    if (claudeUsage) claudeUsage = { ...claudeUsage, billing: bill }; // 호스트가 다시 알려 주기 전에도 아이콘을 바로 바꾼다
+    renderEngineMark();
     chrome.storage.local.set({ claudePrefs }).catch(() => {});
     sendClaudePrefs();
-    msg('sys', `Claude 요금제: ${BILLING.find(([b]) => b === bill)[1]}`);
+    msg('sys', `AI 실행: ${BILLING.find(([b]) => b === bill)[1]}${engineChanged ? ' · 새 대화로 시작합니다' : ''}`);
     renderSheet();
   }
   if (act === 'key-edit') { keyEditing = true; renderSheet(); }
@@ -209,7 +235,7 @@ function renderClaudeRun(model, effort) {
   const m = $('claude-model');
   const e = $('claude-effort');
   // 모델명은 Claude Code가 알려 준 값 그대로
-  if (model) { m.textContent = String(model).replace(/^claude-/, ''); m.title = model; m.hidden = false; } // 헤더에는 앞의 claude- 없이
+  if (model) { m.textContent = String(model).replace(/^claude-/, ''); m.title = model; m.hidden = false; } else m.hidden = true; // 헤더에는 앞의 claude- 없이
   e.innerHTML = effortIcon(effort);
   e.hidden = !model;
   claudeRun = { model, effort };
@@ -235,7 +261,8 @@ function updateClaudeTip() {
     `세션  ${sessionAlias || (claudeConn.state === 'connecting' ? '여는 중' : '없음 (곧 새로 엽니다)')}`,
     ...(claudeUsage?.billing === 'api' ? [`요금제  API 키${claudeUsage.session?.cost != null ? ` · 이 대화 $${claudeUsage.session.cost.toFixed(4)}` : ''}`] : []),
     ...(claudeUsage?.billing !== 'api' && claudeUsage?.limits?.five_hour ? [`사용량  5시간 ${pct(claudeUsage.limits.five_hour.used)}% · 주간 ${pct(claudeUsage.limits.seven_day?.used)}%`] : []),
-    '클릭하면 Claude 설정을 엽니다',
+    ...(claudeUsage?.billing === 'codex' ? ['실행  Codex (로컬)'] : []),
+    '클릭하면 AI 설정을 엽니다',
   ].join('\n');
   $('claude-btn').removeAttribute('title');
 }
@@ -247,5 +274,5 @@ document.getElementById('sheet-body').addEventListener('change', (e) => {
   claudePrefs = { ...claudePrefs, [k]: e.target.value };
   chrome.storage.local.set({ claudePrefs }).catch(() => {});
   sendClaudePrefs();
-  msg('sys', `Claude 설정: 모델 ${claudePrefs.model || '기본'} · effort ${claudePrefs.effort || '기본'}`);
+  msg('sys', `AI 설정: 모델 ${claudePrefs.model || '기본'} · effort ${claudePrefs.effort || '기본'}`);
 });
